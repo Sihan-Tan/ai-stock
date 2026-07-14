@@ -1,0 +1,1316 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>刻度 · 个人 AI 量化工作台 — 产品设计稿</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Noto+Sans+SC:wght@400;500;600;700&family=Syne:wght@600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --ink: #07151c;
+      --panel: #0d222c;
+      --panel-2: #12303c;
+      --line: #1e4554;
+      --mist: #8aa9b5;
+      --text: #e7f1f4;
+      --copper: #d4a574;
+      --copper-dim: #8f6b45;
+      --signal: #3ecf9a;
+      --danger: #e85d4c;
+      --warn: #e6b35a;
+      --chip: #173744;
+      --radius: 10px;
+      --font-display: "Syne", "Noto Sans SC", sans-serif;
+      --font-body: "Noto Sans SC", system-ui, sans-serif;
+      --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      color: var(--text);
+      font-family: var(--font-body);
+      background:
+        radial-gradient(1200px 600px at 10% -10%, #1a4a5c55, transparent 55%),
+        radial-gradient(900px 500px at 100% 0%, #3a2a1855, transparent 50%),
+        linear-gradient(160deg, #061018 0%, var(--ink) 45%, #0a1a22 100%);
+      min-height: 100vh;
+    }
+
+    button, input, select, textarea { font: inherit; color: inherit; }
+    button { cursor: pointer; border: none; background: none; }
+    a { color: var(--copper); text-decoration: none; }
+
+    .app {
+      display: grid;
+      grid-template-columns: 240px 1fr;
+      grid-template-rows: 56px 1fr;
+      min-height: 100vh;
+    }
+
+    .topbar {
+      grid-column: 1 / -1;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      padding: 0 1.1rem;
+      border-bottom: 1px solid var(--line);
+      background: color-mix(in srgb, var(--panel) 88%, transparent);
+      backdrop-filter: blur(10px);
+    }
+    .brand {
+      display: flex;
+      align-items: baseline;
+      gap: .55rem;
+      min-width: 200px;
+    }
+    .brand-mark {
+      font-family: var(--font-display);
+      font-weight: 800;
+      font-size: 1.15rem;
+      letter-spacing: .02em;
+      color: var(--text);
+    }
+    .brand-mark span { color: var(--copper); }
+    .brand-sub {
+      font-size: .72rem;
+      color: var(--mist);
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    .market-strip {
+      display: flex;
+      gap: .75rem;
+      flex: 1;
+      overflow-x: auto;
+      font-family: var(--font-mono);
+      font-size: .78rem;
+    }
+    .m-item {
+      display: flex;
+      gap: .4rem;
+      align-items: baseline;
+      padding: .28rem .55rem;
+      border-radius: 999px;
+      background: var(--chip);
+      white-space: nowrap;
+    }
+    .m-item .up { color: var(--danger); }
+    .m-item .down { color: var(--signal); }
+    .top-actions { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+    .pill {
+      font-size: .75rem;
+      padding: .3rem .65rem;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: var(--panel-2);
+      color: var(--mist);
+    }
+    .pill.arm { border-color: var(--copper-dim); color: var(--copper); }
+    .pill.ok { border-color: #1f5c48; color: var(--signal); }
+
+    .nav {
+      border-right: 1px solid var(--line);
+      background: color-mix(in srgb, var(--panel) 90%, black);
+      padding: .85rem .65rem 1.2rem;
+      display: flex;
+      flex-direction: column;
+      gap: .15rem;
+      overflow-y: auto;
+    }
+    .nav-group {
+      margin: .7rem .45rem .25rem;
+      font-size: .68rem;
+      letter-spacing: .12em;
+      color: var(--mist);
+      text-transform: uppercase;
+    }
+    .nav-btn {
+      text-align: left;
+      padding: .55rem .7rem;
+      border-radius: 8px;
+      color: #c5d7df;
+      font-size: .9rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      transition: background .15s, color .15s;
+    }
+    .nav-btn:hover { background: var(--panel-2); color: var(--text); }
+    .nav-btn.active {
+      background: linear-gradient(90deg, #1d4352, #173744);
+      color: var(--text);
+      box-shadow: inset 3px 0 0 var(--copper);
+    }
+    .nav-btn .tag {
+      font-family: var(--font-mono);
+      font-size: .65rem;
+      color: var(--copper);
+      opacity: .85;
+    }
+
+    .main {
+      overflow: auto;
+      padding: 1.1rem 1.25rem 2.5rem;
+    }
+    .view { display: none; animation: rise .28s ease; }
+    .view.active { display: block; }
+    @keyframes rise {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: none; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .view { animation: none; }
+    }
+
+    .page-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      gap: 1rem;
+      margin-bottom: 1rem;
+      flex-wrap: wrap;
+    }
+    .page-head h1 {
+      margin: 0;
+      font-family: var(--font-display);
+      font-size: 1.55rem;
+      font-weight: 700;
+      letter-spacing: .01em;
+    }
+    .page-head p {
+      margin: .35rem 0 0;
+      color: var(--mist);
+      font-size: .9rem;
+      max-width: 46rem;
+      line-height: 1.55;
+    }
+    .head-actions { display: flex; gap: .5rem; flex-wrap: wrap; }
+    .btn {
+      padding: .45rem .85rem;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background: var(--panel-2);
+      font-size: .85rem;
+    }
+    .btn:hover { border-color: var(--copper-dim); }
+    .btn.primary {
+      background: linear-gradient(135deg, #c9975c, #a6783f);
+      color: #1a1208;
+      border-color: transparent;
+      font-weight: 600;
+    }
+    .btn.ghost { background: transparent; }
+
+    .grid { display: grid; gap: .85rem; }
+    .g-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .g-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .g-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .g-main { grid-template-columns: 1.6fr 1fr; }
+    @media (max-width: 1100px) {
+      .app { grid-template-columns: 1fr; }
+      .nav { display: none; }
+      .g-2, .g-3, .g-4, .g-main { grid-template-columns: 1fr; }
+      .mobile-nav { display: flex !important; }
+    }
+
+    .mobile-nav {
+      display: none;
+      gap: .4rem;
+      overflow-x: auto;
+      margin-bottom: .9rem;
+      padding-bottom: .2rem;
+    }
+    .mobile-nav .nav-btn {
+      white-space: nowrap;
+      background: var(--panel);
+      border: 1px solid var(--line);
+    }
+
+    .card {
+      background: linear-gradient(180deg, color-mix(in srgb, var(--panel-2) 80%, #1a3a48), var(--panel));
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: .9rem 1rem;
+      min-width: 0;
+    }
+    .card h3 {
+      margin: 0 0 .65rem;
+      font-size: .82rem;
+      font-weight: 600;
+      color: var(--mist);
+      letter-spacing: .06em;
+      text-transform: uppercase;
+    }
+    .stat {
+      font-family: var(--font-mono);
+      font-size: 1.45rem;
+      font-weight: 600;
+    }
+    .stat small {
+      display: block;
+      font-size: .75rem;
+      color: var(--mist);
+      font-weight: 400;
+      margin-top: .2rem;
+    }
+    .muted { color: var(--mist); }
+    .up { color: var(--danger); }
+    .down { color: var(--signal); }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: .84rem;
+    }
+    th, td {
+      text-align: left;
+      padding: .5rem .35rem;
+      border-bottom: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
+    }
+    th {
+      color: var(--mist);
+      font-weight: 500;
+      font-size: .75rem;
+      letter-spacing: .04em;
+    }
+    td.mono, .mono { font-family: var(--font-mono); }
+
+    .chart-fake {
+      height: 220px;
+      border-radius: 8px;
+      background:
+        linear-gradient(180deg, transparent 0%, #0a182055 100%),
+        repeating-linear-gradient(
+          90deg,
+          transparent,
+          transparent 24px,
+          #1e455433 24px,
+          #1e455433 25px
+        ),
+        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 120' preserveAspectRatio='none'%3E%3Cpath d='M0 80 C40 70 60 90 100 60 S160 20 200 45 S280 95 320 50 S380 30 400 55' fill='none' stroke='%23d4a574' stroke-width='2'/%3E%3Cpath d='M0 95 C50 90 80 100 120 85 S200 70 240 78 S320 100 400 72' fill='none' stroke='%233ecf9a' stroke-width='1.5' opacity='.7'/%3E%3C/svg%3E")
+        center / 100% 70% no-repeat;
+      border: 1px dashed var(--line);
+      position: relative;
+    }
+    .chart-fake::after {
+      content: "示意图 · K线 / 权益曲线占位";
+      position: absolute;
+      right: .7rem;
+      bottom: .5rem;
+      font-size: .7rem;
+      color: var(--mist);
+      font-family: var(--font-mono);
+    }
+
+    .chat {
+      display: flex;
+      flex-direction: column;
+      gap: .75rem;
+      min-height: 360px;
+    }
+    .bubble {
+      max-width: 85%;
+      padding: .7rem .85rem;
+      border-radius: 10px;
+      line-height: 1.55;
+      font-size: .9rem;
+    }
+    .bubble.user {
+      align-self: flex-end;
+      background: #1f4a5c;
+      border: 1px solid #2d6578;
+    }
+    .bubble.ai {
+      align-self: flex-start;
+      background: #122830;
+      border: 1px solid var(--line);
+    }
+    .chat-input {
+      display: flex;
+      gap: .5rem;
+      margin-top: auto;
+      padding-top: .5rem;
+    }
+    .chat-input input {
+      flex: 1;
+      background: var(--ink);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: .6rem .75rem;
+    }
+
+    .list-check {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: grid;
+      gap: .45rem;
+    }
+    .list-check li {
+      display: grid;
+      grid-template-columns: 1.2rem 1fr auto;
+      gap: .55rem;
+      align-items: start;
+      padding: .55rem .65rem;
+      border-radius: 8px;
+      background: #0c1d25;
+      border: 1px solid var(--line);
+      font-size: .88rem;
+    }
+    .list-check .dot {
+      width: .65rem;
+      height: .65rem;
+      margin-top: .35rem;
+      border-radius: 50%;
+      background: var(--copper);
+    }
+    .list-check .dot.mid { background: var(--warn); }
+    .list-check .dot.low { background: var(--mist); }
+    .badge {
+      font-family: var(--font-mono);
+      font-size: .68rem;
+      padding: .15rem .4rem;
+      border-radius: 4px;
+      background: var(--chip);
+      color: var(--mist);
+    }
+
+    .compare-bars { display: grid; gap: .55rem; }
+    .bar-row {
+      display: grid;
+      grid-template-columns: 5.5rem 1fr 3.2rem;
+      gap: .5rem;
+      align-items: center;
+      font-size: .82rem;
+    }
+    .bar-track {
+      height: 8px;
+      background: #0a1820;
+      border-radius: 99px;
+      overflow: hidden;
+    }
+    .bar-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--copper-dim), var(--copper));
+      border-radius: 99px;
+    }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: .75rem;
+    }
+    label.field {
+      display: grid;
+      gap: .3rem;
+      font-size: .8rem;
+      color: var(--mist);
+    }
+    label.field input,
+    label.field select,
+    label.field textarea {
+      background: var(--ink);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: .5rem .65rem;
+      color: var(--text);
+    }
+    textarea { min-height: 88px; resize: vertical; }
+
+    .banner {
+      border: 1px solid color-mix(in srgb, var(--copper) 40%, var(--line));
+      background: linear-gradient(90deg, #2a2114, #15303a);
+      border-radius: var(--radius);
+      padding: 1rem 1.1rem;
+      margin-bottom: 1rem;
+    }
+    .banner strong {
+      color: var(--copper);
+      font-family: var(--font-display);
+    }
+    .banner p {
+      margin: .35rem 0 0;
+      color: #c9d8de;
+      font-size: .9rem;
+      line-height: 1.55;
+    }
+
+    .footer-note {
+      margin-top: 1.5rem;
+      padding-top: 1rem;
+      border-top: 1px solid var(--line);
+      color: var(--mist);
+      font-size: .78rem;
+      line-height: 1.6;
+    }
+
+    .tabs {
+      display: flex;
+      gap: .35rem;
+      margin-bottom: .75rem;
+      flex-wrap: wrap;
+    }
+    .tab {
+      padding: .35rem .7rem;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      font-size: .8rem;
+      color: var(--mist);
+    }
+    .tab.on {
+      background: var(--panel-2);
+      color: var(--text);
+      border-color: var(--copper-dim);
+    }
+
+    .spark {
+      display: inline-block;
+      width: 56px;
+      height: 18px;
+      background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 56 18'%3E%3Cpolyline points='0,14 8,10 16,12 24,6 32,9 40,4 48,7 56,3' fill='none' stroke='%23e85d4c' stroke-width='1.5'/%3E%3C/svg%3E") center / contain no-repeat;
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark">刻度<span>·</span>Desk</div>
+        <div class="brand-sub">Design Draft</div>
+      </div>
+      <div class="market-strip" aria-label="大盘快照">
+        <div class="m-item"><span>上证</span><span class="up">3124.58 +0.62%</span></div>
+        <div class="m-item"><span>深成</span><span class="up">9842.10 +0.41%</span></div>
+        <div class="m-item"><span>创业</span><span class="down">1892.33 -0.28%</span></div>
+        <div class="m-item"><span>沪深300</span><span class="up">3856.02 +0.55%</span></div>
+      </div>
+      <div class="top-actions">
+        <span class="pill ok">模式 · 模拟盘</span>
+        <span class="pill arm">QMT · 已连接(只读)</span>
+        <span class="pill">飞书告警 · 开</span>
+        <span class="pill">LLM · DeepSeek</span>
+        <span class="pill">Agent · nanobot</span>
+        <span class="pill">ML · LightGBM</span>
+      </div>
+    </header>
+
+    <aside class="nav" aria-label="主导航">
+      <div class="nav-group">总览</div>
+      <button class="nav-btn active" data-view="overview">产品总览 <span class="tag">IA</span></button>
+      <button class="nav-btn" data-view="checklist">遗漏对照清单 <span class="tag">CHK</span></button>
+
+      <div class="nav-group">观察</div>
+      <button class="nav-btn" data-view="monitor">行情监控</button>
+      <button class="nav-btn" data-view="sentiment">打板情绪</button>
+      <button class="nav-btn" data-view="lhb">龙虎榜</button>
+      <button class="nav-btn" data-view="calendar">交易日历</button>
+      <button class="nav-btn" data-view="suspend">停牌提醒</button>
+      <button class="nav-btn" data-view="alerts">信号告警</button>
+
+      <div class="nav-group">研究</div>
+      <button class="nav-btn" data-view="research">投研对话</button>
+      <button class="nav-btn" data-view="morning">晨会分析</button>
+      <button class="nav-btn" data-view="factor">选股因子</button>
+      <button class="nav-btn" data-view="knowledge">研报 / 笔记库</button>
+
+      <div class="nav-group">策略</div>
+      <button class="nav-btn" data-view="strategy">策略管理</button>
+      <button class="nav-btn" data-view="backtest">个股回测</button>
+      <button class="nav-btn" data-view="compare">策略对比</button>
+
+      <div class="nav-group">执行</div>
+      <button class="nav-btn" data-view="paper">模拟盘</button>
+      <button class="nav-btn" data-view="live">实盘 QMT</button>
+
+      <div class="nav-group">复盘 / 设置</div>
+      <button class="nav-btn" data-view="review">复盘</button>
+      <button class="nav-btn" data-view="settings">系统设置</button>
+    </aside>
+
+    <main class="main">
+      <div class="mobile-nav" id="mobileNav"></div>
+
+      <section class="view active" id="view-overview">
+        <div class="banner">
+          <strong>产品设计稿 v0.6 · 范围已冻结</strong>
+          <p><b>v1 功能集已确定（2026-07-14）</b>。投研对话 = nanobot + 自建 Skill；其余模块按清单实施。有新需求再说，不在本版默认扩容。可点左侧导航审阅各页。</p>
+        </div>
+        <div class="page-head">
+          <div>
+            <h1>产品总览</h1>
+            <p>从观察到研究、策略、执行、复盘的闭环。</p>
+          </div>
+        </div>
+        <div class="grid g-3">
+          <div class="card">
+            <h3>观察层</h3>
+            <ul class="list-check">
+              <li><span class="dot"></span><span>个股 / 板块 / 概念 / 大盘监控</span><span class="badge">market</span></li>
+              <li><span class="dot"></span><span>打板情绪 · 龙虎榜</span><span class="badge">sentiment/lhb</span></li>
+              <li><span class="dot"></span><span>交易日历 · 停牌提醒</span><span class="badge">calendar</span></li>
+              <li><span class="dot"></span><span>信号告警 → 飞书</span><span class="badge">alert</span></li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3>研究层</h3>
+            <ul class="list-check">
+              <li><span class="dot"></span><span>投研对话（nanobot + Skill）</span><span class="badge">ai</span></li>
+              <li><span class="dot"></span><span>晨会分析（含竞价强势池）</span><span class="badge">brief</span></li>
+              <li><span class="dot"></span><span>选股因子 + LightGBM/XGBoost</span><span class="badge">factor/ml</span></li>
+              <li><span class="dot"></span><span>研报 / 笔记知识库</span><span class="badge">knowledge</span></li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3>策略与执行</h3>
+            <ul class="list-check">
+              <li><span class="dot"></span><span>策略管理 / 对比 / backtrader（Python·YAML·Agent）</span><span class="badge">strategy</span></li>
+              <li><span class="dot"></span><span>模拟盘 · 持仓落库</span><span class="badge">paper</span></li>
+              <li><span class="dot mid"></span><span>实盘 QMT · 风控闸门</span><span class="badge">live</span></li>
+              <li><span class="dot"></span><span>复盘归因</span><span class="badge">review</span></li>
+            </ul>
+          </div>
+        </div>
+        <div class="card" style="margin-top:.85rem">
+          <h3>关键数据流（示意）</h3>
+          <p class="muted" style="margin:0;line-height:1.7;font-size:.9rem">
+            行情源（QMT / AkShare）→ <b>关系库</b>（含情绪/龙虎榜/日历/停牌/知识库元数据）→ TA-Lib / 因子 → <b>LightGBM 或 XGBoost</b> → Signal →
+            BrokerGateway → 飞书告警 + 持仓落库 → 复盘 → <b>投研(nanobot+Skills)</b> / 晨会 / 知识库 RAG
+          </p>
+        </div>
+        <p class="footer-note">文件路径：<span class="mono">docs/product-design-draft.html</span> · 用浏览器直接打开即可。界面为设计稿，按钮不接真实后端。</p>
+      </section>
+
+      <section class="view" id="view-checklist">
+        <div class="page-head">
+          <div>
+            <h1>遗漏对照清单</h1>
+            <p>对照最初能力清单与已锁定技术选型。右侧为建议你拍板是否追加的能力。</p>
+          </div>
+        </div>
+        <div class="grid g-2">
+          <div class="card">
+            <h3>能力覆盖</h3>
+            <ul class="list-check">
+              <li><span class="dot"></span><span>个股 / 板块 / 概念 / 大盘行情监控</span><span class="badge">已覆盖</span></li>
+              <li><span class="dot"></span><span>实盘 QMT 连接（只读→下单+风控）</span><span class="badge">已覆盖</span></li>
+              <li><span class="dot"></span><span>模拟盘（账户/持仓/成交落库）</span><span class="badge">已覆盖</span></li>
+              <li><span class="dot"></span><span>个股策略回测（backtrader）</span><span class="badge">已覆盖</span></li>
+              <li><span class="dot"></span><span>复盘</span><span class="badge">已覆盖</span></li>
+              <li><span class="dot"></span><span>策略管理（Python 注册 / YAML / Agent 对话）· 策略对比</span><span class="badge">已覆盖</span></li>
+              <li><span class="dot"></span><span>投研对话（nanobot + 自建 Skill；底层 OpenAI/DeepSeek/ChatGPT）</span><span class="badge">已覆盖</span></li>
+              <li><span class="dot"></span><span>晨会分析（开盘前 + 竞价后强势板块/个股）</span><span class="badge">已覆盖</span></li>
+              <li><span class="dot"></span><span>选股因子管理 + LightGBM / XGBoost 可切换</span><span class="badge">已覆盖</span></li>
+              <li><span class="dot"></span><span>信号告警（飞书为主）</span><span class="badge">已覆盖</span></li>
+              <li><span class="dot"></span><span>TA-Lib 技术指标</span><span class="badge">已覆盖</span></li>
+              <li><span class="dot"></span><span>行情 + 持仓落库（PG / MySQL）</span><span class="badge">已覆盖</span></li>
+              <li><span class="dot"></span><span>打板情绪</span><span class="badge">已覆盖</span></li>
+              <li><span class="dot"></span><span>龙虎榜</span><span class="badge">已覆盖</span></li>
+              <li><span class="dot"></span><span>交易日历（独立页）</span><span class="badge">已覆盖</span></li>
+              <li><span class="dot"></span><span>停牌提醒（独立页）</span><span class="badge">已覆盖</span></li>
+              <li><span class="dot"></span><span>研报 / 笔记知识库</span><span class="badge">已覆盖</span></li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3>仍待你确认</h3>
+            <ul class="list-check">
+              <li><span class="dot low"></span><span>融资融券专题页</span><span class="badge">v1不做</span></li>
+              <li><span class="dot low"></span><span>多账户 / 多券商</span><span class="badge">v1不做</span></li>
+              <li><span class="dot low"></span><span>局域网多用户访问</span><span class="badge">v1不做</span></li>
+              <li><span class="dot low"></span><span>移动端 App</span><span class="badge">v1不做</span></li>
+              <li><span class="dot low"></span><span>港股 / 期货</span><span class="badge">v1不做</span></li>
+            </ul>
+            <p class="muted" style="margin:.85rem 0 0;font-size:.85rem;line-height:1.55">范围已冻结。若要加上述或其它能力，作为新需求提出后再改计划与设计稿。</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="view-monitor">
+        <div class="page-head">
+          <div>
+            <h1>行情监控</h1>
+            <p>个股 · 板块 · 概念 · 大盘。数据自关系库读取；顶部指数条全局常驻。</p>
+          </div>
+          <div class="head-actions">
+            <button class="btn" type="button">同步行情</button>
+            <button class="btn primary" type="button">添加自选</button>
+          </div>
+        </div>
+        <div class="tabs">
+          <button class="tab on" type="button">自选</button>
+          <button class="tab" type="button">板块</button>
+          <button class="tab" type="button">概念</button>
+          <button class="tab" type="button">大盘</button>
+        </div>
+        <div class="grid g-main">
+          <div class="card">
+            <h3>自选股 · 实时快照</h3>
+            <table>
+              <thead>
+                <tr><th>代码</th><th>名称</th><th>现价</th><th>涨跌</th><th>成交额</th><th>走势</th></tr>
+              </thead>
+              <tbody>
+                <tr><td class="mono">600519.SH</td><td>贵州茅台</td><td class="mono">1682.00</td><td class="up mono">+1.24%</td><td class="mono">28.4亿</td><td><span class="spark"></span></td></tr>
+                <tr><td class="mono">300750.SZ</td><td>宁德时代</td><td class="mono">188.50</td><td class="down mono">-0.62%</td><td class="mono">41.2亿</td><td><span class="spark"></span></td></tr>
+                <tr><td class="mono">510300.SH</td><td>沪深300ETF</td><td class="mono">3.856</td><td class="up mono">+0.55%</td><td class="mono">62.1亿</td><td><span class="spark"></span></td></tr>
+              </tbody>
+            </table>
+            <div class="chart-fake" style="margin-top:.85rem"></div>
+          </div>
+          <div class="card">
+            <h3>板块 / 概念异动</h3>
+            <table>
+              <thead><tr><th>名称</th><th>涨跌</th><th>领涨</th></tr></thead>
+              <tbody>
+                <tr><td>半导体</td><td class="up mono">+2.1%</td><td>中微公司</td></tr>
+                <tr><td>人工智能</td><td class="up mono">+1.6%</td><td>科大讯飞</td></tr>
+                <tr><td>白酒</td><td class="down mono">-0.4%</td><td>五粮液</td></tr>
+              </tbody>
+            </table>
+            <h3 style="margin-top:1.1rem">今日关注</h3>
+            <p class="muted" style="margin:0;font-size:.88rem;line-height:1.55">打开个股后可看：日/分钟线、TA-Lib 指标叠加、所属板块成分、关联策略信号。情绪与龙虎榜见独立导航页。</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="view-sentiment">
+        <div class="page-head">
+          <div>
+            <h1>打板情绪</h1>
+            <p>涨停生态温度：涨停/跌停家数、连板高度、晋级率、破板率。数据日终落库，可推飞书。</p>
+          </div>
+          <div class="head-actions">
+            <button class="btn" type="button">同步今日</button>
+            <button class="btn primary" type="button">推送飞书摘要</button>
+          </div>
+        </div>
+        <div class="grid g-4">
+          <div class="card"><div class="stat up">68<small>涨停家数</small></div></div>
+          <div class="card"><div class="stat down">12<small>跌停家数</small></div></div>
+          <div class="card"><div class="stat">7<small>最高连板</small></div></div>
+          <div class="card"><div class="stat">42%<small>晋级率(示意)</small></div></div>
+        </div>
+        <div class="grid g-main" style="margin-top:.85rem">
+          <div class="card">
+            <h3>连板梯队</h3>
+            <table>
+              <thead><tr><th>高度</th><th>代码</th><th>名称</th><th>封单</th><th>概念</th></tr></thead>
+              <tbody>
+                <tr><td class="mono">7</td><td class="mono">00xxxx.SZ</td><td>示例连板</td><td class="mono">2.1亿</td><td>AI应用</td></tr>
+                <tr><td class="mono">5</td><td class="mono">60xxxx.SH</td><td>示例五板</td><td class="mono">0.8亿</td><td>机器人</td></tr>
+                <tr><td class="mono">3</td><td class="mono">30xxxx.SZ</td><td>示例三板</td><td class="mono">1.4亿</td><td>半导体</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="card">
+            <h3>情绪备注</h3>
+            <p style="margin:0;line-height:1.6;font-size:.9rem">高位晋级尚可，低位跟风溢价收窄。晨会模板将引用本页快照。破板列表可筛选「曾涨停后回落」。</p>
+            <h3 style="margin-top:1rem">破板 / 曾涨停</h3>
+            <table>
+              <thead><tr><th>代码</th><th>最高</th><th>收盘涨幅</th></tr></thead>
+              <tbody>
+                <tr><td class="mono">60yyyy.SH</td><td class="up">+10%</td><td class="mono">+4.2%</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="view-lhb">
+        <div class="page-head">
+          <div>
+            <h1>龙虎榜</h1>
+            <p>按日 / 个股查看营业部与机构席位买卖；可收藏席位；与自选、复盘联动。</p>
+          </div>
+          <div class="head-actions">
+            <button class="btn" type="button">选日期</button>
+            <button class="btn primary" type="button">同步龙虎榜</button>
+          </div>
+        </div>
+        <div class="grid g-main">
+          <div class="card">
+            <h3>上榜个股 · 2026-07-14</h3>
+            <table>
+              <thead><tr><th>代码</th><th>名称</th><th>解读</th><th>净买额</th></tr></thead>
+              <tbody>
+                <tr><td class="mono">300750.SZ</td><td>宁德时代</td><td>日振幅异常</td><td class="up mono">+1.2亿</td></tr>
+                <tr><td class="mono">688xxx.SH</td><td>示例科创</td><td>连续三日涨停</td><td class="down mono">-0.6亿</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="card">
+            <h3>席位明细（示意）</h3>
+            <table>
+              <thead><tr><th>方向</th><th>营业部</th><th>金额</th></tr></thead>
+              <tbody>
+                <tr><td class="up">买</td><td>某证券上海××路</td><td class="mono">0.82亿</td></tr>
+                <tr><td class="down">卖</td><td>机构专用</td><td class="mono">0.55亿</td></tr>
+              </tbody>
+            </table>
+            <p class="muted" style="margin:.75rem 0 0;font-size:.85rem">自选上榜 / 收藏席位出现时可自动飞书告警。</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="view-calendar">
+        <div class="page-head">
+          <div>
+            <h1>交易日历</h1>
+            <p>独立页：标注交易日 / 休市；下一交易日；供晨会与扫描调度依赖。</p>
+          </div>
+        </div>
+        <div class="grid g-main">
+          <div class="card">
+            <h3>2026-07</h3>
+            <div class="grid g-4" style="font-family:var(--font-mono);font-size:.85rem;text-align:center">
+              <div class="pill">一</div><div class="pill">二</div><div class="pill">三</div><div class="pill">四</div>
+              <div class="card" style="padding:.5rem">13<br/><span class="badge">交易</span></div>
+              <div class="card" style="padding:.5rem;border-color:var(--copper-dim)">14<br/><span class="badge">今日</span></div>
+              <div class="card" style="padding:.5rem">15<br/><span class="badge">交易</span></div>
+              <div class="card" style="padding:.5rem;opacity:.55">18<br/><span class="badge">休</span></div>
+            </div>
+            <p class="muted" style="margin:.85rem 0 0;font-size:.85rem">示意网格；正式版为完整月历组件。</p>
+          </div>
+          <div class="card">
+            <h3>要点</h3>
+            <ul class="list-check">
+              <li><span class="dot"></span><span>下一交易日：2026-07-15</span><span class="badge">ok</span></li>
+              <li><span class="dot"></span><span>本周交易日：4 天</span><span class="badge">info</span></li>
+              <li><span class="dot mid"></span><span>晨会 08:20 开盘前 · 09:25 竞价选拔</span><span class="badge">cron</span></li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="view-suspend">
+        <div class="page-head">
+          <div>
+            <h1>停牌提醒</h1>
+            <p>独立页：自选与持仓标的停牌 / 复牌事件；变更可推飞书。</p>
+          </div>
+          <div class="head-actions">
+            <button class="btn primary" type="button">刷新事件</button>
+          </div>
+        </div>
+        <div class="card">
+          <table>
+            <thead><tr><th>代码</th><th>名称</th><th>类型</th><th>生效日</th><th>原因摘要</th><th>范围</th></tr></thead>
+            <tbody>
+              <tr><td class="mono">60zzzz.SH</td><td>示例停牌</td><td>停牌</td><td class="mono">2026-07-14</td><td>重大事项</td><td>自选</td></tr>
+              <tr><td class="mono">00zzzz.SZ</td><td>示例复牌</td><td>复牌</td><td class="mono">2026-07-15</td><td>核查完毕</td><td>持仓</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="view" id="view-alerts">
+        <div class="page-head">
+          <div>
+            <h1>信号告警</h1>
+            <p>策略信号、风控拒绝、晨会摘要 → 飞书 Webhook；同时落库防抖去重。</p>
+          </div>
+          <div class="head-actions">
+            <button class="btn" type="button">测试飞书推送</button>
+            <button class="btn primary" type="button">新建规则</button>
+          </div>
+        </div>
+        <div class="grid g-2">
+          <div class="card">
+            <h3>告警流</h3>
+            <table>
+              <thead><tr><th>时间</th><th>类型</th><th>内容</th><th>状态</th></tr></thead>
+              <tbody>
+                <tr><td class="mono">09:31:12</td><td>策略</td><td>MA交叉 · 600519 买入信号</td><td class="mono">已推飞书</td></tr>
+                <tr><td class="mono">09:35:02</td><td>风控</td><td>单日限额将触达 80%</td><td class="mono">已推飞书</td></tr>
+                <tr><td class="mono">08:25:00</td><td>晨会</td><td>开盘前篇已生成</td><td class="mono">已推飞书</td></tr>
+                <tr><td class="mono">09:26:10</td><td>晨会</td><td>竞价强势板块/个股已选出</td><td class="mono">已推飞书</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="card">
+            <h3>规则示例</h3>
+            <ul class="list-check">
+              <li><span class="dot"></span><span>自选涨跌幅 &gt; 5% 推送</span><span class="badge">开</span></li>
+              <li><span class="dot"></span><span>ML 选股池 TopK 变动推送</span><span class="badge">开</span></li>
+              <li><span class="dot mid"></span><span>实盘成交即时推送</span><span class="badge">开</span></li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="view-research">
+        <div class="page-head">
+          <div>
+            <h1>投研对话 · nanobot</h1>
+            <p>Agent 运行时为 <b>nanobot</b>，能力通过自建 <span class="mono">skills/*/SKILL.md</span> 扩展。工具桥接 DeskQuant 只读 API；可写策略草稿，不可直通实盘。</p>
+          </div>
+          <div class="head-actions">
+            <select class="btn" aria-label="LLM">
+              <option>DeepSeek</option>
+              <option>OpenAI</option>
+              <option>ChatGPT</option>
+            </select>
+            <button class="btn" type="button">Skill 列表</button>
+          </div>
+        </div>
+        <div class="grid g-main">
+          <div class="card chat">
+            <div class="bubble user">帮我写一个：竞价高开≥5% 且所属板块在今日强势 Top5 内才买入的策略草稿。</div>
+            <div class="bubble ai">
+              已加载 skill <span class="mono">strategy-yaml-author</span> 与 <span class="mono">auction-strong-pick</span>。草稿「竞价高开追板」已 save_strategy_draft，请到策略管理确认 promote。
+              <div class="muted" style="margin-top:.45rem;font-size:.75rem;font-family:var(--font-mono)">nanobot · tools: propose_strategy · save_strategy_draft</div>
+            </div>
+            <div class="chat-input">
+              <input placeholder="向 nanobot 提问…（设计稿占位）" />
+              <button class="btn primary" type="button">发送</button>
+            </div>
+          </div>
+          <div class="card">
+            <h3>已启用 Skills</h3>
+            <ul class="list-check">
+              <li><span class="dot"></span><span>desk-readonly</span><span class="badge">core</span></li>
+              <li><span class="dot"></span><span>auction-strong-pick</span><span class="badge">晨会</span></li>
+              <li><span class="dot"></span><span>strategy-yaml-author</span><span class="badge">策略</span></li>
+              <li><span class="dot"></span><span>knowledge-rag</span><span class="badge">知识库</span></li>
+            </ul>
+            <p class="muted" style="margin:.85rem 0 0;font-size:.85rem;line-height:1.55">可在仓库 <span class="mono">skills/</span> 自行新增 Skill；渐进加载，避免上下文爆炸。行情/回测/QMT 等模块不迁入 nanobot。</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="view-morning">
+        <div class="page-head">
+          <div>
+            <h1>晨会分析</h1>
+            <p>两段式：开盘前综述（约 08:20）+ <b>集合竞价结束（约 09:25）</b>后自动选拔当日强势板块与个股，落库并推飞书。</p>
+          </div>
+          <div class="head-actions">
+            <button class="btn" type="button">重跑开盘前</button>
+            <button class="btn primary" type="button">重跑竞价选拔</button>
+          </div>
+        </div>
+        <div class="tabs">
+          <button class="tab" type="button">开盘前篇</button>
+          <button class="tab on" type="button">竞价篇 · 强势池</button>
+        </div>
+        <div class="banner">
+          <strong>竞价结束后自动任务 · 09:25–09:28</strong>
+          <p>拉取竞价快照 → 按可配置权重打分（竞价涨幅、竞价额、板块共振、相对大盘、是否贴近涨停、是否在自选/LGBM 池）→ 输出强势板块 TopN + 强势个股 TopN → 飞书推送。过滤停牌 / 可配置过滤 ST。</p>
+        </div>
+        <div class="grid g-2">
+          <div class="card">
+            <h3>今日强势板块 Top5</h3>
+            <table>
+              <thead><tr><th>板块</th><th>竞价均涨</th><th>成分共振</th><th>得分</th></tr></thead>
+              <tbody>
+                <tr><td>半导体</td><td class="up mono">+3.8%</td><td class="mono">12/48</td><td class="mono">92</td></tr>
+                <tr><td>人工智能</td><td class="up mono">+2.9%</td><td class="mono">9/36</td><td class="mono">86</td></tr>
+                <tr><td>机器人</td><td class="up mono">+2.4%</td><td class="mono">7/28</td><td class="mono">81</td></tr>
+                <tr><td>消费电子</td><td class="up mono">+1.7%</td><td class="mono">6/40</td><td class="mono">74</td></tr>
+                <tr><td>券商</td><td class="up mono">+1.2%</td><td class="mono">5/30</td><td class="mono">68</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="card">
+            <h3>今日强势个股 Top8</h3>
+            <table>
+              <thead><tr><th>代码</th><th>竞价涨幅</th><th>竞价额</th><th>归属</th><th>标签</th></tr></thead>
+              <tbody>
+                <tr><td class="mono">688xxx.SH</td><td class="up mono">+9.8%</td><td class="mono">1.2亿</td><td>半导体</td><td>贴近涨停</td></tr>
+                <tr><td class="mono">300xxx.SZ</td><td class="up mono">+7.2%</td><td class="mono">0.9亿</td><td>人工智能</td><td>自选·LGBM</td></tr>
+                <tr><td class="mono">002xxx.SZ</td><td class="up mono">+5.6%</td><td class="mono">2.4亿</td><td>机器人</td><td>板块龙头</td></tr>
+                <tr><td class="mono">601xxx.SH</td><td class="up mono">+3.1%</td><td class="mono">3.1亿</td><td>券商</td><td>高竞价额</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="grid g-3" style="margin-top:.85rem">
+          <div class="card"><h3>开盘前 · 大盘</h3><p style="margin:0;line-height:1.55;font-size:.9rem">隔夜美股科技偏强；内盘期货小幅高开预期。</p></div>
+          <div class="card"><h3>开盘前 · 情绪 / 龙虎榜</h3><p style="margin:0;line-height:1.55;font-size:.9rem">昨日涨停 68、最高 7 板；龙虎榜自选交集 1 只。</p></div>
+          <div class="card"><h3>行动清单</h3><p style="margin:0;line-height:1.55;font-size:.9rem">重点跟踪半导体强势池；避开停牌与一字不可买；模拟盘可订阅池内异动。</p></div>
+        </div>
+        <div class="card" style="margin-top:.85rem">
+          <h3>飞书推送预览（竞价篇）</h3>
+          <p style="margin:0;line-height:1.7;font-size:.9rem" class="muted">【刻度·竞价强势】07-14 09:26<br/>板块：半导体 / 人工智能 / 机器人<br/>个股：688xxx(+9.8%) · 300xxx(+7.2%) · 002xxx(+5.6%) …<br/>详情见晨会「竞价篇」。</p>
+        </div>
+      </section>
+
+      <section class="view" id="view-factor">
+        <div class="page-head">
+          <div>
+            <h1>选股因子 · ML 引擎</h1>
+            <p>因子 → 特征矩阵 → 训练/推理。引擎可在 <b>LightGBM</b> 与 <b>XGBoost</b> 间切换（全局默认或单次训练覆盖）；同数据集可双引擎对比。</p>
+          </div>
+          <div class="head-actions">
+            <select class="btn" aria-label="ML引擎">
+              <option selected>引擎 · LightGBM</option>
+              <option>引擎 · XGBoost</option>
+            </select>
+            <button class="btn" type="button">新建因子</button>
+            <button class="btn primary" type="button">训练模型</button>
+          </div>
+        </div>
+        <div class="grid g-2">
+          <div class="card">
+            <h3>因子库</h3>
+            <table>
+              <thead><tr><th>名称</th><th>来源</th><th>更新</th></tr></thead>
+              <tbody>
+                <tr><td>RSI_14</td><td>TA-Lib</td><td class="mono">日更</td></tr>
+                <tr><td>MACD_HIST</td><td>TA-Lib</td><td class="mono">日更</td></tr>
+                <tr><td>AMOUNT_Z20</td><td>脚本</td><td class="mono">日更</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="card">
+            <h3>模型对比（同特征集）</h3>
+            <table>
+              <thead><tr><th>引擎</th><th>model_id</th><th>样本外</th><th>状态</th></tr></thead>
+              <tbody>
+                <tr><td>LightGBM</td><td class="mono">lgb_2026q2</td><td class="mono">0.62</td><td>默认晋级</td></tr>
+                <tr><td>XGBoost</td><td class="mono">xgb_2026q2</td><td class="mono">0.60</td><td>可切换</td></tr>
+              </tbody>
+            </table>
+            <div style="margin-top:.75rem;display:flex;gap:.5rem;flex-wrap:wrap">
+              <button class="btn" type="button">查看特征重要性</button>
+              <button class="btn primary" type="button">截面打分</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="view-knowledge">
+        <div class="page-head">
+          <div>
+            <h1>研报 / 笔记知识库</h1>
+            <p>上传 PDF / Markdown / 文本；切片入库；投研对话可通过 search_knowledge 检索。支持按个股、板块、主题打标签。</p>
+          </div>
+          <div class="head-actions">
+            <button class="btn" type="button">检索</button>
+            <button class="btn primary" type="button">上传文档</button>
+          </div>
+        </div>
+        <div class="grid g-main">
+          <div class="card">
+            <h3>文档列表</h3>
+            <table>
+              <thead><tr><th>标题</th><th>类型</th><th>标签</th><th>更新</th></tr></thead>
+              <tbody>
+                <tr><td>半导体景气跟踪（笔记）</td><td>Markdown</td><td>半导体</td><td class="mono">07-12</td></tr>
+                <tr><td>某券商 · 消费深度报告</td><td>PDF</td><td>白酒,消费</td><td class="mono">07-10</td></tr>
+                <tr><td>600519 交易复盘草稿</td><td>文本</td><td>茅台,复盘</td><td class="mono">07-14</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="card">
+            <h3>检索预览</h3>
+            <label class="field">关键词<input value="连板晋级率 与 情绪" /></label>
+            <div class="bubble ai" style="margin-top:.75rem;max-width:100%">
+              命中笔记片段：……高位晋级率若连续两日低于 30%，短线情绪退潮概率上升……
+              <div class="muted" style="margin-top:.4rem;font-size:.75rem;font-family:var(--font-mono)">chunk · 半导体景气跟踪 §2</div>
+            </div>
+            <p class="muted" style="margin:.75rem 0 0;font-size:.85rem;line-height:1.5">原文存 data/knowledge/；元数据与切片在关系库；嵌入向量供 RAG。</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="view-strategy">
+        <div class="page-head">
+          <div>
+            <h1>策略管理</h1>
+            <p>三通道注册，统一进 <span class="mono">StrategyRegistry</span>：① Python 文件装饰器注册 ② YAML 规则 ③ Agent 对话生成草稿（确认后晋级）。生命周期：草稿 → 研究 → 模拟 → 实盘（需 ARM）。</p>
+          </div>
+          <div class="head-actions">
+            <button class="btn" type="button">用 Agent 写策略</button>
+            <button class="btn" type="button">新建 YAML</button>
+            <button class="btn primary" type="button">扫描 Python 注册</button>
+          </div>
+        </div>
+        <div class="grid g-3" style="margin-bottom:.85rem">
+          <div class="card">
+            <h3>① Python 注册</h3>
+            <p style="margin:0;font-size:.88rem;line-height:1.55" class="muted">在 <span class="mono">strategies/*.py</span> 使用 <span class="mono">@register_strategy</span> 注册 <span class="mono">on_bar</span> 或 <span class="mono">bt.Strategy</span>；启动扫描入库。</p>
+          </div>
+          <div class="card">
+            <h3>② YAML 规则</h3>
+            <p style="margin:0;font-size:.88rem;line-height:1.55" class="muted">条件 + TA-Lib 指标 + 动作；可文件与 UI 双编辑，编译为可回测/可运行策略。</p>
+          </div>
+          <div class="card">
+            <h3>③ Agent 对话</h3>
+            <p style="margin:0;font-size:.88rem;line-height:1.55" class="muted">投研对话（nanobot）调用 <span class="mono">propose_strategy</span> → 草稿；人工确认 <span class="mono">promote</span> 后才能模拟/实盘。</p>
+          </div>
+        </div>
+        <div class="tabs">
+          <button class="tab on" type="button">全部</button>
+          <button class="tab" type="button">python</button>
+          <button class="tab" type="button">yaml</button>
+          <button class="tab" type="button">agent</button>
+        </div>
+        <div class="card">
+          <table>
+            <thead><tr><th>名称</th><th>来源</th><th>版本</th><th>状态</th><th>操作</th></tr></thead>
+            <tbody>
+              <tr><td>双均线-日线</td><td>YAML</td><td class="mono">v1.3</td><td>模拟运行中</td><td><button class="btn ghost" type="button">回测</button></td></tr>
+              <tr><td>ML-TopK周调</td><td>Python 注册</td><td class="mono">v0.9</td><td>研究</td><td><button class="btn ghost" type="button">晋级模拟</button></td></tr>
+              <tr><td>突破回踩</td><td>Python · bt.Strategy</td><td class="mono">v2.0</td><td>已归档</td><td><button class="btn ghost" type="button">对比</button></td></tr>
+              <tr><td>竞价高开追板草案</td><td>Agent 草稿</td><td class="mono">draft</td><td>待确认</td><td><button class="btn ghost" type="button">确认晋级</button></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="card" style="margin-top:.85rem">
+          <h3>注册示例（示意）</h3>
+          <pre class="mono" style="margin:0;font-size:.78rem;line-height:1.55;white-space:pre-wrap;color:var(--mist)">@register_strategy(id="ma_cross", name="双均线")
+class MaCross:
+    def on_bar(self, ctx): ...
+
+# YAML
+# id: breakout
+# when: { rsi_14: { lt: 30 }, close: { cross_above: sma_20 } }
+# then: { action: buy, size: "risk_pct:2" }</pre>
+        </div>
+      </section>
+
+      <section class="view" id="view-backtest">
+        <div class="page-head">
+          <div>
+            <h1>个股策略回测</h1>
+            <p>内核 backtrader；行情从 DB 装载；报告摘要写入 backtest_runs。</p>
+          </div>
+          <div class="head-actions">
+            <button class="btn primary" type="button">运行回测</button>
+          </div>
+        </div>
+        <div class="grid g-main">
+          <div class="card">
+            <h3>参数</h3>
+            <div class="form-grid">
+              <label class="field">策略<select><option>双均线-日线 v1.3</option></select></label>
+              <label class="field">标的<input value="600519.SH" /></label>
+              <label class="field">区间起<input type="date" value="2023-01-01" /></label>
+              <label class="field">区间止<input type="date" value="2026-07-01" /></label>
+              <label class="field">初始资金<input value="1,000,000" /></label>
+              <label class="field">滑点 / 佣金<input value="0.1% / 万2.5" /></label>
+            </div>
+          </div>
+          <div class="card">
+            <h3>结果摘要</h3>
+            <div class="grid g-2">
+              <div class="stat up">34.2%<small>累计收益</small></div>
+              <div class="stat down">-12.8%<small>最大回撤</small></div>
+              <div class="stat">1.41<small>夏普(示意)</small></div>
+              <div class="stat">86<small>交易次数</small></div>
+            </div>
+          </div>
+        </div>
+        <div class="card" style="margin-top:.85rem">
+          <h3>权益曲线</h3>
+          <div class="chart-fake"></div>
+        </div>
+      </section>
+
+      <section class="view" id="view-compare">
+        <div class="page-head">
+          <div>
+            <h1>策略对比</h1>
+            <p>同区间多策略指标对齐：收益、回撤、夏普、胜率、换手。</p>
+          </div>
+        </div>
+        <div class="grid g-2">
+          <div class="card">
+            <h3>累计收益对比</h3>
+            <div class="compare-bars">
+              <div class="bar-row"><span>双均线</span><div class="bar-track"><div class="bar-fill" style="width:72%"></div></div><span class="mono">34%</span></div>
+              <div class="bar-row"><span>LGBM</span><div class="bar-track"><div class="bar-fill" style="width:88%"></div></div><span class="mono">41%</span></div>
+              <div class="bar-row"><span>XGB</span><div class="bar-track"><div class="bar-fill" style="width:80%"></div></div><span class="mono">38%</span></div>
+              <div class="bar-row"><span>突破</span><div class="bar-track"><div class="bar-fill" style="width:55%"></div></div><span class="mono">22%</span></div>
+            </div>
+          </div>
+          <div class="card">
+            <h3>明细表</h3>
+            <table>
+              <thead><tr><th>策略</th><th>回撤</th><th>夏普</th><th>胜率</th></tr></thead>
+              <tbody>
+                <tr><td>双均线</td><td class="mono">-12.8%</td><td class="mono">1.41</td><td class="mono">53%</td></tr>
+                <tr><td>LGBM</td><td class="mono">-15.1%</td><td class="mono">1.62</td><td class="mono">55%</td></tr>
+                <tr><td>XGB</td><td class="mono">-14.2%</td><td class="mono">1.55</td><td class="mono">54%</td></tr>
+                <tr><td>突破</td><td class="mono">-18.4%</td><td class="mono">0.98</td><td class="mono">49%</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="view-paper">
+        <div class="page-head">
+          <div>
+            <h1>模拟盘</h1>
+            <p>虚拟账户 / 持仓 / 委托 / 成交 / 资金流水全部落库，重启可恢复。</p>
+          </div>
+          <div class="head-actions">
+            <button class="btn" type="button">重置账户</button>
+            <button class="btn primary" type="button">手动下单</button>
+          </div>
+        </div>
+        <div class="grid g-4">
+          <div class="card"><div class="stat">¥1,082,400<small>总权益</small></div></div>
+          <div class="card"><div class="stat up">+8.24%<small>累计收益</small></div></div>
+          <div class="card"><div class="stat">¥420,000<small>可用现金</small></div></div>
+          <div class="card"><div class="stat">3<small>持仓标的</small></div></div>
+        </div>
+        <div class="card" style="margin-top:.85rem">
+          <h3>持仓</h3>
+          <table>
+            <thead><tr><th>代码</th><th>数量</th><th>成本</th><th>现价</th><th>盈亏</th></tr></thead>
+            <tbody>
+              <tr><td class="mono">600519.SH</td><td class="mono">100</td><td class="mono">1650</td><td class="mono">1682</td><td class="up mono">+1.94%</td></tr>
+              <tr><td class="mono">300750.SZ</td><td class="mono">200</td><td class="mono">190</td><td class="mono">188.5</td><td class="down mono">-0.79%</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="view" id="view-live">
+        <div class="page-head">
+          <div>
+            <h1>实盘 QMT</h1>
+            <p>默认关闭自动交易。需 ARM + 限额 + 白名单 + Kill Switch。订单镜像落库并对账。</p>
+          </div>
+          <div class="head-actions">
+            <button class="btn" type="button">Kill Switch</button>
+            <button class="btn primary" type="button">ARM 实盘</button>
+          </div>
+        </div>
+        <div class="banner">
+          <strong>风控闸门 · 设计约束</strong>
+          <p>AI 对话不得直投下单；实盘路径不现场训练模型；仅加载已晋级 model_id。二次确认后才向 xtquant 发单。</p>
+        </div>
+        <div class="grid g-2">
+          <div class="card">
+            <h3>连接与账户</h3>
+            <ul class="list-check">
+              <li><span class="dot"></span><span>miniQMT 连通：正常</span><span class="badge">ok</span></li>
+              <li><span class="dot"></span><span>当前：只读持仓 / 成交</span><span class="badge">safe</span></li>
+              <li><span class="dot mid"></span><span>ARM：未武装</span><span class="badge">off</span></li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3>限额</h3>
+            <div class="form-grid">
+              <label class="field">单笔上限<input value="50,000" /></label>
+              <label class="field">单日上限<input value="200,000" /></label>
+              <label class="field" style="grid-column:1/-1">标的白名单<textarea>600519.SH, 510300.SH</textarea></label>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="view-review">
+        <div class="page-head">
+          <div>
+            <h1>复盘</h1>
+            <p>按日汇总：信号命中、实盘 vs 回测偏差、模型分数备注、文字笔记。</p>
+          </div>
+          <div class="head-actions">
+            <button class="btn primary" type="button">新建今日复盘</button>
+          </div>
+        </div>
+        <div class="grid g-main">
+          <div class="card">
+            <h3>2026-07-14</h3>
+            <p style="margin:0 0 .75rem;line-height:1.6;font-size:.9rem">开盘半导体分流，模拟盘按双均线未触发；LGBM 池内 1 只触及阈值但被风控白名单挡下——记入偏差。</p>
+            <label class="field">笔记<textarea placeholder="写今日归因…"></textarea></label>
+          </div>
+          <div class="card">
+            <h3>偏差条目</h3>
+            <table>
+              <thead><tr><th>类型</th><th>说明</th></tr></thead>
+              <tbody>
+                <tr><td>滑点</td><td>回测成交优 0.12%</td></tr>
+                <tr><td>风控</td><td>白名单拒绝 1 笔</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="view-settings">
+        <div class="page-head">
+          <div>
+            <h1>系统设置</h1>
+            <p>数据库、LLM、nanobot、飞书、QMT 路径等仅保存在服务端环境 / 本地配置。</p>
+          </div>
+        </div>
+        <div class="grid g-2">
+          <div class="card">
+            <h3>数据库</h3>
+            <div class="form-grid">
+              <label class="field">引擎
+                <select>
+                  <option selected>PostgreSQL（默认）</option>
+                  <option>MySQL 8</option>
+                </select>
+              </label>
+              <label class="field">DATABASE_URL<input value="postgresql+psycopg://user:***@localhost:5432/desk" /></label>
+            </div>
+          </div>
+          <div class="card">
+            <h3>LLM / ML / 飞书 / QMT</h3>
+            <div class="form-grid">
+              <label class="field">LLM_PROVIDER
+                <select><option>deepseek</option><option>openai</option><option>chatgpt</option></select>
+              </label>
+              <label class="field">ML_ENGINE
+                <select><option selected>lightgbm</option><option>xgboost</option></select>
+              </label>
+              <label class="field">FEISHU_WEBHOOK_URL<input value="https://open.feishu.cn/open-apis/bot/v2/hook/***" /></label>
+              <label class="field">miniQMT 路径<input value="C:\QMT\userdata_mini" /></label>
+              <label class="field">默认交易模式
+                <select><option>paper</option><option>live</option></select>
+              </label>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    /**
+     * 切换产品设计稿视图
+     * @param {string} id 视图 id（不含 view- 前缀）
+     */
+    function showView(id) {
+      document.querySelectorAll(".view").forEach((el) => el.classList.remove("active"));
+      document.querySelectorAll(".nav-btn").forEach((el) => el.classList.remove("active"));
+      const view = document.getElementById("view-" + id);
+      if (view) view.classList.add("active");
+      document.querySelectorAll('.nav-btn[data-view="' + id + '"]').forEach((el) => {
+        el.classList.add("active");
+      });
+    }
+
+    document.querySelectorAll(".nav-btn[data-view]").forEach((btn) => {
+      btn.addEventListener("click", () => showView(btn.getAttribute("data-view")));
+    });
+
+    const mobileNav = document.getElementById("mobileNav");
+    document.querySelectorAll(".nav > .nav-btn").forEach((btn) => {
+      const clone = btn.cloneNode(true);
+      clone.addEventListener("click", () => showView(clone.getAttribute("data-view")));
+      mobileNav.appendChild(clone);
+    });
+
+    document.querySelectorAll(".tabs").forEach((tabs) => {
+      tabs.querySelectorAll(".tab").forEach((tab) => {
+        tab.addEventListener("click", () => {
+          tabs.querySelectorAll(".tab").forEach((t) => t.classList.remove("on"));
+          tab.classList.add("on");
+        });
+      });
+    });
+  </script>
+</body>
+</html>

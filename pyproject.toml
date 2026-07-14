@@ -1,0 +1,68 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "desk-quant"
+version = "0.1.0"
+description = "个人 AI 量化交易工作台（刻度 Desk）"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115.0",
+  "uvicorn[standard]>=0.32.0",
+  "pydantic>=2.9.0",
+  "pydantic-settings>=2.6.0",
+  "sqlalchemy>=2.0.36",
+  "alembic>=1.14.0",
+  "psycopg[binary]>=3.2.0",
+  "pymysql>=1.1.0",
+  "pandas>=2.2.0",
+  "numpy>=1.26.0",
+  "httpx>=0.27.0",
+  "apscheduler>=3.10.0",
+  "pyyaml>=6.0.0",
+  "python-multipart>=0.0.12",
+  "openai>=1.54.0",
+  "akshare>=1.14.0",
+  "backtrader>=1.9.78",
+  "lightgbm>=4.5.0",
+  "xgboost>=2.1.0",
+  "scikit-learn>=1.5.0",
+]
+
+[project.optional-dependencies]
+talib = ["TA-Lib>=0.4.28"]
+dev = ["pytest>=8.3.0", "pytest-asyncio>=0.24.0", "ruff>=0.8.0", "httpx>=0.27.0"]
+
+[tool.setuptools.packages.find]
+where = ["packages/common", "packages/db", "packages/market", "packages/sentiment", "packages/lhb", "packages/calendar", "packages/knowledge", "packages/factor", "packages/ml", "packages/indicators", "packages/strategy", "packages/backtest", "packages/broker", "packages/alert", "packages/ai", "packages/review", "packages/morning_brief", "apps/api"]
+include = ["desk_*", "app*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = [
+  "apps/api",
+  "packages/common",
+  "packages/db",
+  "packages/market",
+  "packages/sentiment",
+  "packages/lhb",
+  "packages/calendar",
+  "packages/knowledge",
+  "packages/factor",
+  "packages/ml",
+  "packages/indicators",
+  "packages/strategy",
+  "packages/backtest",
+  "packages/broker",
+  "packages/alert",
+  "packages/ai",
+  "packages/review",
+  "packages/morning_brief",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

@@ -1,0 +1,13 @@
+id: breakout_yaml
+name: 均线突破-YAML
+version: v1.0
+symbol: 600519.SH
+when:
+  sma_fast:
+    period: 5
+  sma_slow:
+    period: 20
+then:
+  action: signal
+params:
+  note: 示例 YAML 规则策略

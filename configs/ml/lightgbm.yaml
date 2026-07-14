@@ -1,0 +1,4 @@
+objective_binary: binary_logloss
+learning_rate: 0.05
+n_estimators: 50
+verbosity: -1

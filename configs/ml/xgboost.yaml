@@ -1,0 +1,5 @@
+objective: binary
+learning_rate: 0.05
+n_estimators: 50
+max_depth: 4
+verbosity: 0

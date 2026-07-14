@@ -1,0 +1,96 @@
+:root {
+  --ink: #07151c;
+  --panel: #0d222c;
+  --line: #1e4554;
+  --mist: #8aa9b5;
+  --text: #e7f1f4;
+  --copper: #d4a574;
+  --signal: #3ecf9a;
+  font-family: "Noto Sans SC", system-ui, sans-serif;
+  color: var(--text);
+  background: linear-gradient(160deg, #061018, var(--ink));
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100vh; }
+#root { min-height: 100vh; }
+
+.app {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  min-height: 100vh;
+}
+
+.nav {
+  border-right: 1px solid var(--line);
+  background: #0a1a22;
+  padding: 1rem 0.75rem;
+}
+
+.brand {
+  font-family: Syne, sans-serif;
+  font-weight: 700;
+  margin: 0 0 1rem 0.4rem;
+}
+.brand span { color: var(--copper); }
+
+.nav button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  color: #c5d7df;
+  padding: 0.5rem 0.7rem;
+  border-radius: 8px;
+  cursor: pointer;
+  margin-bottom: 0.2rem;
+}
+.nav button.active, .nav button:hover {
+  background: #173744;
+  color: var(--text);
+}
+
+.main { padding: 1.2rem 1.4rem 2rem; overflow: auto; }
+h1 { font-family: Syne, sans-serif; margin: 0 0 0.75rem; }
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0.9rem 1rem;
+  margin-bottom: 0.85rem;
+}
+.muted { color: var(--mist); font-size: 0.9rem; }
+.mono { font-family: "IBM Plex Mono", monospace; }
+table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+th, td { text-align: left; padding: 0.45rem 0.3rem; border-bottom: 1px solid #1a3844; }
+th { color: var(--mist); font-weight: 500; }
+.row { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.75rem; }
+button.btn, .btn {
+  border: 1px solid var(--line);
+  background: #12303c;
+  color: var(--text);
+  border-radius: 8px;
+  padding: 0.4rem 0.75rem;
+  cursor: pointer;
+}
+button.primary { background: linear-gradient(135deg, #c9975c, #a6783f); color: #1a1208; border: 0; font-weight: 600; }
+pre {
+  white-space: pre-wrap;
+  background: #08151c;
+  border-radius: 8px;
+  padding: 0.75rem;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.8rem;
+}
+input, textarea {
+  width: 100%;
+  background: #08151c;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 0.5rem 0.65rem;
+}
+@media (max-width: 900px) {
+  .app { grid-template-columns: 1fr; }
+}
