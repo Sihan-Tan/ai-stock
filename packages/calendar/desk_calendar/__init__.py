@@ -2,13 +2,56 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import date, timedelta
-from typing import Any
+from typing import Any, Protocol
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from desk_db.models import SuspensionEvent, TradeCalendar
+
+logger = logging.getLogger(__name__)
+
+
+class TradeCalendarClient(Protocol):
+    """交易日历数据源。"""
+
+    def trade_days(self, start: date, end: date) -> list[tuple[date, bool]]:
+        """返回 (日期, 是否开市) 列表。"""
+        ...
+
+
+class CalendarSync:
+    """将外部日历 upsert 到 trade_calendar。"""
+
+    def __init__(self, db: Session, client: TradeCalendarClient) -> None:
+        self.db = db
+        self.client = client
+
+    def run(self, start: date, end: date) -> int:
+        """
+        同步 [start, end] 日历。
+
+        @returns: 写入/更新天数
+        """
+        n = 0
+        for cal_date, is_open in self.client.trade_days(start, end):
+            row = self.db.scalar(select(TradeCalendar).where(TradeCalendar.cal_date == cal_date))
+            if row:
+                row.is_open = is_open
+                row.note = "" if is_open else (row.note or "休市")
+            else:
+                self.db.add(
+                    TradeCalendar(
+                        cal_date=cal_date,
+                        is_open=is_open,
+                        note="" if is_open else "休市",
+                    )
+                )
+            n += 1
+        self.db.flush()
+        return n
 
 
 class CalendarService:
@@ -37,11 +80,16 @@ class CalendarService:
         return n
 
     def is_trade_day(self, day: date) -> bool:
-        """是否交易日。"""
+        """是否交易日；库中无该日记录时警告并周末 fallback。"""
         row = self.db.scalar(select(TradeCalendar).where(TradeCalendar.cal_date == day))
         if row is None:
+            logger.warning("日历未同步，使用周末 fallback: %s", day)
             return day.weekday() < 5
         return bool(row.is_open)
+
+    def require_trade_day(self, day: date) -> bool:
+        """供 jobs 门闸：仅当确认为交易日时返回 True。"""
+        return self.is_trade_day(day)
 
     def next_trade_day(self, day: date | None = None) -> date:
         """下一交易日。"""
