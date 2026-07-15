@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from desk_common.symbols import normalize_symbol
-from desk_db.models import BarDaily, BoardMember, QuoteSnapshot, WatchlistItem
+from desk_db.models import BarDaily, BarMinute, BoardMember, QuoteSnapshot, WatchlistItem
 
 
 class MarketService:
@@ -134,6 +134,62 @@ class MarketService:
                 for r in rows
             ]
         )
+
+    def upsert_minute_bars(self, symbol: str, df: pd.DataFrame) -> int:
+        """
+        Upsert 分钟线（不写复权双列）。
+
+        @param symbol: 标的
+        @param df: 含 ts/open/high/low/close/volume/amount
+        @returns: 写入行数
+        """
+        symbol = normalize_symbol(symbol)
+        if df is None or df.empty:
+            return 0
+        count = 0
+        for _, row in df.iterrows():
+            ts = row["ts"]
+            if not isinstance(ts, datetime):
+                ts = pd.Timestamp(ts).to_pydatetime()
+            existing = self.db.scalar(
+                select(BarMinute).where(BarMinute.symbol == symbol, BarMinute.ts == ts)
+            )
+            o, h, l, c = float(row["open"]), float(row["high"]), float(row["low"]), float(row["close"])
+            vol = float(row.get("volume", 0) or 0)
+            amt = float(row.get("amount", 0) or 0)
+            if existing:
+                existing.open, existing.high, existing.low, existing.close = o, h, l, c
+                existing.volume, existing.amount = vol, amt
+            else:
+                self.db.add(
+                    BarMinute(
+                        symbol=symbol,
+                        ts=ts,
+                        open=o,
+                        high=h,
+                        low=l,
+                        close=c,
+                        volume=vol,
+                        amount=amt,
+                    )
+                )
+            count += 1
+        self.db.flush()
+        return count
+
+    def purge_minute_before(self, cutoff: datetime) -> int:
+        """
+        删除严格早于 cutoff 的分钟行。
+
+        @param cutoff: 时间切点
+        @returns: 删除行数
+        """
+        rows = self.db.scalars(select(BarMinute).where(BarMinute.ts < cutoff)).all()
+        n = len(rows)
+        for r in rows:
+            self.db.delete(r)
+        self.db.flush()
+        return n
 
     def list_watchlist(self) -> list[dict[str, Any]]:
         """自选列表。"""
