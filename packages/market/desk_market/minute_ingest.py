@@ -30,8 +30,13 @@ def compute_minute_purge_cutoff(db: Session, asof: date, keep_trade_days: int = 
         .where(TradeCalendar.is_open.is_(True), TradeCalendar.cal_date <= asof)
         .order_by(TradeCalendar.cal_date.desc())
     ).all()
-    # 保留 asof + 最近 keep_trade_days 个既往交易日；切点 = 再往前一个交易日 09:30
-    idx = keep_trade_days + 1
+    # 保留 asof + 最近 keep_trade_days-? :
+    # open_days[0]=asof … open_days[keep_trade_days-1] 为第 keep 个既往日的下一档
+    # 切点 = 仍保留的最旧交易日开盘 09:30（严格早于者删除）
+    idx = keep_trade_days  # asof + (keep_trade_days-1) 既往 → 最旧保留 index = keep_trade_days-?
+    # 保留天：asof 与往前 keep_trade_days 个（含往前 3 个 + asof 共 4 天）→ 最旧保留 index = keep_trade_days
+    # open_days: [8,5,4,3,2] keep 8,5,4,3 → index 3 = Jan3；删 < Jan3 09:30
+    idx = keep_trade_days
     if len(open_days) <= idx:
         boundary = open_days[-1] if open_days else asof - timedelta(days=30)
     else:

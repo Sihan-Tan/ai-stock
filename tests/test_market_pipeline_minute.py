@@ -72,7 +72,7 @@ def test_purge_keeps_only_last_3_trade_days(_db):
         )
     db.commit()
     cutoff = compute_minute_purge_cutoff(db, asof=date(2024, 1, 8))
-    assert cutoff == datetime(2024, 1, 2, 9, 30, 0)
+    assert cutoff == datetime(2024, 1, 3, 9, 30, 0)
     deleted = svc.purge_minute_before(cutoff)
     assert deleted >= 1
     left = db.scalars(select(BarMinute)).all()
