@@ -88,4 +88,6 @@ def build_market_scheduler(
     _add("ingest_daily_incremental", "ingest_daily_incremental")
     _add("backfill_daily_chunks", "backfill_daily_chunks")
     _add("ingest_minute_watch", "ingest_minute_watch")
+    _add("sync_sentiment_daily", "sync_sentiment_daily")
+    _add("sync_lhb_daily", "sync_lhb_daily")
     return sched, job_ids

@@ -9,6 +9,16 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from desk_db.models import LhbDaily, LhbSeat
+from desk_lhb.akshare_client import AkshareLhbClient, FakeLhbClient, is_institution_seat
+from desk_lhb.ingest import LhbDailyIngestor
+
+__all__ = [
+    "LhbService",
+    "LhbDailyIngestor",
+    "AkshareLhbClient",
+    "FakeLhbClient",
+    "is_institution_seat",
+]
 
 
 class LhbService:

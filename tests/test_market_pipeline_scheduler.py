@@ -11,6 +11,8 @@ def test_build_scheduler_registers_job_ids():
         "ingest_daily_incremental",
         "backfill_daily_chunks",
         "ingest_minute_watch",
+        "sync_sentiment_daily",
+        "sync_lhb_daily",
     }
     assert expected <= set(job_ids)
     if sched.running:

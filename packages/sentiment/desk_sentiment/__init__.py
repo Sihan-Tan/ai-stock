@@ -9,6 +9,18 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from desk_db.models import LimitUpStat, LimitUpStock
+from desk_sentiment.aggregator import aggregate_limit_rows
+from desk_sentiment.ingest import SentimentDailyIngestor
+from desk_sentiment.qmt_client import MockQmtSentimentClient, QmtSentimentClient, XtdataSentimentClient
+
+__all__ = [
+    "SentimentService",
+    "aggregate_limit_rows",
+    "SentimentDailyIngestor",
+    "MockQmtSentimentClient",
+    "QmtSentimentClient",
+    "XtdataSentimentClient",
+]
 
 
 class SentimentService:

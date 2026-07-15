@@ -170,13 +170,17 @@ function Watchlist({ setLog }: { setLog: (s: string) => void }) {
 function Sentiment({ setLog }: { setLog: (s: string) => void }) {
   const [data, setData] = useState<any>(null);
   useEffect(() => {
-    api("/api/sentiment/seed", { method: "POST" })
-      .then(() => api("/api/sentiment/snapshot"))
+    api("/api/sentiment/snapshot")
       .then(setData)
       .catch((e) => setLog(String(e)));
   }, []);
   if (!data) return <div className="card muted">加载中…</div>;
+  const empty = !data.limit_up_count && !(data.ladder || []).length;
   return (
+    <div className="stack">
+      {empty && (
+        <p className="muted">暂无日终情绪快照。可手动同步或使用次要「注入演示数据」。</p>
+      )}
     <div className="card">
       <p className="mono">
         涨停 {data.limit_up_count} · 跌停 {data.limit_down_count} · 最高 {data.max_board} 板 · 晋级率{" "}
@@ -203,20 +207,25 @@ function Sentiment({ setLog }: { setLog: (s: string) => void }) {
         </tbody>
       </table>
     </div>
+    </div>
   );
 }
 
 function Lhb({ setLog }: { setLog: (s: string) => void }) {
   const [rows, setRows] = useState<any[]>([]);
   useEffect(() => {
-    api("/api/lhb/seed", { method: "POST" })
-      .then(() => api<any[]>("/api/lhb"))
+    api<any[]>("/api/lhb")
       .then(setRows)
       .catch((e) => setLog(String(e)));
   }, []);
   return (
-    <div className="card">
-      <pre>{JSON.stringify(rows, null, 2)}</pre>
+    <div className="stack">
+      {!rows.length && (
+        <p className="muted">暂无龙虎榜数据。可手动同步或使用次要「注入演示数据」。</p>
+      )}
+      <div className="card">
+        <pre>{JSON.stringify(rows, null, 2)}</pre>
+      </div>
     </div>
   );
 }

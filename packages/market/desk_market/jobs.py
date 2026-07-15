@@ -40,12 +40,16 @@ class MarketJobs:
         akshare: Any | None = None,
         config: MarketSyncConfig | None = None,
         calendar_client: Any | None = None,
+        sentiment_client: Any | None = None,
+        lhb_client: Any | None = None,
     ) -> None:
         self.db = db
         self.md = md
         self.akshare = akshare if akshare is not None else AkshareDailyClient()
         self.config = config or load_market_sync_config()
         self.calendar_client = calendar_client or _WeekendCalendarClient()
+        self.sentiment_client = sentiment_client
+        self.lhb_client = lhb_client
         self.store = JobStore(db)
 
     def recent_status(self, limit: int = 20) -> list[dict[str, Any]]:
@@ -145,6 +149,84 @@ class MarketJobs:
                 status="ok",
                 symbols_done=int(result.get("bars_written", 0)),
                 message=f"purged={result.get('purged', 0)}",
+            )
+            return {"status": "ok", **result}
+        except Exception as exc:  # noqa: BLE001
+            self.store.finish(row, status="failed", error_summary=str(exc))
+            return {"status": "failed", "error": str(exc)}
+
+    def _resolve_sentiment_client(self):
+        if self.sentiment_client is not None:
+            return self.sentiment_client
+        try:
+            from desk_sentiment import XtdataSentimentClient
+
+            return XtdataSentimentClient()
+        except Exception:  # noqa: BLE001
+            from desk_sentiment import MockQmtSentimentClient
+
+            return MockQmtSentimentClient([])
+
+    def _resolve_lhb_client(self):
+        if self.lhb_client is not None:
+            return self.lhb_client
+        from desk_lhb import AkshareLhbClient
+
+        return AkshareLhbClient()
+
+    def sync_sentiment_daily(self, asof: date | None = None) -> dict[str, Any]:
+        """日终打板情绪。"""
+        from desk_sentiment import SentimentDailyIngestor
+
+        row = self.store.start("sync_sentiment_daily")
+        asof = asof or date.today()
+        try:
+            if not CalendarService(self.db).require_trade_day(asof):
+                self.store.finish(row, status="ok", message="skipped_non_trade_day")
+                return {"status": "ok", "skipped": True}
+            client = self._resolve_sentiment_client()
+            symbols = None
+            from sqlalchemy import select
+            from desk_db.models import SecurityMeta
+
+            listed = self.db.scalars(
+                select(SecurityMeta).where(SecurityMeta.is_delisted.is_(False))
+            ).all()
+            if listed:
+                symbols = [r.symbol for r in listed]
+            else:
+                symbols = self.md.list_a_share_symbols(include_delisted=False)
+            result = SentimentDailyIngestor(
+                self.db, client, asof=asof, symbols=symbols or None
+            ).run()
+            self.store.finish(
+                row,
+                status="ok",
+                symbols_done=int(result.get("symbols_done", 0)),
+                message=f"cover={result.get('cover')}",
+            )
+            return {"status": "ok", **result}
+        except Exception as exc:  # noqa: BLE001
+            self.store.finish(row, status="failed", error_summary=str(exc))
+            return {"status": "failed", "error": str(exc)}
+
+    def sync_lhb_daily(self, asof: date | None = None) -> dict[str, Any]:
+        """日终龙虎榜。"""
+        from desk_lhb import LhbDailyIngestor
+
+        row = self.store.start("sync_lhb_daily")
+        asof = asof or date.today()
+        try:
+            if not CalendarService(self.db).require_trade_day(asof):
+                self.store.finish(row, status="ok", message="skipped_non_trade_day")
+                return {"status": "ok", "skipped": True}
+            client = self._resolve_lhb_client()
+            result = LhbDailyIngestor(self.db, client, asof=asof).run()
+            self.store.finish(
+                row,
+                status="ok",
+                symbols_done=int(result.get("symbols_done", 0)),
+                message=f"seats={result.get('seats')}",
             )
             return {"status": "ok", **result}
         except Exception as exc:  # noqa: BLE001

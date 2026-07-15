@@ -8,4 +8,6 @@ jobs:
   ingest_daily_incremental: { cron: "30 15 * * 1-5" }
   backfill_daily_chunks: { cron: "0 1 * * *" }
   ingest_minute_watch: { minutes: 3 }
+  sync_sentiment_daily: { cron: "35 15 * * 1-5" }
+  sync_lhb_daily: { cron: "0 18 * * 1-5" }
   purge_with_minute: true
