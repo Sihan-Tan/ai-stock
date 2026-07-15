@@ -21,6 +21,20 @@ def test_load_indices_yaml(tmp_path: Path, monkeypatch):
     assert "000300.SH" in symbols
 
 
+def test_daily_start_date_from_yaml_when_env_unset(monkeypatch, tmp_path: Path):
+    """YAML daily_start_date 在无 MARKET_DAILY_START 时应生效（非 Settings 默认值）。"""
+    sync = tmp_path / "sync.yaml"
+    sync.write_text(
+        "daily_start_date: '2015-01-01'\nincremental_days: 2\nbatch_size: 50\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MARKET_SYNC_YAML", str(sync))
+    monkeypatch.delenv("MARKET_DAILY_START", raising=False)
+    get_settings.cache_clear()
+    cfg = load_market_sync_config()
+    assert cfg.daily_start_date == date(2015, 1, 1)
+
+
 def test_daily_start_date_default_and_env_override(monkeypatch, tmp_path: Path):
     sync = tmp_path / "sync.yaml"
     sync.write_text(

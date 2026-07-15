@@ -58,7 +58,12 @@ def load_market_sync_config() -> MarketSyncConfig:
     yaml_path = _resolve_config_path(settings.market_sync_yaml)
     raw: dict[str, Any] = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
 
-    daily_start = date.fromisoformat(settings.market_daily_start)
+    daily_start_str = (
+        settings.market_daily_start
+        if "MARKET_DAILY_START" in os.environ
+        else str(raw.get("daily_start_date", settings.market_daily_start))
+    )
+    daily_start = date.fromisoformat(daily_start_str)
     incremental_days = (
         settings.market_incremental_days
         if "MARKET_INCREMENTAL_DAYS" in os.environ
