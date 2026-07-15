@@ -117,9 +117,11 @@ function Overview({ setLog }: { setLog: (s: string) => void }) {
   };
   return (
     <div className="card">
-      <p className="muted">v1 已冻结功能的工作台壳。先注入演示数据，再浏览各页。</p>
-      <button type="button" className="btn primary" onClick={seedAll}>
-        注入演示数据
+      <p className="muted">
+        v1 工作台。行情主路径为 QMT 同步落库；「注入演示数据」仅供无柜台环境冒烟，会覆盖同键假数据。
+      </p>
+      <button type="button" className="btn" onClick={seedAll}>
+        注入演示数据（次要）
       </button>
     </div>
   );
