@@ -356,6 +356,65 @@ class XtdataMarketData:
         out = out.dropna(subset=["date"])
         return out
 
+    def _merge_front_back(
+        self,
+        symbol: str,
+        front: pd.DataFrame,
+        back: pd.DataFrame,
+        start: date,
+        end: date,
+    ) -> pd.DataFrame:
+        """将前/后复权 DataFrame（含 date 列）合并为 upsert 行。"""
+        if front.empty:
+            return pd.DataFrame()
+        rows: list[dict[str, Any]] = []
+        back_by_date: dict[date, Any] = {}
+        if not back.empty:
+            for _, brow in back.iterrows():
+                back_by_date[brow["date"]] = brow
+        for _, frow in front.iterrows():
+            d = frow["date"]
+            if d < start or d > end:
+                continue
+            qfq = {
+                "date": d,
+                "open": float(frow["open"]) if pd.notna(frow.get("open")) else None,
+                "high": float(frow["high"]) if pd.notna(frow.get("high")) else None,
+                "low": float(frow["low"]) if pd.notna(frow.get("low")) else None,
+                "close": float(frow["close"]) if pd.notna(frow.get("close")) else None,
+                "volume": float(frow["volume"]) if pd.notna(frow.get("volume")) else 0.0,
+                "amount": float(frow["amount"])
+                if "amount" in frow and pd.notna(frow.get("amount"))
+                else 0.0,
+            }
+            brow = back_by_date.get(d)
+            if brow is not None:
+                hfq = {
+                    "open": float(brow["open"]) if pd.notna(brow.get("open")) else qfq["open"],
+                    "high": float(brow["high"]) if pd.notna(brow.get("high")) else qfq["high"],
+                    "low": float(brow["low"]) if pd.notna(brow.get("low")) else qfq["low"],
+                    "close": float(brow["close"]) if pd.notna(brow.get("close")) else qfq["close"],
+                    "volume": float(brow["volume"])
+                    if pd.notna(brow.get("volume"))
+                    else qfq["volume"],
+                }
+            else:
+                hfq = {
+                    "open": qfq["open"],
+                    "high": qfq["high"],
+                    "low": qfq["low"],
+                    "close": qfq["close"],
+                    "volume": qfq["volume"],
+                }
+            if None in (qfq["open"], qfq["high"], qfq["low"], qfq["close"]):
+                continue
+            if None in (hfq["open"], hfq["high"], hfq["low"], hfq["close"]):
+                continue
+            rows.append(_merge_qfq_hfq(qfq, hfq))
+        if not rows:
+            return pd.DataFrame()
+        return pd.DataFrame(rows)
+
     def get_daily_bars(self, symbol: str, start: date, end: date) -> pd.DataFrame:
         """
         日线双复权：默认列=前复权（front），``*_hfq``=后复权（back）。
@@ -390,54 +449,54 @@ class XtdataMarketData:
         )
         front = self._df_from_market_ex(data_front, symbol)
         back = self._df_from_market_ex(data_back, symbol)
-        if front.empty:
-            return pd.DataFrame()
+        return self._merge_front_back(symbol, front, back, start, end)
 
-        rows: list[dict[str, Any]] = []
-        back_by_date: dict[date, Any] = {}
-        if not back.empty:
-            for _, brow in back.iterrows():
-                back_by_date[brow["date"]] = brow
+    def get_daily_bars_batch(
+        self, symbols: list[str], start: date, end: date
+    ) -> dict[str, pd.DataFrame]:
+        """
+        批量日线（对齐 ``example/1``：先逐只 download，再批量 get_market_data_ex）。
 
-        for _, frow in front.iterrows():
-            d = frow["date"]
-            if d < start or d > end:
+        @param symbols: 代码列表
+        @param start: 起始日
+        @param end: 结束日
+        @returns: symbol → DataFrame
+        """
+        syms = [normalize_symbol(s) for s in symbols]
+        if not syms:
+            return {}
+        start_s = self._fmt_day(start)
+        end_s = self._fmt_day(end)
+        for sym in syms:
+            try:
+                self._xt.download_history_data(
+                    sym, period="1d", start_time=start_s, end_time=end_s
+                )
+            except Exception:  # noqa: BLE001
                 continue
-            qfq = {
-                "date": d,
-                "open": float(frow["open"]) if pd.notna(frow.get("open")) else None,
-                "high": float(frow["high"]) if pd.notna(frow.get("high")) else None,
-                "low": float(frow["low"]) if pd.notna(frow.get("low")) else None,
-                "close": float(frow["close"]) if pd.notna(frow.get("close")) else None,
-                "volume": float(frow["volume"]) if pd.notna(frow.get("volume")) else 0.0,
-                "amount": float(frow["amount"]) if "amount" in frow and pd.notna(frow.get("amount")) else 0.0,
-            }
-            brow = back_by_date.get(d)
-            if brow is not None:
-                hfq = {
-                    "open": float(brow["open"]) if pd.notna(brow.get("open")) else qfq["open"],
-                    "high": float(brow["high"]) if pd.notna(brow.get("high")) else qfq["high"],
-                    "low": float(brow["low"]) if pd.notna(brow.get("low")) else qfq["low"],
-                    "close": float(brow["close"]) if pd.notna(brow.get("close")) else qfq["close"],
-                    "volume": float(brow["volume"]) if pd.notna(brow.get("volume")) else qfq["volume"],
-                }
-            else:
-                hfq = {
-                    "open": qfq["open"],
-                    "high": qfq["high"],
-                    "low": qfq["low"],
-                    "close": qfq["close"],
-                    "volume": qfq["volume"],
-                }
-            if None in (qfq["open"], qfq["high"], qfq["low"], qfq["close"]):
-                continue
-            if None in (hfq["open"], hfq["high"], hfq["low"], hfq["close"]):
-                continue
-            rows.append(_merge_qfq_hfq(qfq, hfq))
 
-        if not rows:
-            return pd.DataFrame()
-        return pd.DataFrame(rows)
+        data_front = self._xt.get_market_data_ex(
+            field_list=["open", "high", "low", "close", "volume", "amount"],
+            stock_list=syms,
+            period="1d",
+            start_time=start_s,
+            end_time=end_s,
+            dividend_type="front",
+        )
+        data_back = self._xt.get_market_data_ex(
+            field_list=["open", "high", "low", "close", "volume"],
+            stock_list=syms,
+            period="1d",
+            start_time=start_s,
+            end_time=end_s,
+            dividend_type="back",
+        )
+        out: dict[str, pd.DataFrame] = {}
+        for sym in syms:
+            front = self._df_from_market_ex(data_front, sym)
+            back = self._df_from_market_ex(data_back, sym)
+            out[sym] = self._merge_front_back(sym, front, back, start, end)
+        return out
 
     def get_minute_bars(
         self,

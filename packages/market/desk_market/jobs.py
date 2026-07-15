@@ -155,11 +155,15 @@ class MarketJobs:
                 daily_start_date=self.config.daily_start_date,
                 asof=asof or date.today(),
             ).run(on_progress=self._on_progress(row))
+            err_tail = "; ".join(result.get("errors") or [])
+            msg = f"refill_incomplete={result.get('refill_incomplete', 0)}"
+            if err_tail:
+                msg = f"{msg}; {err_tail}"
             self.store.finish(
                 row,
                 status="ok",
                 symbols_done=int(result.get("symbols_done", 0)),
-                message="; ".join(result.get("errors") or [])[:500],
+                message=msg[:500],
             )
             return {"status": "ok", **result, "run_id": row.id}
         except Exception as exc:  # noqa: BLE001

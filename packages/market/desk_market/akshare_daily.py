@@ -10,6 +10,16 @@ import pandas as pd
 from desk_common.symbols import normalize_symbol
 
 
+def akshare_supports_symbol(symbol: str) -> bool:
+    """
+    AkShare ``stock_zh_a_hist`` 是否适合补洞。
+
+    北交所东财 secid 映射不可靠，且常被代理打断，故不走 AkShare。
+    """
+    sym = normalize_symbol(symbol)
+    return sym.endswith(".SH") or sym.endswith(".SZ")
+
+
 class AkshareDailyClient:
     """
     AkShare 日线客户端。
@@ -21,23 +31,34 @@ class AkshareDailyClient:
         """
         拉取前复权默认列 + *_hfq。
 
+        不支持的市场或网络/代理失败时返回空表（不向调用方抛出长错误栈）。
+
         @param symbol: 规范化或可规范化 symbol
         @param start: 起始日
         @param end: 结束日
-        @returns: 与 MarketService.upsert 兼容的 DataFrame
+        @returns: 与 MarketService.upsert 兼容的 DataFrame；失败为空
         """
-        import akshare as ak  # noqa: PLC0415 — 可选重依赖
-
         sym = normalize_symbol(symbol)
+        if not akshare_supports_symbol(sym):
+            return pd.DataFrame()
+
+        try:
+            import akshare as ak  # noqa: PLC0415 — 可选重依赖
+        except Exception:  # noqa: BLE001
+            return pd.DataFrame()
+
         code = sym.split(".")[0]
         start_s = start.strftime("%Y%m%d")
         end_s = end.strftime("%Y%m%d")
-        qfq = ak.stock_zh_a_hist(
-            symbol=code, period="daily", start_date=start_s, end_date=end_s, adjust="qfq"
-        )
-        hfq = ak.stock_zh_a_hist(
-            symbol=code, period="daily", start_date=start_s, end_date=end_s, adjust="hfq"
-        )
+        try:
+            qfq = ak.stock_zh_a_hist(
+                symbol=code, period="daily", start_date=start_s, end_date=end_s, adjust="qfq"
+            )
+            hfq = ak.stock_zh_a_hist(
+                symbol=code, period="daily", start_date=start_s, end_date=end_s, adjust="hfq"
+            )
+        except Exception:  # noqa: BLE001 — ProxyError / 东财限流等
+            return pd.DataFrame()
         return _merge_ak_frames(qfq, hfq)
 
 

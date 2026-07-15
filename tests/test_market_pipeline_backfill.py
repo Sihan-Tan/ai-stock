@@ -17,6 +17,7 @@ from desk_common.settings import get_settings
 from desk_db import Base, get_engine, reset_engine
 import desk_db.models  # noqa: F401
 from desk_db.models import BarDaily
+from desk_market import MarketService
 from desk_market.daily_ingest import DailyBarIngestor
 from desk_market.history_backfill import HistoryBackfill
 from desk_market.qmt_md import InstrumentInfo, MockQmtMarketData
@@ -147,3 +148,63 @@ def test_backfill_prefers_qmt_then_akshare(_db):
     assert not ak.calls
     row = db.scalar(select(BarDaily).where(BarDaily.symbol == "600519.SH"))
     assert row is not None and float(row.close_hfq) == 2.0
+
+
+def test_backfill_skips_akshare_for_bj(_db):
+    """北交所不走 AkShare 补洞，空数据不记硬错误。"""
+    db = Session(get_engine())
+    md = FailThenEmptyMd(instruments=[InstrumentInfo("821008.BJ", status="listed")])
+    ak = FakeAk()
+    result = HistoryBackfill(
+        db,
+        md,
+        akshare=ak,
+        daily_start_date=date(2018, 1, 1),
+        symbols=["821008.BJ"],
+        forced_gap=(date(2024, 1, 2), date(2024, 1, 5)),
+    ).run()
+    assert not ak.calls
+    assert result["errors"] == []
+    assert result["symbols_done"] == 0
+
+
+def test_backfill_refills_from_daily_start_when_history_incomplete(_db):
+    """仅有近几日数据时，应从 daily_start 重拉，而不是从 MAX(ts) 向后。"""
+    db = Session(get_engine())
+    md = RecordingMd(instruments=[InstrumentInfo("600519.SH", status="listed")])
+    # 库内只有近端 2 天（模拟日终增量残留）
+    for d in (date(2024, 6, 2), date(2024, 6, 3)):
+        md.seed_daily(
+            "600519.SH",
+            d,
+            qfq={"open": 1, "high": 1, "low": 1, "close": 1, "volume": 1, "amount": 1},
+            hfq={"open": 2, "high": 2, "low": 2, "close": 2, "volume": 1},
+        )
+        MarketService(db).upsert_daily_bars(
+            "600519.SH",
+            md.get_daily_bars("600519.SH", d, d),
+        )
+    db.commit()
+    md.calls.clear()
+
+    # 再往 Mock 里补更早日期，供「重拉」读到
+    md.seed_daily(
+        "600519.SH",
+        date(2018, 1, 3),
+        qfq={"open": 9, "high": 9, "low": 9, "close": 9, "volume": 1, "amount": 1},
+        hfq={"open": 90, "high": 90, "low": 90, "close": 90, "volume": 1},
+    )
+
+    ak = FakeAk()
+    HistoryBackfill(
+        db,
+        md,
+        akshare=ak,
+        daily_start_date=date(2018, 1, 1),
+        symbols=["600519.SH"],
+        asof=date(2024, 6, 3),
+        batch_size=10,
+    ).run()
+    assert md.calls
+    starts = [s for _, s, _ in md.calls]
+    assert min(starts) == date(2018, 1, 1)

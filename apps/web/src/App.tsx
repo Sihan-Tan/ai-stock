@@ -188,7 +188,10 @@ function Watchlist({ setLog }: { setLog: (s: string) => void }) {
     <div className="stack">
       <div className="card">
         <h3>行情同步</h3>
-        <p className="muted">任务后台执行；有 running 时每 2 秒刷新进度（symbols_done）。</p>
+        <p className="muted">
+          任务后台执行；有 running 时每 2 秒刷新进度。历史回填会把「最早日晚于配置起始日」的标的从{" "}
+          <code>daily_start_date</code> 起按 example 方式（download + front/back）重拉。
+        </p>
         <div className="row">
           <button
             type="button"
