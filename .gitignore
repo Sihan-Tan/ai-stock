@@ -21,3 +21,4 @@ data/knowledge/**
 .vscode/
 coverage/
 htmlcov/
+example/

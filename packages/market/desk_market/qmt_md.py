@@ -12,8 +12,9 @@ from desk_common.symbols import normalize_symbol
 
 _HFQ_OHLCV = ("open", "high", "low", "close", "volume")
 
-# 优先完整 A 股（含京市），再回退沪深 A
-_A_SHARE_SECTORS = ("沪深京A股", "沪深A股", "上证A股", "深证A股")
+# 主板块：沪深 A（含 ETF 等成分）+ 京市；不去前缀过滤
+_A_SHARE_SECTORS = ("沪深A股", "京市A股", "北交所", "沪深京A股")
+_DELISTED_SECTORS = ("退市股票", "退市", "已退市", "退市板块")
 
 
 @dataclass
@@ -224,7 +225,8 @@ class XtdataMarketData:
     """
     真实 xtquant.xtdata 适配。
 
-    不可 import 时构造失败，由上层 jobs 标记 failed。
+    拉数方式对齐 ``example/0/1/8``：connect + 板块过滤 + download_history_data
+    + get_market_data_ex(front/back)。
     禁止依赖 desk_broker.QmtBroker。
     """
 
@@ -236,9 +238,17 @@ class XtdataMarketData:
         except Exception:  # noqa: BLE001
             pass
         self._xt = xtdata
+        try:
+            self._xt.connect()
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _fmt_day(self, d: date) -> str:
+        """date → YYYYMMDD。"""
+        return d.strftime("%Y%m%d")
 
     def _stock_list_from_sectors(self) -> list[str]:
-        """从板块取 A 股代码列表；空则尝试 download_sector_data 后重试。"""
+        """从板块取代码列表（保留 ETF/板块指数等，不做前缀过滤）；空则 download_sector_data 后重试。"""
         symbols = self._try_sector_lists()
         if symbols:
             return symbols
@@ -249,7 +259,7 @@ class XtdataMarketData:
         return self._try_sector_lists()
 
     def _try_sector_lists(self) -> list[str]:
-        """按候选板块名依次拉取；优先合并沪深京。"""
+        """按候选板块拉取并去重；保留 ETF 与板块相关代码。"""
         seen: set[str] = set()
         ordered: list[str] = []
         for sector in _A_SHARE_SECTORS:
@@ -257,23 +267,32 @@ class XtdataMarketData:
                 xs = self._xt.get_stock_list_in_sector(sector) or []
             except Exception:  # noqa: BLE001
                 continue
-            if not xs:
-                continue
-            # 沪深京 / 沪深 整板直接采用（最完整）
-            if sector in ("沪深京A股", "沪深A股"):
-                return [str(s) for s in xs]
             for s in xs:
-                if s not in seen:
-                    seen.add(s)
-                    ordered.append(str(s))
+                code = str(s)
+                if "." not in code or code in seen:
+                    continue
+                seen.add(code)
+                ordered.append(code)
         return ordered
 
+    def _delisted_symbols(self) -> set[str]:
+        """退市板块成分（名称对齐 example）。"""
+        out: set[str] = set()
+        for sector in _DELISTED_SECTORS:
+            try:
+                xs = self._xt.get_stock_list_in_sector(sector) or []
+            except Exception:  # noqa: BLE001
+                continue
+            out.update(str(s) for s in xs)
+        return out
+
     def list_instruments(self) -> list[InstrumentInfo]:
-        """列出 A 股标的（板块成分 + 合约详情名/状态）。"""
+        """列出 A 股标的（板块成分过滤 + 合约名称/状态）。"""
         raw_symbols = self._stock_list_from_sectors()
         if not raw_symbols:
             raise RuntimeError("xtdata 未返回 A 股板块成分，请确认 miniQMT 已启动且板块数据已下载")
 
+        delisted = self._delisted_symbols()
         details: dict[str, Any] = {}
         chunk = 500
         for i in range(0, len(raw_symbols), chunk):
@@ -295,11 +314,15 @@ class XtdataMarketData:
         for raw in raw_symbols:
             sym = normalize_symbol(raw)
             d = details.get(raw) or details.get(sym) or {}
+            if raw in delisted or sym in delisted:
+                status = "delisted"
+            else:
+                status = _map_instrument_status(d if isinstance(d, dict) else None)
             out.append(
                 InstrumentInfo(
                     symbol=sym,
-                    name=str(d.get("InstrumentName") or ""),
-                    status=_map_instrument_status(d if isinstance(d, dict) else None),
+                    name=str(d.get("InstrumentName") or "") if isinstance(d, dict) else "",
+                    status=status,
                 )
             )
         return out
@@ -313,9 +336,108 @@ class XtdataMarketData:
             out.append(info.symbol)
         return out
 
+    def _df_from_market_ex(self, data: Any, symbol: str) -> pd.DataFrame:
+        """将 get_market_data_ex 返回规整为带 date 列的 DataFrame。"""
+        if not data:
+            return pd.DataFrame()
+        df = data.get(symbol) if isinstance(data, dict) else None
+        if df is None or getattr(df, "empty", True):
+            return pd.DataFrame()
+        out = df.copy()
+        dates: list[date] = []
+        for idx in out.index:
+            idx_str = str(idx).replace("-", "")[:8]
+            if len(idx_str) < 8 or not idx_str.isdigit():
+                dates.append(None)  # type: ignore[arg-type]
+                continue
+            dates.append(date(int(idx_str[:4]), int(idx_str[4:6]), int(idx_str[6:8])))
+        out = out.assign()
+        out["date"] = dates
+        out = out.dropna(subset=["date"])
+        return out
+
     def get_daily_bars(self, symbol: str, start: date, end: date) -> pd.DataFrame:
-        """日线双复权合并（stub：前复权默认列 + *_hfq）。"""
-        raise NotImplementedError("XtdataMarketData.get_daily_bars 待联调")
+        """
+        日线双复权：默认列=前复权（front），``*_hfq``=后复权（back）。
+
+        对齐 ``example/8-日线后复权数据.py``。
+        """
+        symbol = normalize_symbol(symbol)
+        start_s = self._fmt_day(start)
+        end_s = self._fmt_day(end)
+        try:
+            self._xt.download_history_data(
+                symbol, period="1d", start_time=start_s, end_time=end_s
+            )
+        except Exception:  # noqa: BLE001 — 本地已有缓存时仍可继续读
+            pass
+
+        data_front = self._xt.get_market_data_ex(
+            field_list=["open", "high", "low", "close", "volume", "amount"],
+            stock_list=[symbol],
+            period="1d",
+            start_time=start_s,
+            end_time=end_s,
+            dividend_type="front",
+        )
+        data_back = self._xt.get_market_data_ex(
+            field_list=["open", "high", "low", "close", "volume"],
+            stock_list=[symbol],
+            period="1d",
+            start_time=start_s,
+            end_time=end_s,
+            dividend_type="back",
+        )
+        front = self._df_from_market_ex(data_front, symbol)
+        back = self._df_from_market_ex(data_back, symbol)
+        if front.empty:
+            return pd.DataFrame()
+
+        rows: list[dict[str, Any]] = []
+        back_by_date: dict[date, Any] = {}
+        if not back.empty:
+            for _, brow in back.iterrows():
+                back_by_date[brow["date"]] = brow
+
+        for _, frow in front.iterrows():
+            d = frow["date"]
+            if d < start or d > end:
+                continue
+            qfq = {
+                "date": d,
+                "open": float(frow["open"]) if pd.notna(frow.get("open")) else None,
+                "high": float(frow["high"]) if pd.notna(frow.get("high")) else None,
+                "low": float(frow["low"]) if pd.notna(frow.get("low")) else None,
+                "close": float(frow["close"]) if pd.notna(frow.get("close")) else None,
+                "volume": float(frow["volume"]) if pd.notna(frow.get("volume")) else 0.0,
+                "amount": float(frow["amount"]) if "amount" in frow and pd.notna(frow.get("amount")) else 0.0,
+            }
+            brow = back_by_date.get(d)
+            if brow is not None:
+                hfq = {
+                    "open": float(brow["open"]) if pd.notna(brow.get("open")) else qfq["open"],
+                    "high": float(brow["high"]) if pd.notna(brow.get("high")) else qfq["high"],
+                    "low": float(brow["low"]) if pd.notna(brow.get("low")) else qfq["low"],
+                    "close": float(brow["close"]) if pd.notna(brow.get("close")) else qfq["close"],
+                    "volume": float(brow["volume"]) if pd.notna(brow.get("volume")) else qfq["volume"],
+                }
+            else:
+                hfq = {
+                    "open": qfq["open"],
+                    "high": qfq["high"],
+                    "low": qfq["low"],
+                    "close": qfq["close"],
+                    "volume": qfq["volume"],
+                }
+            if None in (qfq["open"], qfq["high"], qfq["low"], qfq["close"]):
+                continue
+            if None in (hfq["open"], hfq["high"], hfq["low"], hfq["close"]):
+                continue
+            rows.append(_merge_qfq_hfq(qfq, hfq))
+
+        if not rows:
+            return pd.DataFrame()
+        return pd.DataFrame(rows)
 
     def get_minute_bars(
         self,
@@ -323,9 +445,51 @@ class XtdataMarketData:
         start: str | datetime,
         end: str | datetime,
     ) -> pd.DataFrame:
-        """分钟 K 线（stub）。"""
-        raise NotImplementedError("XtdataMarketData.get_minute_bars 待联调")
+        """分钟 K 线（download + get_market_data_ex period=1m）。"""
+        symbol = normalize_symbol(symbol)
+        start_ts = _parse_ts(start)
+        end_ts = _parse_ts(end)
+        start_s = start_ts.strftime("%Y%m%d%H%M%S")
+        end_s = end_ts.strftime("%Y%m%d%H%M%S")
+        try:
+            self._xt.download_history_data(
+                symbol, period="1m", start_time=start_s, end_time=end_s
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        data = self._xt.get_market_data_ex(
+            field_list=["open", "high", "low", "close", "volume", "amount"],
+            stock_list=[symbol],
+            period="1m",
+            start_time=start_s,
+            end_time=end_s,
+            dividend_type="none",
+        )
+        if not data:
+            return pd.DataFrame()
+        df = data.get(symbol) if isinstance(data, dict) else None
+        if df is None or getattr(df, "empty", True):
+            return pd.DataFrame()
+        out = df.copy()
+        out["ts"] = [pd.Timestamp(i).to_pydatetime() for i in out.index]
+        out = out[(out["ts"] >= start_ts) & (out["ts"] <= end_ts)]
+        return out.reset_index(drop=True)
 
     def get_snapshots(self, symbols: list[str]) -> dict[str, dict]:
-        """最新快照（stub）。"""
-        raise NotImplementedError("XtdataMarketData.get_snapshots 待联调")
+        """最新快照（instrument detail 中的 PreClose 等，能取则返回）。"""
+        out: dict[str, dict] = {}
+        for raw in symbols:
+            sym = normalize_symbol(raw)
+            try:
+                d = self._xt.get_instrument_detail(sym) or {}
+            except Exception:  # noqa: BLE001
+                continue
+            if not d:
+                continue
+            out[sym] = {
+                "symbol": sym,
+                "name": d.get("InstrumentName") or "",
+                "last": d.get("PreClose"),
+                "pre_close": d.get("PreClose"),
+            }
+        return out
