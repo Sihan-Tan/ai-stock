@@ -34,6 +34,40 @@ class BarDaily(Base):
     volume: Mapped[float] = mapped_column(Float, default=0.0)
     amount: Mapped[float] = mapped_column(Float, default=0.0)
     adj_factor: Mapped[float] = mapped_column(Float, default=1.0)
+    open_hfq: Mapped[float | None] = mapped_column(Float, nullable=True)
+    high_hfq: Mapped[float | None] = mapped_column(Float, nullable=True)
+    low_hfq: Mapped[float | None] = mapped_column(Float, nullable=True)
+    close_hfq: Mapped[float | None] = mapped_column(Float, nullable=True)
+    volume_hfq: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+
+class SecurityMeta(Base):
+    """标的元数据（退市状态等）。"""
+
+    __tablename__ = "security_meta"
+    __table_args__ = (UniqueConstraint("symbol", name="uq_security_meta_symbol"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    symbol: Mapped[str] = mapped_column(String(16), index=True)
+    name: Mapped[str] = mapped_column(String(64), default="")
+    is_delisted: Mapped[bool] = mapped_column(Boolean, default=False)
+    status: Mapped[str] = mapped_column(String(32), default="listed")  # listed|delisted|...
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class MarketJobRun(Base):
+    """行情同步任务运行记录。"""
+
+    __tablename__ = "market_job_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    job_id: Mapped[str] = mapped_column(String(64), index=True)
+    status: Mapped[str] = mapped_column(String(16), default="running")  # running|ok|failed
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    symbols_done: Mapped[int] = mapped_column(Integer, default=0)
+    error_summary: Mapped[str] = mapped_column(Text, default="")
+    message: Mapped[str] = mapped_column(Text, default="")
 
 
 class BarMinute(Base):
