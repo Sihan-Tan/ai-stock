@@ -113,7 +113,9 @@ function Overview({ setLog }: { setLog: (s: string) => void }) {
   };
   return (
     <div className="card">
-      <p className="muted">v1 工作台。行情 / 情绪 / 龙虎榜走 QMT 与 AkShare 同步落库，无演示种子数据。</p>
+      <p className="muted">
+        v1 工作台。行情同步请到「行情自选」页触发；策略列表可在此刷新。
+      </p>
       <button type="button" className="btn" onClick={syncJobs}>
         同步策略列表
       </button>
@@ -121,42 +123,178 @@ function Overview({ setLog }: { setLog: (s: string) => void }) {
   );
 }
 
+type JobRun = {
+  id: number;
+  job_id: string;
+  status: string;
+  started_at: string | null;
+  finished_at: string | null;
+  symbols_done: number;
+  error_summary: string;
+  message: string;
+};
+
+const JOB_LABELS: Record<string, string> = {
+  sync_trade_calendar: "交易日历",
+  sync_security_list: "证券列表",
+  ingest_daily_incremental: "日终日线",
+  backfill_daily_chunks: "历史回填",
+  ingest_minute_watch: "分钟同步",
+};
+
 function Watchlist({ setLog }: { setLog: (s: string) => void }) {
   const [rows, setRows] = useState<any[]>([]);
-  const load = () =>
+  const [jobs, setJobs] = useState<JobRun[]>([]);
+  const [busy, setBusy] = useState(false);
+
+  const loadWatch = () =>
     api<any[]>("/api/market/watchlist")
       .then(setRows)
       .catch((e) => setLog(String(e)));
+
+  const loadJobs = () =>
+    api<JobRun[]>("/api/market/jobs/status?limit=30")
+      .then(setJobs)
+      .catch((e) => setLog(String(e)));
+
   useEffect(() => {
-    load();
+    loadWatch();
+    loadJobs();
   }, []);
+
+  useEffect(() => {
+    const running = jobs.some((j) => j.status === "running");
+    if (!running) return;
+    const t = window.setInterval(() => {
+      loadJobs();
+    }, 2000);
+    return () => window.clearInterval(t);
+  }, [jobs]);
+
+  const enqueue = async (path: string, label: string) => {
+    setBusy(true);
+    try {
+      const res = await api<{ run_id: number; status: string }>(path, { method: "POST" });
+      setLog(`${label} 已入队 #${res.run_id}`);
+      await loadJobs();
+    } catch (e) {
+      setLog(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
-    <div className="card">
-      <div className="row">
-        <button type="button" className="btn" onClick={load}>
-          刷新
-        </button>
-      </div>
-      <table>
-        <thead>
-          <tr>
-            <th>代码</th>
-            <th>名称</th>
-            <th>现价</th>
-            <th>涨跌</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r) => (
-            <tr key={r.symbol}>
-              <td className="mono">{r.symbol}</td>
-              <td>{r.name}</td>
-              <td className="mono">{r.last}</td>
-              <td className="mono">{r.pct_chg}</td>
+    <div className="stack">
+      <div className="card">
+        <h3>行情同步</h3>
+        <p className="muted">任务后台执行；有 running 时每 2 秒刷新进度（symbols_done）。</p>
+        <div className="row">
+          <button
+            type="button"
+            className="btn"
+            disabled={busy}
+            onClick={() => enqueue("/api/market/jobs/calendar-sync", "交易日历")}
+          >
+            同步日历
+          </button>
+          <button
+            type="button"
+            className="btn"
+            disabled={busy}
+            onClick={() => enqueue("/api/market/jobs/security-list", "证券列表")}
+          >
+            同步证券列表
+          </button>
+          <button
+            type="button"
+            className="btn primary"
+            disabled={busy}
+            onClick={() => enqueue("/api/market/jobs/daily-sync", "日终日线")}
+          >
+            日终增量
+          </button>
+          <button
+            type="button"
+            className="btn primary"
+            disabled={busy}
+            onClick={() => enqueue("/api/market/jobs/backfill", "历史回填")}
+          >
+            历史回填
+          </button>
+          <button
+            type="button"
+            className="btn"
+            disabled={busy}
+            onClick={() => enqueue("/api/market/jobs/minute-sync", "分钟同步")}
+          >
+            分钟同步
+          </button>
+          <button type="button" className="btn" onClick={() => loadJobs()}>
+            刷新状态
+          </button>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>任务</th>
+              <th>状态</th>
+              <th>已完成</th>
+              <th>消息</th>
+              <th>开始</th>
+              <th>结束</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {jobs.map((j) => (
+              <tr key={j.id}>
+                <td className="mono">{j.id}</td>
+                <td>{JOB_LABELS[j.job_id] || j.job_id}</td>
+                <td className="mono">{j.status}</td>
+                <td className="mono">{j.symbols_done}</td>
+                <td className="muted">{j.error_summary || j.message || "—"}</td>
+                <td className="mono muted">{j.started_at || "—"}</td>
+                <td className="mono muted">{j.finished_at || "—"}</td>
+              </tr>
+            ))}
+            {!jobs.length && (
+              <tr>
+                <td colSpan={7} className="muted">
+                  暂无任务记录
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      <div className="card">
+        <div className="row">
+          <button type="button" className="btn" onClick={loadWatch}>
+            刷新自选
+          </button>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>代码</th>
+              <th>名称</th>
+              <th>现价</th>
+              <th>涨跌</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.symbol}>
+                <td className="mono">{r.symbol}</td>
+                <td>{r.name}</td>
+                <td className="mono">{r.last}</td>
+                <td className="mono">{r.pct_chg}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

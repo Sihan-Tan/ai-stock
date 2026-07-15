@@ -95,8 +95,38 @@ def test_bars_daily_adj_and_jobs_status(client, _db, monkeypatch):
     assert r3.json()[0]["close"] == 10.5
 
     assert client.post("/api/market/jobs/daily-sync").status_code == 200
-    assert client.post("/api/market/jobs/minute-sync").status_code == 200
-    assert client.post("/api/market/jobs/backfill").status_code == 200
+    body = client.post("/api/market/jobs/minute-sync").json()
+    assert body["status"] == "running"
+    assert "run_id" in body
+    bf = client.post("/api/market/jobs/backfill")
+    assert bf.status_code == 200
+    assert bf.json()["status"] == "running"
     st = client.get("/api/market/jobs/status")
     assert st.status_code == 200
     assert isinstance(st.json(), list)
+    assert len(st.json()) >= 1
+    detail = client.get(f"/api/market/jobs/{body['run_id']}")
+    assert detail.status_code == 200
+    assert detail.json()["status"] in ("ok", "failed", "running")
+
+
+def test_jobs_enqueue_reject_duplicate_running(client, _db, monkeypatch):
+    """同 job 已有 running 时返回 409。"""
+    from desk_db.models import MarketJobRun
+    from desk_market.qmt_md import MockQmtMarketData
+    import app.routes.market as market_routes
+
+    monkeypatch.setattr(market_routes, "get_market_data", lambda: MockQmtMarketData(instruments=[]))
+    db = Session(get_engine())
+    db.add(
+        MarketJobRun(
+            job_id="ingest_daily_incremental",
+            status="running",
+            symbols_done=0,
+            error_summary="",
+            message="",
+        )
+    )
+    db.commit()
+    r = client.post("/api/market/jobs/daily-sync")
+    assert r.status_code == 409

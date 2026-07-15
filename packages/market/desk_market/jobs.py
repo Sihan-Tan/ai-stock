@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
-from typing import Any
+from typing import Any, Callable
 
 from sqlalchemy.orm import Session
 
 from desk_calendar import CalendarService, CalendarSync
+from desk_db.models import MarketJobRun
 from desk_market.akshare_daily import AkshareDailyClient
 from desk_market.config import MarketSyncConfig, load_indices, load_market_sync_config
 from desk_market.daily_ingest import DailyBarIngestor
@@ -56,64 +57,96 @@ class MarketJobs:
         """最近任务状态。"""
         return self.store.recent(limit)
 
-    def sync_trade_calendar(self, start: date | None = None, end: date | None = None) -> dict[str, Any]:
+    def get_run(self, run_id: int) -> dict[str, Any] | None:
+        """单次运行详情。"""
+        row = self.store.get(run_id)
+        return JobStore.to_dict(row) if row else None
+
+    def _begin(self, job_id: str, run_id: int | None) -> MarketJobRun:
+        """取得已有 run 或新建。"""
+        if run_id is not None:
+            row = self.store.get(run_id)
+            if row is None:
+                raise ValueError(f"unknown_run_id={run_id}")
+            return row
+        return self.store.start(job_id)
+
+    def _on_progress(self, row: MarketJobRun) -> Callable[[int, str], None]:
+        """中间进度回调（提交后供轮询读取）。"""
+
+        def _cb(symbols_done: int, message: str = "") -> None:
+            self.store.progress(row, symbols_done=symbols_done, message=message)
+
+        return _cb
+
+    def sync_trade_calendar(
+        self,
+        start: date | None = None,
+        end: date | None = None,
+        *,
+        run_id: int | None = None,
+    ) -> dict[str, Any]:
         """同步交易日历。"""
-        row = self.store.start("sync_trade_calendar")
+        row = self._begin("sync_trade_calendar", run_id)
         try:
             today = date.today()
             start = start or date(today.year, 1, 1)
             end = end or date(today.year, 12, 31)
             n = CalendarSync(self.db, self.calendar_client).run(start, end)
             self.store.finish(row, status="ok", message=f"upserted={n}")
-            return {"status": "ok", "upserted": n}
+            return {"status": "ok", "upserted": n, "run_id": row.id}
         except Exception as exc:  # noqa: BLE001
             self.store.finish(row, status="failed", error_summary=str(exc))
-            return {"status": "failed", "error": str(exc)}
+            return {"status": "failed", "error": str(exc), "run_id": row.id}
 
-    def sync_security_list(self) -> dict[str, Any]:
+    def sync_security_list(self, *, run_id: int | None = None) -> dict[str, Any]:
         """同步证券列表。"""
-        row = self.store.start("sync_security_list")
+        row = self._begin("sync_security_list", run_id)
         try:
             universe = SecurityListSync(self.db, self.md).run()
             self.store.finish(row, status="ok", symbols_done=len(universe))
-            return {"status": "ok", "universe_size": len(universe)}
+            return {"status": "ok", "universe_size": len(universe), "run_id": row.id}
         except Exception as exc:  # noqa: BLE001
             self.store.finish(row, status="failed", error_summary=str(exc))
-            return {"status": "failed", "error": str(exc)}
+            return {"status": "failed", "error": str(exc), "run_id": row.id}
 
-    def ingest_daily_incremental(self, asof: date | None = None) -> dict[str, Any]:
+    def ingest_daily_incremental(
+        self, asof: date | None = None, *, run_id: int | None = None
+    ) -> dict[str, Any]:
         """日终近 N 日增量。"""
-        row = self.store.start("ingest_daily_incremental")
+        row = self._begin("ingest_daily_incremental", run_id)
         asof = asof or date.today()
         try:
             if not CalendarService(self.db).require_trade_day(asof):
                 self.store.finish(row, status="ok", message="skipped_non_trade_day")
-                return {"status": "ok", "skipped": True}
+                return {"status": "ok", "skipped": True, "run_id": row.id}
             result = DailyBarIngestor(
                 self.db,
                 self.md,
                 incremental_days=self.config.incremental_days,
                 asof=asof,
                 daily_start_date=self.config.daily_start_date,
-            ).run()
+            ).run(on_progress=self._on_progress(row))
             if result.get("errors") and result.get("symbols_done", 0) == 0:
                 err = "; ".join(result["errors"])[:500]
                 self.store.finish(row, status="failed", error_summary=err, symbols_done=0)
-                return {"status": "failed", "errors": result["errors"]}
+                return {"status": "failed", "errors": result["errors"], "run_id": row.id}
             self.store.finish(
                 row,
                 status="ok",
                 symbols_done=int(result.get("symbols_done", 0)),
                 message="; ".join(result.get("errors") or [])[:500],
             )
-            return {"status": "ok", **result}
+            return {"status": "ok", **result, "run_id": row.id}
         except Exception as exc:  # noqa: BLE001
             self.store.finish(row, status="failed", error_summary=str(exc))
-            return {"status": "failed", "error": str(exc)}
+            return {"status": "failed", "error": str(exc), "run_id": row.id}
 
-    def backfill_daily_chunks(self, asof: date | None = None) -> dict[str, Any]:
+    def backfill_daily_chunks(
+        self, asof: date | None = None, *, run_id: int | None = None
+    ) -> dict[str, Any]:
         """历史缺口回填。"""
-        row = self.store.start("backfill_daily_chunks")
+        row = self._begin("backfill_daily_chunks", run_id)
         try:
             result = HistoryBackfill(
                 self.db,
@@ -121,21 +154,23 @@ class MarketJobs:
                 akshare=self.akshare,
                 daily_start_date=self.config.daily_start_date,
                 asof=asof or date.today(),
-            ).run()
+            ).run(on_progress=self._on_progress(row))
             self.store.finish(
                 row,
                 status="ok",
                 symbols_done=int(result.get("symbols_done", 0)),
                 message="; ".join(result.get("errors") or [])[:500],
             )
-            return {"status": "ok", **result}
+            return {"status": "ok", **result, "run_id": row.id}
         except Exception as exc:  # noqa: BLE001
             self.store.finish(row, status="failed", error_summary=str(exc))
-            return {"status": "failed", "error": str(exc)}
+            return {"status": "failed", "error": str(exc), "run_id": row.id}
 
-    def ingest_minute_watch(self, asof: date | None = None) -> dict[str, Any]:
+    def ingest_minute_watch(
+        self, asof: date | None = None, *, run_id: int | None = None
+    ) -> dict[str, Any]:
         """自选∪指数分钟同步。"""
-        row = self.store.start("ingest_minute_watch")
+        row = self._begin("ingest_minute_watch", run_id)
         try:
             result = MinuteBarIngestor(
                 self.db,
@@ -150,10 +185,10 @@ class MarketJobs:
                 symbols_done=int(result.get("bars_written", 0)),
                 message=f"purged={result.get('purged', 0)}",
             )
-            return {"status": "ok", **result}
+            return {"status": "ok", **result, "run_id": row.id}
         except Exception as exc:  # noqa: BLE001
             self.store.finish(row, status="failed", error_summary=str(exc))
-            return {"status": "failed", "error": str(exc)}
+            return {"status": "failed", "error": str(exc), "run_id": row.id}
 
     def _resolve_sentiment_client(self):
         if self.sentiment_client is not None:

@@ -56,10 +56,11 @@ class DailyBarIngestor:
             start = self.daily_start_date
         return start, end
 
-    def run(self) -> dict[str, Any]:
+    def run(self, on_progress: Any | None = None) -> dict[str, Any]:
         """
         执行近窗增量拉取并 upsert。
 
+        @param on_progress: 可选回调 ``(symbols_done, message)``
         @returns: symbols_done / errors
         """
         start, end = self._window()
@@ -74,5 +75,7 @@ class DailyBarIngestor:
                     symbols_done += 1
             except Exception as exc:  # noqa: BLE001 — 单标的失败不阻断整批
                 errors.append(f"{symbol}: {exc}")
+            if on_progress is not None:
+                on_progress(symbols_done, f"last={symbol}")
         self.db.flush()
         return {"symbols_done": symbols_done, "errors": errors}

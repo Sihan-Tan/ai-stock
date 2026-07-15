@@ -80,10 +80,11 @@ class HistoryBackfill:
             return None
         return start, end
 
-    def run(self) -> dict[str, Any]:
+    def run(self, on_progress: Any | None = None) -> dict[str, Any]:
         """
         执行回填。
 
+        @param on_progress: 可选回调 ``(symbols_done, message)``
         @returns: symbols_done / errors
         """
         svc = MarketService(self.db)
@@ -103,5 +104,7 @@ class HistoryBackfill:
                     symbols_done += 1
             except Exception as exc:  # noqa: BLE001
                 errors.append(f"{symbol}: {exc}")
+            if on_progress is not None:
+                on_progress(symbols_done, f"last={symbol}")
         self.db.flush()
         return {"symbols_done": symbols_done, "errors": errors}
