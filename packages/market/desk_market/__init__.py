@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from typing import Any
 
 import pandas as pd
@@ -255,64 +255,3 @@ class MarketService:
                 }
             boards[r.board_code]["members"] += 1
         return list(boards.values())
-
-    def seed_demo_data(self) -> None:
-        """种子演示数据（无外网也可跑）。"""
-        if not self.db.scalar(select(WatchlistItem).limit(1)):
-            for sym, name in [
-                ("600519.SH", "贵州茅台"),
-                ("300750.SZ", "宁德时代"),
-                ("510300.SH", "沪深300ETF"),
-            ]:
-                self.add_watchlist(sym, name)
-                self.upsert_quote(sym, name, 100.0, 0.5, 1e8)
-
-        if not self.db.scalar(select(BarDaily).limit(1)):
-            today = date.today()
-            for sym in ["600519.SH", "300750.SZ", "510300.SH"]:
-                rows = []
-                price = 100.0
-                for i in range(120, 0, -1):
-                    d = today - timedelta(days=i)
-                    if d.weekday() >= 5:
-                        continue
-                    price *= 1 + ((hash(f"{sym}{d}") % 21) - 10) / 1000.0
-                    o, h, l, c, v = price * 0.99, price * 1.01, price * 0.98, price, 1e6
-                    rows.append(
-                        {
-                            "date": d,
-                            "open": o,
-                            "high": h,
-                            "low": l,
-                            "close": c,
-                            "volume": v,
-                            "amount": price * 1e6,
-                            "open_hfq": o,
-                            "high_hfq": h,
-                            "low_hfq": l,
-                            "close_hfq": c,
-                            "volume_hfq": v,
-                        }
-                    )
-                self.upsert_daily_bars(sym, pd.DataFrame(rows))
-
-        if not self.db.scalar(select(BoardMember).limit(1)):
-            self.db.add_all(
-                [
-                    BoardMember(
-                        board_code="BK001",
-                        board_name="半导体",
-                        board_type="sector",
-                        symbol="300750.SZ",
-                        effective_from=date(2020, 1, 1),
-                    ),
-                    BoardMember(
-                        board_code="BK002",
-                        board_name="白酒",
-                        board_type="concept",
-                        symbol="600519.SH",
-                        effective_from=date(2020, 1, 1),
-                    ),
-                ]
-            )
-            self.db.flush()

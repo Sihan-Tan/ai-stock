@@ -129,19 +129,3 @@ class CalendarService:
             }
             for r in rows
         ]
-
-    def seed_demo(self) -> None:
-        """演示停牌数据。"""
-        self.ensure_year(date.today().year)
-        if not self.db.scalar(select(SuspensionEvent).limit(1)):
-            self.db.add(
-                SuspensionEvent(
-                    symbol="600000.SH",
-                    name="示例停牌",
-                    event_type="suspend",
-                    effective_date=date.today(),
-                    reason="重大事项",
-                    scope="watchlist",
-                )
-            )
-            self.db.flush()

@@ -31,14 +31,6 @@ def get_market_data():
         return MockQmtMarketData(instruments=[])
 
 
-@router.post("/seed")
-def seed(db: Session = Depends(get_db)):
-    """演示种子数据（次要路径）。"""
-    svc = MarketService(db)
-    svc.seed_demo_data()
-    return {"ok": True}
-
-
 @router.get("/watchlist")
 def watchlist(db: Session = Depends(get_db)):
     return MarketService(db).list_watchlist()

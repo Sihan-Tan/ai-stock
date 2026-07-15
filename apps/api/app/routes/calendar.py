@@ -9,12 +9,6 @@ from desk_db import get_db
 router = APIRouter(prefix="/calendar")
 
 
-@router.post("/seed")
-def seed(db: Session = Depends(get_db)):
-    CalendarService(db).seed_demo()
-    return {"ok": True}
-
-
 @router.get("/month")
 def month(year: int, month: int, db: Session = Depends(get_db)):
     return CalendarService(db).month_view(year, month)

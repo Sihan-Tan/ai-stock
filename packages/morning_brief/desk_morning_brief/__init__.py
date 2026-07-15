@@ -53,8 +53,7 @@ class MorningBriefService:
             return StrongPickReport(asof=asof, boards=[], stocks=[])
         snaps = self.db.scalars(select(AuctionSnapshot).where(AuctionSnapshot.asof == asof)).all()
         if not snaps:
-            self._seed_auction(asof)
-            snaps = self.db.scalars(select(AuctionSnapshot).where(AuctionSnapshot.asof == asof)).all()
+            return StrongPickReport(asof=asof, boards=[], stocks=[])
 
         # 个股打分：竞价涨幅*0.5 + 竞价额分位*0.5
         amounts = sorted(s.auction_amount for s in snaps)
@@ -140,25 +139,3 @@ class MorningBriefService:
         )
         self.db.flush()
         return MorningBrief(asof=asof, stage=stage, content=content, extras=extras)  # type: ignore[arg-type]
-
-    def _seed_auction(self, asof: date) -> None:
-        samples = [
-            ("688001.SH", "示例半导体", 0.098, 1.2e8, "半导体"),
-            ("300001.SZ", "示例AI", 0.072, 0.9e8, "人工智能"),
-            ("002001.SZ", "示例机器人", 0.056, 2.4e8, "机器人"),
-            ("601001.SH", "示例券商", 0.031, 3.1e8, "券商"),
-            ("000002.SZ", "示例消费", 0.012, 0.5e8, "消费电子"),
-        ]
-        for sym, name, pct, amt, board in samples:
-            self.db.add(
-                AuctionSnapshot(
-                    asof=asof,
-                    symbol=sym,
-                    name=name,
-                    auction_pct=pct,
-                    auction_amount=amt,
-                    board_code=board,
-                    board_name=board,
-                )
-            )
-        self.db.flush()

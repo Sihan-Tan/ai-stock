@@ -100,7 +100,3 @@ def test_bars_daily_adj_and_jobs_status(client, _db, monkeypatch):
     st = client.get("/api/market/jobs/status")
     assert st.status_code == 200
     assert isinstance(st.json(), list)
-
-
-def test_seed_still_works(client):
-    assert client.post("/api/market/seed").status_code == 200

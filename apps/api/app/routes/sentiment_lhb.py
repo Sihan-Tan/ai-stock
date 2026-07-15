@@ -18,12 +18,6 @@ def _jobs(db: Session) -> MarketJobs:
     return MarketJobs(db, md=MockQmtMarketData(instruments=[]))
 
 
-@router.post("/sentiment/seed")
-def seed_sentiment(db: Session = Depends(get_db)):
-    SentimentService(db).seed_demo()
-    return {"ok": True}
-
-
 @router.get("/sentiment/snapshot")
 def sentiment_snapshot(asof: date | None = None, db: Session = Depends(get_db)):
     return SentimentService(db).snapshot(asof)
@@ -32,12 +26,6 @@ def sentiment_snapshot(asof: date | None = None, db: Session = Depends(get_db)):
 @router.post("/sentiment/jobs/sync")
 def sentiment_sync(asof: date | None = None, db: Session = Depends(get_db)):
     return _jobs(db).sync_sentiment_daily(asof=asof)
-
-
-@router.post("/lhb/seed")
-def seed_lhb(db: Session = Depends(get_db)):
-    LhbService(db).seed_demo()
-    return {"ok": True}
 
 
 @router.get("/lhb")

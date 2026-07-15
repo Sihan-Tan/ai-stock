@@ -6,18 +6,21 @@ import os
 from datetime import date, timedelta
 from pathlib import Path
 
+import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
 
 # 测试库必须在导入 app 前设置（内存库 + StaticPool，避免文件锁）
 os.environ["DATABASE_URL"] = "sqlite:///:memory:"
 
 from desk_common.settings import get_settings
 from desk_common.symbols import normalize_symbol
-from desk_db import Base, get_engine, reset_engine
+from desk_db import Base, get_engine, get_session_factory, reset_engine
 import desk_db.models  # noqa: F401
+from desk_db.models import AuctionSnapshot, LhbDaily, LhbSeat, LimitUpStat, LimitUpStock, SuspensionEvent
 from desk_indicators import compute
-import pandas as pd
+from desk_market import MarketService
 
 
 @pytest.fixture(autouse=True)
@@ -46,6 +49,10 @@ def client(_db):
         yield c
 
 
+def _session() -> Session:
+    return get_session_factory()()
+
+
 def test_normalize_symbol():
     assert normalize_symbol("600519") == "600519.SH"
     assert normalize_symbol("sz000001") == "000001.SZ"
@@ -72,25 +79,82 @@ def test_health(client):
     assert r.json()["ok"] is True
 
 
-def test_market_seed_and_watchlist(client):
-    assert client.post("/api/market/seed").status_code == 200
+def test_market_watchlist(client):
+    for sym, name in [
+        ("600519.SH", "贵州茅台"),
+        ("300750.SZ", "宁德时代"),
+        ("510300.SH", "沪深300ETF"),
+    ]:
+        assert client.post("/api/market/watchlist", json={"symbol": sym, "name": name}).status_code == 200
     wl = client.get("/api/market/watchlist").json()
     assert len(wl) >= 3
 
 
 def test_calendar_and_suspension(client):
-    assert client.post("/api/calendar/seed").status_code == 200
     today = date.today()
+    db = _session()
+    try:
+        db.add(
+            SuspensionEvent(
+                symbol="600000.SH",
+                name="示例停牌",
+                event_type="suspend",
+                effective_date=today,
+                reason="重大事项",
+                scope="watchlist",
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
     month = client.get(f"/api/calendar/month?year={today.year}&month={today.month}").json()
     assert len(month) >= 28
     assert isinstance(client.get("/api/calendar/suspensions").json(), list)
+    assert len(client.get("/api/calendar/suspensions").json()) >= 1
 
 
 def test_sentiment_lhb(client):
-    assert client.post("/api/sentiment/seed").status_code == 200
+    today = date.today()
+    db = _session()
+    try:
+        db.add(
+            LimitUpStat(
+                asof=today,
+                limit_up_count=68,
+                limit_down_count=12,
+                max_board=7,
+                promote_rate=0.42,
+                break_rate=0.18,
+            )
+        )
+        db.add(
+            LimitUpStock(
+                asof=today,
+                symbol="000001.SZ",
+                name="示例连板",
+                board_height=7,
+                seal_amount=2.1e8,
+                concept="AI应用",
+                status="sealed",
+            )
+        )
+        row = LhbDaily(asof=today, symbol="300750.SZ", name="宁德时代", reason="日振幅异常", net_buy=1.2e8)
+        db.add(row)
+        db.flush()
+        db.add(
+            LhbSeat(
+                lhb_id=row.id,
+                side="buy",
+                seat_name="某证券上海XX路",
+                amount=8.2e7,
+                is_institution=False,
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
     snap = client.get("/api/sentiment/snapshot").json()
     assert snap["limit_up_count"] >= 1
-    assert client.post("/api/lhb/seed").status_code == 200
     assert len(client.get("/api/lhb").json()) >= 1
 
 
@@ -108,7 +172,38 @@ def test_strategy_python_yaml_agent(client):
 
 
 def test_backtest_ma_cross(client):
-    client.post("/api/market/seed")
+    db = _session()
+    try:
+        svc = MarketService(db)
+        today = date.today()
+        price = 100.0
+        rows = []
+        for i in range(120, 0, -1):
+            d = today - timedelta(days=i)
+            if d.weekday() >= 5:
+                continue
+            price *= 1 + ((hash(f"600519.SH{d}") % 21) - 10) / 1000.0
+            o, h, l, c, v = price * 0.99, price * 1.01, price * 0.98, price, 1e6
+            rows.append(
+                {
+                    "date": d,
+                    "open": o,
+                    "high": h,
+                    "low": l,
+                    "close": c,
+                    "volume": v,
+                    "amount": price * 1e6,
+                    "open_hfq": o,
+                    "high_hfq": h,
+                    "low_hfq": l,
+                    "close_hfq": c,
+                    "volume_hfq": v,
+                }
+            )
+        svc.upsert_daily_bars("600519.SH", pd.DataFrame(rows))
+        db.commit()
+    finally:
+        db.close()
     client.post("/api/strategies/sync-python")
     end = date.today()
     start = end - timedelta(days=180)
@@ -152,9 +247,44 @@ def test_ml_both_engines(client):
 
 
 def test_morning_and_ai_skills(client):
-    client.post("/api/sentiment/seed")
-    client.post("/api/lhb/seed")
-    client.post("/api/calendar/seed")
+    today = date.today()
+    db = _session()
+    try:
+        db.add(
+            LimitUpStat(
+                asof=today,
+                limit_up_count=10,
+                limit_down_count=2,
+                max_board=3,
+                promote_rate=0.4,
+                break_rate=0.1,
+            )
+        )
+        db.add(
+            AuctionSnapshot(
+                asof=today,
+                symbol="688001.SH",
+                name="示例半导体",
+                auction_pct=0.098,
+                auction_amount=1.2e8,
+                board_code="半导体",
+                board_name="半导体",
+            )
+        )
+        db.add(
+            AuctionSnapshot(
+                asof=today,
+                symbol="300001.SZ",
+                name="示例AI",
+                auction_pct=0.072,
+                auction_amount=0.9e8,
+                board_code="人工智能",
+                board_name="人工智能",
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
     pre = client.post("/api/morning/preopen")
     post = client.post("/api/morning/post-auction")
     assert pre.status_code == 200

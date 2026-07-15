@@ -102,26 +102,20 @@ export default function App() {
 }
 
 function Overview({ setLog }: { setLog: (s: string) => void }) {
-  const seedAll = async () => {
+  const syncJobs = async () => {
     try {
-      await api("/api/market/seed", { method: "POST" });
-      await api("/api/calendar/seed", { method: "POST" });
-      await api("/api/sentiment/seed", { method: "POST" });
-      await api("/api/lhb/seed", { method: "POST" });
       await api("/api/strategies/sync-python", { method: "POST" });
       await api("/api/strategies/load-yaml-file", { method: "POST" });
-      setLog("已写入演示数据");
+      setLog("已同步策略");
     } catch (e) {
       setLog(String(e));
     }
   };
   return (
     <div className="card">
-      <p className="muted">
-        v1 工作台。行情主路径为 QMT 同步落库；「注入演示数据」仅供无柜台环境冒烟，会覆盖同键假数据。
-      </p>
-      <button type="button" className="btn" onClick={seedAll}>
-        注入演示数据（次要）
+      <p className="muted">v1 工作台。行情 / 情绪 / 龙虎榜走 QMT 与 AkShare 同步落库，无演示种子数据。</p>
+      <button type="button" className="btn" onClick={syncJobs}>
+        同步策略列表
       </button>
     </div>
   );
@@ -179,7 +173,7 @@ function Sentiment({ setLog }: { setLog: (s: string) => void }) {
   return (
     <div className="stack">
       {empty && (
-        <p className="muted">暂无日终情绪快照。可手动同步或使用次要「注入演示数据」。</p>
+        <p className="muted">暂无日终情绪快照。请手动同步：POST /api/sentiment/jobs/sync。</p>
       )}
     <div className="card">
       <p className="mono">
@@ -221,7 +215,7 @@ function Lhb({ setLog }: { setLog: (s: string) => void }) {
   return (
     <div className="stack">
       {!rows.length && (
-        <p className="muted">暂无龙虎榜数据。可手动同步或使用次要「注入演示数据」。</p>
+        <p className="muted">暂无龙虎榜数据。请手动同步：POST /api/lhb/jobs/sync。</p>
       )}
       <div className="card">
         <pre>{JSON.stringify(rows, null, 2)}</pre>
@@ -235,13 +229,10 @@ function CalendarPanel({ setLog }: { setLog: (s: string) => void }) {
   const [susp, setSusp] = useState<any[]>([]);
   useEffect(() => {
     const now = new Date();
-    api("/api/calendar/seed", { method: "POST" })
-      .then(() =>
-        Promise.all([
-          api(`/api/calendar/month?year=${now.getFullYear()}&month=${now.getMonth() + 1}`),
-          api("/api/calendar/suspensions"),
-        ])
-      )
+    Promise.all([
+      api(`/api/calendar/month?year=${now.getFullYear()}&month=${now.getMonth() + 1}`),
+      api("/api/calendar/suspensions"),
+    ])
       .then(([m, s]) => {
         setMonth(m as any[]);
         setSusp(s as any[]);
