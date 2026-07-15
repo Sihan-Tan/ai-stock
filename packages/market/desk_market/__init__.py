@@ -19,50 +19,102 @@ class MarketService:
     def __init__(self, db: Session):
         self.db = db
 
+    @staticmethod
+    def _row_has_ohlcv_and_hfq(row: pd.Series) -> bool:
+        """默认 OHLCV 与 *_hfq 是否齐备（缺侧则跳过该行）。"""
+        required = (
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+            "open_hfq",
+            "high_hfq",
+            "low_hfq",
+            "close_hfq",
+            "volume_hfq",
+        )
+        for key in required:
+            if key not in row.index or pd.isna(row[key]):
+                return False
+        return True
+
     def upsert_daily_bars(self, symbol: str, df: pd.DataFrame) -> int:
         """
-        Upsert 日线。
+        Upsert 日线（默认列=前复权，另存 *_hfq）。
+
+        仅当默认 OHLCV 与 *_hfq 齐备才写入；缺侧跳过，不计入返回值。
 
         @param symbol: 标的
-        @param df: 含 date/open/high/low/close/volume/amount
+        @param df: 含 date/open/high/low/close/volume/amount 与 *_hfq
         @returns: 写入行数
         """
         symbol = normalize_symbol(symbol)
         count = 0
         for _, row in df.iterrows():
+            if not self._row_has_ohlcv_and_hfq(row):
+                continue
             ts = row["date"]
             if isinstance(ts, datetime):
                 ts = ts.date()
+            open_ = float(row["open"])
+            high = float(row["high"])
+            low = float(row["low"])
+            close = float(row["close"])
+            volume = float(row["volume"])
+            amount = float(row.get("amount", 0) or 0)
+            open_hfq = float(row["open_hfq"])
+            high_hfq = float(row["high_hfq"])
+            low_hfq = float(row["low_hfq"])
+            close_hfq = float(row["close_hfq"])
+            volume_hfq = float(row["volume_hfq"])
             existing = self.db.scalar(
                 select(BarDaily).where(BarDaily.symbol == symbol, BarDaily.ts == ts)
             )
             if existing:
-                existing.open = float(row["open"])
-                existing.high = float(row["high"])
-                existing.low = float(row["low"])
-                existing.close = float(row["close"])
-                existing.volume = float(row.get("volume", 0) or 0)
-                existing.amount = float(row.get("amount", 0) or 0)
+                existing.open = open_
+                existing.high = high
+                existing.low = low
+                existing.close = close
+                existing.volume = volume
+                existing.amount = amount
+                existing.open_hfq = open_hfq
+                existing.high_hfq = high_hfq
+                existing.low_hfq = low_hfq
+                existing.close_hfq = close_hfq
+                existing.volume_hfq = volume_hfq
             else:
                 self.db.add(
                     BarDaily(
                         symbol=symbol,
                         ts=ts,
-                        open=float(row["open"]),
-                        high=float(row["high"]),
-                        low=float(row["low"]),
-                        close=float(row["close"]),
-                        volume=float(row.get("volume", 0) or 0),
-                        amount=float(row.get("amount", 0) or 0),
+                        open=open_,
+                        high=high,
+                        low=low,
+                        close=close,
+                        volume=volume,
+                        amount=amount,
+                        open_hfq=open_hfq,
+                        high_hfq=high_hfq,
+                        low_hfq=low_hfq,
+                        close_hfq=close_hfq,
+                        volume_hfq=volume_hfq,
                     )
                 )
             count += 1
         self.db.flush()
         return count
 
-    def load_daily_df(self, symbol: str, start: date, end: date) -> pd.DataFrame:
-        """从库加载日线 DataFrame。"""
+    def load_daily_df(
+        self, symbol: str, start: date, end: date, adj: str | None = None
+    ) -> pd.DataFrame:
+        """
+        从库加载日线 DataFrame。
+
+        @param adj: None/qfq/forward → 默认前复权列；hfq → 映射 *_hfq 到同名列
+        """
         symbol = normalize_symbol(symbol)
+        use_hfq = adj == "hfq"
         rows = self.db.scalars(
             select(BarDaily)
             .where(BarDaily.symbol == symbol, BarDaily.ts >= start, BarDaily.ts <= end)
@@ -72,11 +124,11 @@ class MarketService:
             [
                 {
                     "date": r.ts,
-                    "open": r.open,
-                    "high": r.high,
-                    "low": r.low,
-                    "close": r.close,
-                    "volume": r.volume,
+                    "open": r.open_hfq if use_hfq else r.open,
+                    "high": r.high_hfq if use_hfq else r.high,
+                    "low": r.low_hfq if use_hfq else r.low,
+                    "close": r.close_hfq if use_hfq else r.close,
+                    "volume": r.volume_hfq if use_hfq else r.volume,
                     "amount": r.amount,
                 }
                 for r in rows
@@ -169,15 +221,21 @@ class MarketService:
                     if d.weekday() >= 5:
                         continue
                     price *= 1 + ((hash(f"{sym}{d}") % 21) - 10) / 1000.0
+                    o, h, l, c, v = price * 0.99, price * 1.01, price * 0.98, price, 1e6
                     rows.append(
                         {
                             "date": d,
-                            "open": price * 0.99,
-                            "high": price * 1.01,
-                            "low": price * 0.98,
-                            "close": price,
-                            "volume": 1e6,
+                            "open": o,
+                            "high": h,
+                            "low": l,
+                            "close": c,
+                            "volume": v,
                             "amount": price * 1e6,
+                            "open_hfq": o,
+                            "high_hfq": h,
+                            "low_hfq": l,
+                            "close_hfq": c,
+                            "volume_hfq": v,
                         }
                     )
                 self.upsert_daily_bars(sym, pd.DataFrame(rows))
