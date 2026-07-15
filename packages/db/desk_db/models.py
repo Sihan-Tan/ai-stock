@@ -10,6 +10,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     Integer,
+    Numeric,
     String,
     Text,
     UniqueConstraint,
@@ -19,6 +20,9 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from desk_db import Base
 
+# 价格字段：库内固定三位小数
+Price3 = Numeric(18, 3)
+
 
 class BarDaily(Base):
     __tablename__ = "bars_daily"
@@ -27,17 +31,17 @@ class BarDaily(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     symbol: Mapped[str] = mapped_column(String(16), index=True)
     ts: Mapped[date] = mapped_column(Date, index=True)
-    open: Mapped[float] = mapped_column(Float)
-    high: Mapped[float] = mapped_column(Float)
-    low: Mapped[float] = mapped_column(Float)
-    close: Mapped[float] = mapped_column(Float)
+    open: Mapped[float] = mapped_column(Price3)
+    high: Mapped[float] = mapped_column(Price3)
+    low: Mapped[float] = mapped_column(Price3)
+    close: Mapped[float] = mapped_column(Price3)
     volume: Mapped[float] = mapped_column(Float, default=0.0)
     amount: Mapped[float] = mapped_column(Float, default=0.0)
     adj_factor: Mapped[float] = mapped_column(Float, default=1.0)
-    open_hfq: Mapped[float | None] = mapped_column(Float, nullable=True)
-    high_hfq: Mapped[float | None] = mapped_column(Float, nullable=True)
-    low_hfq: Mapped[float | None] = mapped_column(Float, nullable=True)
-    close_hfq: Mapped[float | None] = mapped_column(Float, nullable=True)
+    open_hfq: Mapped[float | None] = mapped_column(Price3, nullable=True)
+    high_hfq: Mapped[float | None] = mapped_column(Price3, nullable=True)
+    low_hfq: Mapped[float | None] = mapped_column(Price3, nullable=True)
+    close_hfq: Mapped[float | None] = mapped_column(Price3, nullable=True)
     volume_hfq: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
@@ -77,10 +81,10 @@ class BarMinute(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     symbol: Mapped[str] = mapped_column(String(16), index=True)
     ts: Mapped[datetime] = mapped_column(DateTime, index=True)
-    open: Mapped[float] = mapped_column(Float)
-    high: Mapped[float] = mapped_column(Float)
-    low: Mapped[float] = mapped_column(Float)
-    close: Mapped[float] = mapped_column(Float)
+    open: Mapped[float] = mapped_column(Price3)
+    high: Mapped[float] = mapped_column(Price3)
+    low: Mapped[float] = mapped_column(Price3)
+    close: Mapped[float] = mapped_column(Price3)
     volume: Mapped[float] = mapped_column(Float, default=0.0)
     amount: Mapped[float] = mapped_column(Float, default=0.0)
 
@@ -91,7 +95,7 @@ class QuoteSnapshot(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     symbol: Mapped[str] = mapped_column(String(16), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(64), default="")
-    last: Mapped[float] = mapped_column(Float, default=0.0)
+    last: Mapped[float] = mapped_column(Price3, default=0.0)
     pct_chg: Mapped[float] = mapped_column(Float, default=0.0)
     amount: Mapped[float] = mapped_column(Float, default=0.0)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

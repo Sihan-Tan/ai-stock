@@ -38,6 +38,36 @@ def _session() -> Session:
     return Session(engine)
 
 
+def test_upsert_rounds_prices_to_3_decimals(_db):
+    """OHLC / *_hfq 价格入库四舍五入到 3 位小数。"""
+    db = _session()
+    svc = MarketService(db)
+    row = _full_bar_row()
+    row.update(
+        {
+            "open": 10.1234,
+            "high": 11.5678,
+            "low": 9.9999,
+            "close": 10.5555,
+            "open_hfq": 100.1234,
+            "high_hfq": 110.9994,
+            "low_hfq": 95.0004,
+            "close_hfq": 105.5555,
+        }
+    )
+    assert svc.upsert_daily_bars("600519.SH", pd.DataFrame([row])) == 1
+    db.commit()
+    saved = db.scalar(select(BarDaily).where(BarDaily.symbol == "600519.SH"))
+    assert float(saved.open) == 10.123
+    assert float(saved.high) == 11.568
+    assert float(saved.low) == 10.0
+    assert float(saved.close) == 10.556
+    assert float(saved.open_hfq) == 100.123
+    assert float(saved.high_hfq) == 110.999
+    assert float(saved.low_hfq) == 95.0
+    assert float(saved.close_hfq) == 105.556
+
+
 def test_upsert_daily_bars_writes_hfq_and_is_idempotent(_db):
     db = _session()
     svc = MarketService(db)
@@ -70,9 +100,9 @@ def test_upsert_daily_bars_writes_hfq_and_is_idempotent(_db):
     n = db.scalar(select(func.count()).select_from(BarDaily).where(BarDaily.symbol == "600519.SH"))
     assert n == 1
     row = db.scalar(select(BarDaily).where(BarDaily.symbol == "600519.SH"))
-    assert row.close == 10.8
-    assert row.close_hfq == 108.0
-    assert row.open == 10.0
+    assert float(row.close) == 10.8
+    assert float(row.close_hfq) == 108.0
+    assert float(row.open) == 10.0
 
 
 def test_load_daily_df_adj_qfq_default_and_hfq(_db):
@@ -174,9 +204,9 @@ def test_upsert_incomplete_does_not_overwrite_existing_full_row(_db):
     db.commit()
 
     row = db.scalar(select(BarDaily).where(BarDaily.symbol == "600519.SH"))
-    assert row.close == 10.5
-    assert row.close_hfq == 105.0
-    assert row.open == 10.0
+    assert float(row.close) == 10.5
+    assert float(row.close_hfq) == 105.0
+    assert float(row.open) == 10.0
 
 
 def test_load_daily_df_adj_forward_matches_qfq_default(_db):

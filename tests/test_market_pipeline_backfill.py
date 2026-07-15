@@ -146,4 +146,4 @@ def test_backfill_prefers_qmt_then_akshare(_db):
     ).run()
     assert not ak.calls
     row = db.scalar(select(BarDaily).where(BarDaily.symbol == "600519.SH"))
-    assert row is not None and row.close_hfq == 2.0
+    assert row is not None and float(row.close_hfq) == 2.0

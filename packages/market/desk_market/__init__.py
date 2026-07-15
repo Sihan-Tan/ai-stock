@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from desk_common.symbols import normalize_symbol
 from desk_db.models import BarDaily, BarMinute, BoardMember, QuoteSnapshot, WatchlistItem
+from desk_market.prices import round_price
 
 
 class MarketService:
@@ -57,16 +58,16 @@ class MarketService:
             ts = row["date"]
             if isinstance(ts, datetime):
                 ts = ts.date()
-            open_ = float(row["open"])
-            high = float(row["high"])
-            low = float(row["low"])
-            close = float(row["close"])
+            open_ = round_price(row["open"])
+            high = round_price(row["high"])
+            low = round_price(row["low"])
+            close = round_price(row["close"])
             volume = float(row["volume"])
             amount = float(row.get("amount", 0) or 0)
-            open_hfq = float(row["open_hfq"])
-            high_hfq = float(row["high_hfq"])
-            low_hfq = float(row["low_hfq"])
-            close_hfq = float(row["close_hfq"])
+            open_hfq = round_price(row["open_hfq"])
+            high_hfq = round_price(row["high_hfq"])
+            low_hfq = round_price(row["low_hfq"])
+            close_hfq = round_price(row["close_hfq"])
             volume_hfq = float(row["volume_hfq"])
             existing = self.db.scalar(
                 select(BarDaily).where(BarDaily.symbol == symbol, BarDaily.ts == ts)
@@ -124,12 +125,12 @@ class MarketService:
             [
                 {
                     "date": r.ts,
-                    "open": r.open_hfq if use_hfq else r.open,
-                    "high": r.high_hfq if use_hfq else r.high,
-                    "low": r.low_hfq if use_hfq else r.low,
-                    "close": r.close_hfq if use_hfq else r.close,
-                    "volume": r.volume_hfq if use_hfq else r.volume,
-                    "amount": r.amount,
+                    "open": float(r.open_hfq if use_hfq else r.open),
+                    "high": float(r.high_hfq if use_hfq else r.high),
+                    "low": float(r.low_hfq if use_hfq else r.low),
+                    "close": float(r.close_hfq if use_hfq else r.close),
+                    "volume": float(r.volume_hfq if use_hfq else r.volume),
+                    "amount": float(r.amount),
                 }
                 for r in rows
             ]
@@ -154,7 +155,10 @@ class MarketService:
             existing = self.db.scalar(
                 select(BarMinute).where(BarMinute.symbol == symbol, BarMinute.ts == ts)
             )
-            o, h, l, c = float(row["open"]), float(row["high"]), float(row["low"]), float(row["close"])
+            o = round_price(row["open"])
+            h = round_price(row["high"])
+            l = round_price(row["low"])
+            c = round_price(row["close"])
             vol = float(row.get("volume", 0) or 0)
             amt = float(row.get("amount", 0) or 0)
             if existing:
@@ -226,6 +230,7 @@ class MarketService:
     def upsert_quote(self, symbol: str, name: str, last: float, pct_chg: float, amount: float) -> None:
         """更新快照。"""
         symbol = normalize_symbol(symbol)
+        last = round_price(last)
         q = self.db.scalar(select(QuoteSnapshot).where(QuoteSnapshot.symbol == symbol))
         if q:
             q.name, q.last, q.pct_chg, q.amount = name, last, pct_chg, amount
