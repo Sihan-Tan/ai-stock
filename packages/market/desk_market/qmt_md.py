@@ -12,6 +12,9 @@ from desk_common.symbols import normalize_symbol
 
 _HFQ_OHLCV = ("open", "high", "low", "close", "volume")
 
+# 优先完整 A 股（含京市），再回退沪深 A
+_A_SHARE_SECTORS = ("沪深京A股", "沪深A股", "上证A股", "深证A股")
+
 
 @dataclass
 class InstrumentInfo:
@@ -69,6 +72,40 @@ def _merge_qfq_hfq(qfq: dict[str, Any], hfq: dict[str, Any]) -> dict[str, Any]:
     if "amount" in hfq and "amount_hfq" not in row:
         row["amount_hfq"] = hfq["amount"]
     return row
+
+
+def _expire_means_delisted(expire_raw: object) -> bool:
+    """
+    判断 ExpireDate 是否表示已退市。
+
+    xtdata 对股票常返回 ``10000991`` / ``10011011`` 等非日历哨兵，
+    不能按整型与今天比较；仅当值为合理 ``YYYYMMDD``（年在 1990–2099）且早于今天才视为退市。
+    """
+    expire = str(expire_raw or "").strip()
+    if not expire or expire in ("0", "99999999"):
+        return False
+    if len(expire) != 8 or not expire.isdigit():
+        return False
+    year = int(expire[:4])
+    if year < 1990 or year > 2099:
+        return False
+    return int(expire) < int(date.today().strftime("%Y%m%d"))
+
+
+def _map_instrument_status(detail: dict[str, Any] | None) -> str:
+    """
+    将 xtdata InstrumentDetail 映射为 listed|delisted|suspended。
+
+    @param detail: get_instrument_detail 结果
+    """
+    if not detail:
+        return "listed"
+    if _expire_means_delisted(detail.get("ExpireDate")):
+        return "delisted"
+    st = detail.get("InstrumentStatus")
+    if st not in (0, None, "0"):
+        return "suspended"
+    return "listed"
 
 
 class MockQmtMarketData:
@@ -194,15 +231,87 @@ class XtdataMarketData:
     def __init__(self) -> None:
         from xtquant import xtdata  # type: ignore
 
+        try:
+            xtdata.enable_hello = False
+        except Exception:  # noqa: BLE001
+            pass
         self._xt = xtdata
 
+    def _stock_list_from_sectors(self) -> list[str]:
+        """从板块取 A 股代码列表；空则尝试 download_sector_data 后重试。"""
+        symbols = self._try_sector_lists()
+        if symbols:
+            return symbols
+        try:
+            self._xt.download_sector_data()
+        except Exception:  # noqa: BLE001
+            pass
+        return self._try_sector_lists()
+
+    def _try_sector_lists(self) -> list[str]:
+        """按候选板块名依次拉取；优先合并沪深京。"""
+        seen: set[str] = set()
+        ordered: list[str] = []
+        for sector in _A_SHARE_SECTORS:
+            try:
+                xs = self._xt.get_stock_list_in_sector(sector) or []
+            except Exception:  # noqa: BLE001
+                continue
+            if not xs:
+                continue
+            # 沪深京 / 沪深 整板直接采用（最完整）
+            if sector in ("沪深京A股", "沪深A股"):
+                return [str(s) for s in xs]
+            for s in xs:
+                if s not in seen:
+                    seen.add(s)
+                    ordered.append(str(s))
+        return ordered
+
     def list_instruments(self) -> list[InstrumentInfo]:
-        """列出全部标的（stub：待联调字段映射）。"""
-        raise NotImplementedError("XtdataMarketData.list_instruments 待联调")
+        """列出 A 股标的（板块成分 + 合约详情名/状态）。"""
+        raw_symbols = self._stock_list_from_sectors()
+        if not raw_symbols:
+            raise RuntimeError("xtdata 未返回 A 股板块成分，请确认 miniQMT 已启动且板块数据已下载")
+
+        details: dict[str, Any] = {}
+        chunk = 500
+        for i in range(0, len(raw_symbols), chunk):
+            part = raw_symbols[i : i + chunk]
+            try:
+                batch = self._xt.get_instrument_detail_list(part) or {}
+                if isinstance(batch, dict):
+                    details.update(batch)
+            except Exception:  # noqa: BLE001
+                for sym in part:
+                    try:
+                        d = self._xt.get_instrument_detail(sym)
+                        if d:
+                            details[sym] = d
+                    except Exception:  # noqa: BLE001
+                        continue
+
+        out: list[InstrumentInfo] = []
+        for raw in raw_symbols:
+            sym = normalize_symbol(raw)
+            d = details.get(raw) or details.get(sym) or {}
+            out.append(
+                InstrumentInfo(
+                    symbol=sym,
+                    name=str(d.get("InstrumentName") or ""),
+                    status=_map_instrument_status(d if isinstance(d, dict) else None),
+                )
+            )
+        return out
 
     def list_a_share_symbols(self, include_delisted: bool = False) -> list[str]:
-        """列出 A 股符号（stub）。"""
-        raise NotImplementedError("XtdataMarketData.list_a_share_symbols 待联调")
+        """列出 A 股符号；默认排除退市。"""
+        out: list[str] = []
+        for info in self.list_instruments():
+            if not include_delisted and info.status == "delisted":
+                continue
+            out.append(info.symbol)
+        return out
 
     def get_daily_bars(self, symbol: str, start: date, end: date) -> pd.DataFrame:
         """日线双复权合并（stub：前复权默认列 + *_hfq）。"""
