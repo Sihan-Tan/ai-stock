@@ -92,7 +92,7 @@ class BacktraderRunner:
             # 草稿允许回测
             pass
 
-        df = self.market.load_daily_df(req.symbol, req.start, req.end)
+        df = self.market.load_daily_df(req.symbol, req.start, req.end, adj=getattr(req, "adj", "qfq"))
         if df.empty:
             raise ValueError("no bars for symbol/range")
         df = compute(df)

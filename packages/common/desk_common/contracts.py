@@ -58,6 +58,7 @@ class BacktestRequest(BaseModel):
     initial_cash: float = 1_000_000.0
     commission: float = 0.00025
     slippage: float = 0.001
+    adj: Literal["qfq", "hfq"] = "qfq"
 
 
 class BacktestReport(BaseModel):
