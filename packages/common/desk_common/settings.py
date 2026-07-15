@@ -29,6 +29,13 @@ class Settings(BaseSettings):
     paper_initial_cash: float = 1_000_000.0
     skills_dir: str = "skills"
 
+    market_daily_start: str = "2018-01-01"
+    market_incremental_days: int = 3
+    market_batch_size: int = 100
+    market_sync_yaml: str = "configs/market/sync.yaml"
+    market_indices_yaml: str = "configs/market/indices.yaml"
+    market_scheduler_enabled: bool = True
+
 
 @lru_cache
 def get_settings() -> Settings:

@@ -1,0 +1,11 @@
+daily_start_date: "2018-01-01"
+incremental_days: 3
+batch_size: 100
+# 调度默认意图（可被 Settings 覆盖）
+jobs:
+  sync_trade_calendar: { cron: "0 2 * * *" }
+  sync_security_list: { cron: "0 15 * * 1-5" }
+  ingest_daily_incremental: { cron: "30 15 * * 1-5" }
+  backfill_daily_chunks: { cron: "0 1 * * *" }
+  ingest_minute_watch: { minutes: 3 }
+  purge_with_minute: true
