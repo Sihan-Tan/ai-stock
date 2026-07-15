@@ -16,6 +16,58 @@ from desk_common.symbols import normalize_symbol
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
+def _dotenv_paths() -> list[Path]:
+    """
+    候选 `.env` 路径：仓库根目录与工作目录。
+
+    @returns: 去重后的路径列表
+    """
+    paths: list[Path] = []
+    for candidate in (_REPO_ROOT / ".env", Path.cwd() / ".env"):
+        if candidate not in paths:
+            paths.append(candidate)
+    return paths
+
+
+def _key_in_dotenv(key: str, dotenv_path: Path) -> bool:
+    """
+    判断 `.env` 文件中是否显式设置了指定键。
+
+    @param key: 环境变量名
+    @param dotenv_path: `.env` 文件路径
+    @returns: 键存在且非注释行时为 True
+    """
+    if not dotenv_path.is_file():
+        return False
+    for line in dotenv_path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if stripped.startswith("export "):
+            stripped = stripped[7:].strip()
+        if "=" not in stripped:
+            continue
+        name, _ = stripped.split("=", 1)
+        if name.strip() == key:
+            return True
+    return False
+
+
+def _explicit_setting(key: str) -> bool:
+    """
+    判断配置项是否由进程环境或 `.env` 显式覆盖。
+
+    pydantic-settings 从 `.env` 加载值但不会写入 `os.environ`；
+    本函数用于区分「显式覆盖」与「字段默认值」。
+
+    @param key: 环境变量名（如 `MARKET_DAILY_START`）
+    @returns: 进程环境或任一候选 `.env` 中存在该键时为 True
+    """
+    if key in os.environ:
+        return True
+    return any(_key_in_dotenv(key, path) for path in _dotenv_paths())
+
+
 def _resolve_config_path(path_str: str) -> Path:
     """
     将配置路径解析为绝对路径。
@@ -60,18 +112,18 @@ def load_market_sync_config() -> MarketSyncConfig:
 
     daily_start_str = (
         settings.market_daily_start
-        if "MARKET_DAILY_START" in os.environ
+        if _explicit_setting("MARKET_DAILY_START")
         else str(raw.get("daily_start_date", settings.market_daily_start))
     )
     daily_start = date.fromisoformat(daily_start_str)
     incremental_days = (
         settings.market_incremental_days
-        if "MARKET_INCREMENTAL_DAYS" in os.environ
+        if _explicit_setting("MARKET_INCREMENTAL_DAYS")
         else int(raw.get("incremental_days", settings.market_incremental_days))
     )
     batch_size = (
         settings.market_batch_size
-        if "MARKET_BATCH_SIZE" in os.environ
+        if _explicit_setting("MARKET_BATCH_SIZE")
         else int(raw.get("batch_size", settings.market_batch_size))
     )
     jobs = dict(raw.get("jobs") or {})
