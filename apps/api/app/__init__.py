@@ -15,10 +15,19 @@ import desk_db.models  # noqa: F401
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    """启动时确保表存在（开发便利；生产用 alembic）。"""
+    """启动时确保表存在，并按配置拉起行情调度器。"""
     engine = get_engine()
     Base.metadata.create_all(bind=engine)
+    scheduler = None
+    settings = get_settings()
+    if settings.market_scheduler_enabled:
+        from desk_market.scheduler import build_market_scheduler
+
+        scheduler, _ = build_market_scheduler(enabled=True)
+        scheduler.start()
     yield
+    if scheduler is not None:
+        scheduler.shutdown(wait=False)
 
 
 def create_app() -> FastAPI:
