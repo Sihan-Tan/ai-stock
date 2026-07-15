@@ -13,4 +13,5 @@ def test_build_scheduler_registers_job_ids():
         "ingest_minute_watch",
     }
     assert expected <= set(job_ids)
-    sched.shutdown(wait=False)
+    if sched.running:
+        sched.shutdown(wait=False)
