@@ -76,7 +76,31 @@ def test_indicators_sma():
 def test_health(client):
     r = client.get("/health")
     assert r.status_code == 200
-    assert r.json()["ok"] is True
+    body = r.json()
+    assert body["ok"] is True
+    assert body["db"] is True
+    assert body["db_detail"] == "ok"
+
+
+def test_try_ensure_schema_soft_fail_unreachable_pg(monkeypatch):
+    """Postgres 不可达时 try_ensure_schema 应快速返回 False，不阻塞服务。"""
+    import time
+
+    from desk_db import reset_engine, try_ensure_schema
+
+    get_settings.cache_clear()
+    reset_engine()
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://desk:desk@127.0.0.1:15999/desk")
+    monkeypatch.setenv("DB_CONNECT_TIMEOUT", "2")
+    get_settings.cache_clear()
+    reset_engine()
+    t0 = time.perf_counter()
+    ok = try_ensure_schema()
+    elapsed = time.perf_counter() - t0
+    assert ok is False
+    assert elapsed < 15
+    reset_engine()
+    get_settings.cache_clear()
 
 
 def test_market_watchlist(client):

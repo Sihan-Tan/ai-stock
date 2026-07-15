@@ -2,13 +2,26 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from desk_db.models import MarketJobRun
+
+
+def _iso_utc(dt: datetime | None) -> str | None:
+    """
+    序列化为带 Z 的 UTC ISO 字符串，便于前端按北京时间展示。
+
+    @param dt: 库内时间（naive 视为 UTC）
+    """
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc).isoformat().replace("+00:00", "Z")
+    return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 class JobStore:
@@ -82,8 +95,8 @@ class JobStore:
             "id": r.id,
             "job_id": r.job_id,
             "status": r.status,
-            "started_at": r.started_at.isoformat() if r.started_at else None,
-            "finished_at": r.finished_at.isoformat() if r.finished_at else None,
+            "started_at": _iso_utc(r.started_at),
+            "finished_at": _iso_utc(r.finished_at),
             "symbols_done": r.symbols_done,
             "error_summary": r.error_summary,
             "message": r.message,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Generator
 
 from sqlalchemy import create_engine, text
@@ -10,13 +11,19 @@ from sqlalchemy.pool import NullPool, StaticPool
 
 from desk_common.settings import get_settings
 
+logger = logging.getLogger(__name__)
+
 
 class Base(DeclarativeBase):
     """ORM 基类。"""
 
 
 def create_db_engine(url: str | None = None):
-    """创建 SQLAlchemy Engine。"""
+    """
+    创建 SQLAlchemy Engine。
+
+    非 SQLite 库使用短 connect_timeout，避免启动/探测长时间阻塞。
+    """
     settings = get_settings()
     db_url = url or settings.database_url
     connect_args: dict = {}
@@ -28,6 +35,9 @@ def create_db_engine(url: str | None = None):
             kwargs["poolclass"] = StaticPool
         else:
             kwargs["poolclass"] = NullPool
+    else:
+        # psycopg / PyMySQL：秒级连接超时
+        connect_args["connect_timeout"] = int(settings.db_connect_timeout)
     return create_engine(db_url, connect_args=connect_args, **kwargs)
 
 
@@ -72,6 +82,20 @@ def ping_db() -> bool:
             conn.execute(text("SELECT 1"))
         return True
     except Exception:
+        return False
+
+
+def try_ensure_schema() -> bool:
+    """
+    尝试 create_all；失败只记日志，不抛出。
+
+    @returns: 是否建表成功
+    """
+    try:
+        Base.metadata.create_all(bind=get_engine())
+        return True
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("数据库不可达或建表失败，服务仍继续启动：%s", exc)
         return False
 
 

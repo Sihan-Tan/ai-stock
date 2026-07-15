@@ -1,64 +1,56 @@
 import { useEffect, useMemo, useState } from "react";
+import { NavLink, Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { api } from "./api";
+import MarketSync from "./pages/MarketSync";
 
-type Page =
-  | "overview"
-  | "watchlist"
-  | "sentiment"
-  | "lhb"
-  | "calendar"
-  | "strategies"
-  | "factors"
-  | "paper"
-  | "risk"
-  | "alerts"
-  | "ai"
-  | "morning"
-  | "review"
-  | "knowledge";
-
-const NAV: { id: Page; label: string }[] = [
-  { id: "overview", label: "总览" },
-  { id: "watchlist", label: "行情自选" },
-  { id: "sentiment", label: "打板情绪" },
-  { id: "lhb", label: "龙虎榜" },
-  { id: "calendar", label: "日历/停牌" },
-  { id: "strategies", label: "策略" },
-  { id: "factors", label: "因子/ML" },
-  { id: "paper", label: "模拟盘" },
-  { id: "risk", label: "实盘风控" },
-  { id: "alerts", label: "告警" },
-  { id: "ai", label: "投研 nanobot" },
-  { id: "morning", label: "晨会" },
-  { id: "review", label: "复盘" },
-  { id: "knowledge", label: "知识库" },
+const NAV: { path: string; label: string; end?: boolean }[] = [
+  { path: "/", label: "总览", end: true },
+  { path: "/market-sync", label: "行情同步" },
+  { path: "/watchlist", label: "行情自选" },
+  { path: "/sentiment", label: "打板情绪" },
+  { path: "/lhb", label: "龙虎榜" },
+  { path: "/calendar", label: "日历/停牌" },
+  { path: "/strategies", label: "策略" },
+  { path: "/factors", label: "因子/ML" },
+  { path: "/paper", label: "模拟盘" },
+  { path: "/risk", label: "实盘风控" },
+  { path: "/alerts", label: "告警" },
+  { path: "/ai", label: "投研 nanobot" },
+  { path: "/morning", label: "晨会" },
+  { path: "/review", label: "复盘" },
+  { path: "/knowledge", label: "知识库" },
 ];
 
 /**
- * 调用后端 JSON API。
- * @param path API 路径
- * @param init fetch 选项
+ * 工作台壳层：侧栏 + BrowserHistory 路由，刷新保持当前页。
  */
-async function api<T = unknown>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, {
-    headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
-    ...init,
-  });
-  if (!res.ok) throw new Error(await res.text());
-  return (await res.json()) as T;
-}
-
 export default function App() {
-  const [page, setPage] = useState<Page>("overview");
+  const location = useLocation();
   const [health, setHealth] = useState<Record<string, unknown> | null>(null);
   const [log, setLog] = useState("就绪");
+  const [healthError, setHealthError] = useState<string | null>(null);
 
   useEffect(() => {
-    api<Record<string, unknown>>("/health")
-      .then(setHealth)
-      .catch((e) => setLog(String(e)));
+    /** 拉取 /health；数据库不可达时仅展示横幅，不阻塞页面。 */
+    const refreshHealth = () =>
+      api<Record<string, unknown>>("/health")
+        .then((h) => {
+          setHealth(h);
+          setHealthError(null);
+        })
+        .catch((e) => setHealthError(String(e)));
+
+    refreshHealth();
+    const t = window.setInterval(refreshHealth, 10000);
+    return () => window.clearInterval(t);
   }, []);
 
-  const title = useMemo(() => NAV.find((n) => n.id === page)?.label ?? "", [page]);
+  const title = useMemo(
+    () => NAV.find((n) => location.pathname === n.path)?.label ?? "",
+    [location.pathname]
+  );
+
+  const dbOk = health?.db === true;
 
   return (
     <div className="app">
@@ -67,35 +59,50 @@ export default function App() {
           刻度<span>·</span>Desk
         </div>
         {NAV.map((n) => (
-          <button
-            key={n.id}
-            type="button"
-            className={page === n.id ? "active" : ""}
-            onClick={() => setPage(n.id)}
+          <NavLink
+            key={n.path}
+            to={n.path}
+            end={n.end}
+            className={({ isActive }) => (isActive ? "active" : undefined)}
           >
             {n.label}
-          </button>
+          </NavLink>
         ))}
       </aside>
       <main className="main">
         <h1>{title}</h1>
+        {healthError && (
+          <div className="banner warn" role="status">
+            API 不可达：{healthError}
+          </div>
+        )}
+        {!healthError && health && !dbOk && (
+          <div className="banner warn" role="status">
+            数据库不可达，API 已启动但读写会失败。请检查 Postgres（
+            <code>DATABASE_URL</code>）是否已启动。
+          </div>
+        )}
         <div className="card muted">
           API 健康：{health ? JSON.stringify(health) : "检测中…"} · {log}
         </div>
-        {page === "overview" && <Overview setLog={setLog} />}
-        {page === "watchlist" && <Watchlist setLog={setLog} />}
-        {page === "sentiment" && <Sentiment setLog={setLog} />}
-        {page === "lhb" && <Lhb setLog={setLog} />}
-        {page === "calendar" && <CalendarPanel setLog={setLog} />}
-        {page === "strategies" && <Strategies setLog={setLog} />}
-        {page === "factors" && <Factors setLog={setLog} />}
-        {page === "paper" && <Paper setLog={setLog} />}
-        {page === "risk" && <RiskPanel setLog={setLog} />}
-        {page === "alerts" && <Alerts setLog={setLog} />}
-        {page === "ai" && <Research setLog={setLog} />}
-        {page === "morning" && <Morning setLog={setLog} />}
-        {page === "review" && <ReviewPanel setLog={setLog} />}
-        {page === "knowledge" && <Knowledge setLog={setLog} />}
+        <Routes>
+          <Route path="/" element={<Overview setLog={setLog} />} />
+          <Route path="/market-sync" element={<MarketSync setLog={setLog} />} />
+          <Route path="/watchlist" element={<Watchlist setLog={setLog} />} />
+          <Route path="/sentiment" element={<Sentiment setLog={setLog} />} />
+          <Route path="/lhb" element={<Lhb setLog={setLog} />} />
+          <Route path="/calendar" element={<CalendarPanel setLog={setLog} />} />
+          <Route path="/strategies" element={<Strategies setLog={setLog} />} />
+          <Route path="/factors" element={<Factors setLog={setLog} />} />
+          <Route path="/paper" element={<Paper setLog={setLog} />} />
+          <Route path="/risk" element={<RiskPanel setLog={setLog} />} />
+          <Route path="/alerts" element={<Alerts setLog={setLog} />} />
+          <Route path="/ai" element={<Research setLog={setLog} />} />
+          <Route path="/morning" element={<Morning setLog={setLog} />} />
+          <Route path="/review" element={<ReviewPanel setLog={setLog} />} />
+          <Route path="/knowledge" element={<Knowledge setLog={setLog} />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
       </main>
     </div>
   );
@@ -114,7 +121,7 @@ function Overview({ setLog }: { setLog: (s: string) => void }) {
   return (
     <div className="card">
       <p className="muted">
-        v1 工作台。行情同步请到「行情自选」页触发；策略列表可在此刷新。
+        v1 工作台。行情同步请到「行情同步」页触发；策略列表可在此刷新。
       </p>
       <button type="button" className="btn" onClick={syncJobs}>
         同步策略列表
@@ -123,181 +130,48 @@ function Overview({ setLog }: { setLog: (s: string) => void }) {
   );
 }
 
-type JobRun = {
-  id: number;
-  job_id: string;
-  status: string;
-  started_at: string | null;
-  finished_at: string | null;
-  symbols_done: number;
-  error_summary: string;
-  message: string;
-};
-
-const JOB_LABELS: Record<string, string> = {
-  sync_trade_calendar: "交易日历",
-  sync_security_list: "证券列表",
-  ingest_daily_incremental: "日终日线",
-  backfill_daily_chunks: "历史回填",
-  ingest_minute_watch: "分钟同步",
-};
-
+/**
+ * 行情自选列表（与「行情同步」页分离）。
+ */
 function Watchlist({ setLog }: { setLog: (s: string) => void }) {
   const [rows, setRows] = useState<any[]>([]);
-  const [jobs, setJobs] = useState<JobRun[]>([]);
-  const [busy, setBusy] = useState(false);
 
   const loadWatch = () =>
     api<any[]>("/api/market/watchlist")
       .then(setRows)
       .catch((e) => setLog(String(e)));
 
-  const loadJobs = () =>
-    api<JobRun[]>("/api/market/jobs/status?limit=30")
-      .then(setJobs)
-      .catch((e) => setLog(String(e)));
-
   useEffect(() => {
     loadWatch();
-    loadJobs();
   }, []);
 
-  useEffect(() => {
-    const running = jobs.some((j) => j.status === "running");
-    if (!running) return;
-    const t = window.setInterval(() => {
-      loadJobs();
-    }, 2000);
-    return () => window.clearInterval(t);
-  }, [jobs]);
-
-  const enqueue = async (path: string, label: string) => {
-    setBusy(true);
-    try {
-      const res = await api<{ run_id: number; status: string }>(path, { method: "POST" });
-      setLog(`${label} 已入队 #${res.run_id}`);
-      await loadJobs();
-    } catch (e) {
-      setLog(String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
   return (
-    <div className="stack">
-      <div className="card">
-        <h3>行情同步</h3>
-        <p className="muted">
-          任务后台执行；有 running 时每 2 秒刷新进度。历史回填会把「最早日晚于配置起始日」的标的从{" "}
-          <code>daily_start_date</code> 起按 example 方式（download + front/back）重拉。
-        </p>
-        <div className="row">
-          <button
-            type="button"
-            className="btn"
-            disabled={busy}
-            onClick={() => enqueue("/api/market/jobs/calendar-sync", "交易日历")}
-          >
-            同步日历
-          </button>
-          <button
-            type="button"
-            className="btn"
-            disabled={busy}
-            onClick={() => enqueue("/api/market/jobs/security-list", "证券列表")}
-          >
-            同步证券列表
-          </button>
-          <button
-            type="button"
-            className="btn primary"
-            disabled={busy}
-            onClick={() => enqueue("/api/market/jobs/daily-sync", "日终日线")}
-          >
-            日终增量
-          </button>
-          <button
-            type="button"
-            className="btn primary"
-            disabled={busy}
-            onClick={() => enqueue("/api/market/jobs/backfill", "历史回填")}
-          >
-            历史回填
-          </button>
-          <button
-            type="button"
-            className="btn"
-            disabled={busy}
-            onClick={() => enqueue("/api/market/jobs/minute-sync", "分钟同步")}
-          >
-            分钟同步
-          </button>
-          <button type="button" className="btn" onClick={() => loadJobs()}>
-            刷新状态
-          </button>
-        </div>
-        <table>
-          <thead>
-            <tr>
-              <th>ID</th>
-              <th>任务</th>
-              <th>状态</th>
-              <th>已完成</th>
-              <th>消息</th>
-              <th>开始</th>
-              <th>结束</th>
-            </tr>
-          </thead>
-          <tbody>
-            {jobs.map((j) => (
-              <tr key={j.id}>
-                <td className="mono">{j.id}</td>
-                <td>{JOB_LABELS[j.job_id] || j.job_id}</td>
-                <td className="mono">{j.status}</td>
-                <td className="mono">{j.symbols_done}</td>
-                <td className="muted">{j.error_summary || j.message || "—"}</td>
-                <td className="mono muted">{j.started_at || "—"}</td>
-                <td className="mono muted">{j.finished_at || "—"}</td>
-              </tr>
-            ))}
-            {!jobs.length && (
-              <tr>
-                <td colSpan={7} className="muted">
-                  暂无任务记录
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+    <div className="card">
+      <div className="row">
+        <button type="button" className="btn" onClick={loadWatch}>
+          刷新自选
+        </button>
       </div>
-      <div className="card">
-        <div className="row">
-          <button type="button" className="btn" onClick={loadWatch}>
-            刷新自选
-          </button>
-        </div>
-        <table>
-          <thead>
-            <tr>
-              <th>代码</th>
-              <th>名称</th>
-              <th>现价</th>
-              <th>涨跌</th>
+      <table>
+        <thead>
+          <tr>
+            <th>代码</th>
+            <th>名称</th>
+            <th>现价</th>
+            <th>涨跌</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.symbol}>
+              <td className="mono">{r.symbol}</td>
+              <td>{r.name}</td>
+              <td className="mono">{r.last}</td>
+              <td className="mono">{r.pct_chg}</td>
             </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => (
-              <tr key={r.symbol}>
-                <td className="mono">{r.symbol}</td>
-                <td>{r.name}</td>
-                <td className="mono">{r.last}</td>
-                <td className="mono">{r.pct_chg}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

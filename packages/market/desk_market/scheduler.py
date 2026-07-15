@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -12,6 +14,31 @@ from desk_db import get_session_factory
 from desk_market.config import load_market_sync_config
 from desk_market.jobs import MarketJobs
 from desk_market.qmt_md import MockQmtMarketData, XtdataMarketData
+
+_BJ = ZoneInfo("Asia/Shanghai")
+
+
+def within_a_share_session(now: datetime | None = None) -> bool:
+    """
+    是否处于 A 股连续竞价时段（北京时间）。
+
+    交易日 09:30–11:30、13:00–15:00（含边界）。周六日为 False。
+    仅用于调度门闸；手动 API 触发不经过此函数。
+
+    @param now: 可选时点；默认当前北京时间
+    """
+    if now is None:
+        now = datetime.now(_BJ)
+    elif now.tzinfo is None:
+        now = now.replace(tzinfo=_BJ)
+    else:
+        now = now.astimezone(_BJ)
+    if now.weekday() >= 5:
+        return False
+    minutes = now.hour * 60 + now.minute
+    morning = 9 * 60 + 30 <= minutes <= 11 * 60 + 30
+    afternoon = 13 * 60 <= minutes <= 15 * 60
+    return morning or afternoon
 
 
 def _build_md():
@@ -35,6 +62,13 @@ def _run_job(method_name: str) -> None:
         raise
     finally:
         db.close()
+
+
+def _run_job_session_only(method_name: str) -> None:
+    """仅在连续竞价时段执行；盘后跳过（不写 Job 记录）。"""
+    if not within_a_share_session():
+        return
+    _run_job(method_name)
 
 
 def build_market_scheduler(
@@ -61,8 +95,10 @@ def build_market_scheduler(
         if dry_run:
             sched.add_job(lambda: None, "interval", seconds=3600, id=job_id, replace_existing=True)
         elif "minutes" in spec:
+            session_only = bool(spec.get("session_only", False))
+            target = _run_job_session_only if session_only else _run_job
             sched.add_job(
-                _run_job,
+                target,
                 IntervalTrigger(minutes=int(spec["minutes"])),
                 args=[method],
                 id=job_id,
@@ -77,9 +113,10 @@ def build_market_scheduler(
                     day=cron[2],
                     month=cron[3],
                     day_of_week=cron[4],
+                    timezone=_BJ,
                 )
             else:
-                trigger = CronTrigger(hour=2, minute=0)
+                trigger = CronTrigger(hour=2, minute=0, timezone=_BJ)
             sched.add_job(_run_job, trigger, args=[method], id=job_id, replace_existing=True)
         job_ids.append(job_id)
 

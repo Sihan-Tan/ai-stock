@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     database_url: str = "postgresql+psycopg://desk:desk@localhost:5432/desk"
+    """Postgres/MySQL 连接超时（秒），避免启动与探测长时间卡住。"""
+    db_connect_timeout: int = 3
     trade_mode: Literal["paper", "live"] = "paper"
     ml_engine: Literal["lightgbm", "xgboost"] = "lightgbm"
 
