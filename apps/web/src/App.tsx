@@ -1,25 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import { NavLink, Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { api } from "./api";
+import { AppShell } from "./layout/AppShell";
+import { NAV } from "./layout/nav";
 import MarketSync from "./pages/MarketSync";
-
-const NAV: { path: string; label: string; end?: boolean }[] = [
-  { path: "/", label: "总览", end: true },
-  { path: "/market-sync", label: "行情同步" },
-  { path: "/watchlist", label: "行情自选" },
-  { path: "/sentiment", label: "打板情绪" },
-  { path: "/lhb", label: "龙虎榜" },
-  { path: "/calendar", label: "日历/停牌" },
-  { path: "/strategies", label: "策略" },
-  { path: "/factors", label: "因子/ML" },
-  { path: "/paper", label: "模拟盘" },
-  { path: "/risk", label: "实盘风控" },
-  { path: "/alerts", label: "告警" },
-  { path: "/ai", label: "投研 nanobot" },
-  { path: "/morning", label: "晨会" },
-  { path: "/review", label: "复盘" },
-  { path: "/knowledge", label: "知识库" },
-];
+import { readStoredTheme } from "./theme/theme";
 
 /**
  * 工作台壳层：侧栏 + BrowserHistory 路由，刷新保持当前页。
@@ -29,6 +14,7 @@ export default function App() {
   const [health, setHealth] = useState<Record<string, unknown> | null>(null);
   const [log, setLog] = useState("就绪");
   const [healthError, setHealthError] = useState<string | null>(null);
+  const [theme, setTheme] = useState(readStoredTheme);
 
   useEffect(() => {
     /** 拉取 /health；数据库不可达时仅展示横幅，不阻塞页面。 */
@@ -50,41 +36,15 @@ export default function App() {
     [location.pathname]
   );
 
-  const dbOk = health?.db === true;
-
   return (
-    <div className="app">
-      <aside className="nav">
-        <div className="brand">
-          刻度<span>·</span>Desk
-        </div>
-        {NAV.map((n) => (
-          <NavLink
-            key={n.path}
-            to={n.path}
-            end={n.end}
-            className={({ isActive }) => (isActive ? "active" : undefined)}
-          >
-            {n.label}
-          </NavLink>
-        ))}
-      </aside>
-      <main className="main">
-        <h1>{title}</h1>
-        {healthError && (
-          <div className="banner warn" role="status">
-            API 不可达：{healthError}
-          </div>
-        )}
-        {!healthError && health && !dbOk && (
-          <div className="banner warn" role="status">
-            数据库不可达，API 已启动但读写会失败。请检查 Postgres（
-            <code>DATABASE_URL</code>）是否已启动。
-          </div>
-        )}
-        <div className="card muted">
-          API 健康：{health ? JSON.stringify(health) : "检测中…"} · {log}
-        </div>
+    <AppShell
+      title={title}
+      health={health}
+      healthError={healthError}
+      log={log}
+      theme={theme}
+      onThemeChange={setTheme}
+    >
         <Routes>
           <Route path="/" element={<Overview setLog={setLog} />} />
           <Route path="/market-sync" element={<MarketSync setLog={setLog} />} />
@@ -103,8 +63,7 @@ export default function App() {
           <Route path="/knowledge" element={<Knowledge setLog={setLog} />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
-      </main>
-    </div>
+    </AppShell>
   );
 }
 
