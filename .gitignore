@@ -22,3 +22,4 @@ data/knowledge/**
 coverage/
 htmlcov/
 example/
+.superpowers/
