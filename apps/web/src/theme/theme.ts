@@ -29,7 +29,13 @@ export function readStoredTheme(): ThemeId {
  */
 export function applyTheme(theme: ThemeId): void {
   const next = parseTheme(theme);
-  document.documentElement.setAttribute("data-theme", next);
+  const root = document.documentElement;
+  root.setAttribute("data-theme", next);
+  if (next === "desk-dark") {
+    root.classList.add("dark");
+  } else {
+    root.classList.remove("dark");
+  }
   try {
     localStorage.setItem(THEME_STORAGE_KEY, next);
   } catch {

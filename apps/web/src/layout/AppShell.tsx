@@ -83,7 +83,12 @@ export function AppShell({
             </Alert>
           )}
           <div className="flex flex-wrap items-center gap-2 rounded-lg border border-[var(--desk-line)] bg-[var(--desk-panel)] p-3">
-            <Chip color={health?.db === true ? "success" : "warning"} variant="soft">
+            <Chip
+              color={
+                health?.db === true ? "success" : health?.db === false ? "warning" : "default"
+              }
+              variant="soft"
+            >
               API 健康
             </Chip>
             <span className="break-all font-mono text-sm text-[var(--desk-mist)]">

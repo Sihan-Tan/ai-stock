@@ -12,6 +12,7 @@ describe("theme", () => {
   beforeEach(() => {
     localStorage.clear();
     document.documentElement.removeAttribute("data-theme");
+    document.documentElement.classList.remove("dark");
   });
 
   it("parseTheme accepts desk-dark and desk-light only", () => {
@@ -25,6 +26,14 @@ describe("theme", () => {
     applyTheme("desk-light");
     expect(document.documentElement.getAttribute("data-theme")).toBe("desk-light");
     expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe("desk-light");
+  });
+
+  it("applyTheme toggles .dark class for HeroUI dark mode", () => {
+    applyTheme("desk-dark");
+    expect(document.documentElement.classList.contains("dark")).toBe(true);
+
+    applyTheme("desk-light");
+    expect(document.documentElement.classList.contains("dark")).toBe(false);
   });
 
   it("readStoredTheme falls back to default", () => {

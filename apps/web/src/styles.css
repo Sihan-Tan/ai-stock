@@ -13,6 +13,36 @@ html[data-theme="desk-dark"] {
   --desk-warn-bg: #3a2a12;
   --desk-warn-fg: #f0d9a0;
   --desk-warn-border: #8a6a2a;
+
+  /* HeroUI semantic tokens */
+  --background: var(--desk-ink);
+  --foreground: var(--desk-text);
+  --surface: var(--desk-panel);
+  --surface-foreground: var(--desk-text);
+  --surface-secondary: #122a36;
+  --surface-secondary-foreground: var(--desk-text);
+  --surface-tertiary: #152e3a;
+  --surface-tertiary-foreground: var(--desk-text);
+  --overlay: var(--desk-panel);
+  --overlay-foreground: var(--desk-text);
+  --muted: var(--desk-mist);
+  --default: #122a36;
+  --default-foreground: var(--desk-text);
+  --accent: var(--desk-accent);
+  --accent-foreground: #1a1208;
+  --success: var(--desk-signal);
+  --success-foreground: #07151c;
+  --warning: var(--desk-warn-fg);
+  --warning-foreground: var(--desk-warn-bg);
+  --danger: #f87171;
+  --danger-foreground: #1a0808;
+  --border: var(--desk-line);
+  --separator: var(--desk-line);
+  --focus: var(--accent);
+  --field-background: var(--desk-panel);
+  --field-foreground: var(--desk-text);
+  --field-placeholder: var(--desk-mist);
+
   background: linear-gradient(160deg, #061018, var(--desk-ink));
   color: var(--desk-text);
 }
@@ -29,6 +59,36 @@ html[data-theme="desk-light"] {
   --desk-warn-bg: #fff7ed;
   --desk-warn-fg: #9a3412;
   --desk-warn-border: #fdba74;
+
+  /* HeroUI semantic tokens */
+  --background: var(--desk-ink);
+  --foreground: var(--desk-text);
+  --surface: var(--desk-panel);
+  --surface-foreground: var(--desk-text);
+  --surface-secondary: #f4f4f5;
+  --surface-secondary-foreground: var(--desk-text);
+  --surface-tertiary: #e4e4e7;
+  --surface-tertiary-foreground: var(--desk-text);
+  --overlay: var(--desk-panel);
+  --overlay-foreground: var(--desk-text);
+  --muted: var(--desk-mist);
+  --default: #f4f4f5;
+  --default-foreground: var(--desk-text);
+  --accent: var(--desk-accent);
+  --accent-foreground: #ffffff;
+  --success: var(--desk-signal);
+  --success-foreground: #ffffff;
+  --warning: #f59e0b;
+  --warning-foreground: var(--desk-warn-fg);
+  --danger: #dc2626;
+  --danger-foreground: #ffffff;
+  --border: var(--desk-line);
+  --separator: var(--desk-line);
+  --focus: var(--accent);
+  --field-background: var(--desk-panel);
+  --field-foreground: var(--desk-text);
+  --field-placeholder: var(--desk-mist);
+
   background: var(--desk-ink);
   color: var(--desk-text);
 }
