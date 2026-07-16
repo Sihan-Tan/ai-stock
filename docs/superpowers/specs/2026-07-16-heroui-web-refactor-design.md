@@ -1,7 +1,7 @@
 # HeroUI Web 全量重构设计
 
 日期：2026-07-16  
-状态：已确认（待实现计划）
+状态：已实现（feature/heroui-web-refactor）
 
 ## 背景与目标
 
