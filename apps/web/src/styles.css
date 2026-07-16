@@ -1,12 +1,48 @@
 @import "tailwindcss";
 @import "@heroui/styles";
 
+html[data-theme="desk-dark"] {
+  color-scheme: dark;
+  --desk-ink: #07151c;
+  --desk-panel: #0d222c;
+  --desk-line: #1e4554;
+  --desk-mist: #8aa9b5;
+  --desk-text: #e7f1f4;
+  --desk-accent: #d4a574;
+  --desk-signal: #3ecf9a;
+  --desk-warn-bg: #3a2a12;
+  --desk-warn-fg: #f0d9a0;
+  --desk-warn-border: #8a6a2a;
+  background: linear-gradient(160deg, #061018, var(--desk-ink));
+  color: var(--desk-text);
+}
+
+html[data-theme="desk-light"] {
+  color-scheme: light;
+  --desk-ink: #f4f6f8;
+  --desk-panel: #ffffff;
+  --desk-line: #e4e4e7;
+  --desk-mist: #71717a;
+  --desk-text: #18181b;
+  --desk-accent: #0f766e;
+  --desk-signal: #0d9488;
+  --desk-warn-bg: #fff7ed;
+  --desk-warn-fg: #9a3412;
+  --desk-warn-border: #fdba74;
+  background: var(--desk-ink);
+  color: var(--desk-text);
+}
+
 html,
 body,
 #root {
-  min-height: 100%;
+  min-height: 100vh;
 }
 
 body {
   margin: 0;
+  min-height: 100vh;
+  font-family: "Noto Sans SC", system-ui, sans-serif;
+  background: transparent;
+  color: inherit;
 }
