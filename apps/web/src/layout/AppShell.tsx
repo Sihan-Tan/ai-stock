@@ -1,6 +1,8 @@
-import { Alert, Button, Chip, Popover, Switch } from "@heroui/react";
-import type { ReactNode } from "react";
-import { NavLink } from "react-router-dom";
+import { Alert, Button, Chip, Input, Popover, Switch } from "@heroui/react";
+import type { FormEvent, ReactNode } from "react";
+import { useState } from "react";
+import { NavLink, useNavigate } from "react-router-dom";
+import { parseSearchSymbol } from "../stock/parseSearchSymbol";
 import { applyTheme, type ThemeId } from "../theme/theme";
 import { NAV } from "./nav";
 
@@ -66,6 +68,22 @@ export function AppShell({
   onThemeChange,
   children,
 }: AppShellProps) {
+  const navigate = useNavigate();
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchHint, setSearchHint] = useState<string | null>(null);
+
+  /** 提交顶部搜索：合法则跳转股票详情页，否则展示简短提示。 */
+  const handleSearchSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const symbol = parseSearchSymbol(searchQuery);
+    if (symbol) {
+      setSearchHint(null);
+      navigate(`/stock/${symbol}`);
+      return;
+    }
+    setSearchHint("请输入 6 位代码或 000001.SZ 格式");
+  };
+
   const changeTheme = (isSelected: boolean) => {
     const nextTheme: ThemeId = isSelected ? "desk-light" : "desk-dark";
     applyTheme(nextTheme);
@@ -112,8 +130,31 @@ export function AppShell({
         </div>
       </aside>
       <main className="min-w-0 p-6 max-md:p-4">
-        <header className="sticky top-0 z-20 mb-5 flex items-start justify-between gap-4 border-b border-[var(--desk-line)] bg-[var(--desk-ink)]/95 py-3 backdrop-blur-sm">
-          <h1 className="text-2xl font-semibold text-[var(--desk-accent)]">{title}</h1>
+        <header className="sticky top-0 z-20 mb-5 flex flex-wrap items-start justify-between gap-4 border-b border-[var(--desk-line)] bg-[var(--desk-ink)]/95 py-3 backdrop-blur-sm">
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-3">
+            <h1 className="text-2xl font-semibold text-[var(--desk-accent)]">{title}</h1>
+            <form
+              className="flex flex-wrap items-center gap-2"
+              onSubmit={handleSearchSubmit}
+            >
+              <Input
+                aria-label="搜索股票代码"
+                className="w-36"
+                placeholder="600519 或 000001.SZ"
+                value={searchQuery}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value);
+                  if (searchHint) setSearchHint(null);
+                }}
+              />
+              <Button size="sm" type="submit" variant="secondary">
+                搜索
+              </Button>
+              {searchHint && (
+                <span className="text-xs text-[var(--danger)]">{searchHint}</span>
+              )}
+            </form>
+          </div>
           <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
             <Chip color={summary.apiColor} variant="soft">
               {summary.apiLabel}
