@@ -100,6 +100,25 @@ def boards(board_type: str | None = None, db: Session = Depends(get_db)):
     return MarketService(db).list_boards(board_type)
 
 
+@router.get("/stock/{symbol}/meta")
+def stock_meta(symbol: str, db: Session = Depends(get_db)):
+    """单标的元数据。"""
+    from desk_market.stock_detail import get_security_meta
+
+    data = get_security_meta(db, symbol)
+    if data is None:
+        raise HTTPException(status_code=404, detail="symbol not found")
+    return data
+
+
+@router.get("/stock/{symbol}/boards")
+def stock_boards(symbol: str, db: Session = Depends(get_db)):
+    """单标的所属板块/概念。"""
+    from desk_market.stock_detail import list_boards_for_symbol
+
+    return {"symbol": symbol, "boards": list_boards_for_symbol(db, symbol)}
+
+
 @router.get("/bars/daily")
 def bars_daily(
     symbol: str,
