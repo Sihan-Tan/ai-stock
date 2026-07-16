@@ -104,31 +104,16 @@ export function StockDetailView({
       setBoards(loadingState());
       setCapitalFlow(loadingState());
       setTechnicals(loadingState());
-      setBars(loadingState());
 
-      const quoteRequest = api<Record<string, Quote>>(
-        `/api/market/intraday/quote?symbols=${encodeURIComponent(normalizedSymbol)}`
-      );
-      const metaRequest = api<Meta>(`/api/market/stock/${encodeURIComponent(normalizedSymbol)}/meta`);
-      const boardsRequest = api<{ boards: Board[] }>(
-        `/api/market/stock/${encodeURIComponent(normalizedSymbol)}/boards`
-      );
-      const capitalFlowRequest = api<CapitalFlow>(
-        `/api/market/stock/${encodeURIComponent(normalizedSymbol)}/capital-flow`
-      );
-      const technicalsRequest = api<Technicals>(
-        `/api/market/stock/${encodeURIComponent(normalizedSymbol)}/technicals`
-      );
-      const barsRequest = loadBars(normalizedSymbol, period);
-
-      const [quoteResult, metaResult, boardsResult, capitalFlowResult, technicalsResult, barsResult] =
+      const [quoteResult, metaResult, boardsResult, capitalFlowResult, technicalsResult] =
         await Promise.allSettled([
-          quoteRequest,
-          metaRequest,
-          boardsRequest,
-          capitalFlowRequest,
-          technicalsRequest,
-          barsRequest,
+          api<Record<string, Quote>>(
+            `/api/market/intraday/quote?symbols=${encodeURIComponent(normalizedSymbol)}`
+          ),
+          api<Meta>(`/api/market/stock/${encodeURIComponent(normalizedSymbol)}/meta`),
+          api<{ boards: Board[] }>(`/api/market/stock/${encodeURIComponent(normalizedSymbol)}/boards`),
+          api<CapitalFlow>(`/api/market/stock/${encodeURIComponent(normalizedSymbol)}/capital-flow`),
+          api<Technicals>(`/api/market/stock/${encodeURIComponent(normalizedSymbol)}/technicals`),
         ]);
 
       if (cancelled) return;
@@ -141,6 +126,24 @@ export function StockDetailView({
       setBoards(resultState(boardsResult, (data) => data.boards));
       setCapitalFlow(resultState(capitalFlowResult));
       setTechnicals(resultState(technicalsResult));
+    };
+
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [normalizedSymbol, reloadKey]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const load = async () => {
+      setBars(loadingState());
+
+      const [barsResult] = await Promise.allSettled([loadBars(normalizedSymbol, period)]);
+
+      if (cancelled) return;
+
       setBars(resultState(barsResult));
     };
 
