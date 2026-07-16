@@ -116,6 +116,22 @@ class BoardMember(Base):
     effective_to: Mapped[date | None] = mapped_column(Date, nullable=True)
 
 
+class CapitalFlowDaily(Base):
+    """个股资金流向日频（可选落库）。"""
+
+    __tablename__ = "capital_flow_daily"
+    __table_args__ = (UniqueConstraint("symbol", "ts", name="uq_capital_flow_daily_symbol_ts"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    symbol: Mapped[str] = mapped_column(String(16), index=True)
+    ts: Mapped[date] = mapped_column(Date, index=True)
+    main_net: Mapped[float] = mapped_column(Float, default=0.0)
+    super_net: Mapped[float] = mapped_column(Float, default=0.0)
+    large_net: Mapped[float] = mapped_column(Float, default=0.0)
+    medium_net: Mapped[float] = mapped_column(Float, default=0.0)
+    small_net: Mapped[float] = mapped_column(Float, default=0.0)
+
+
 class WatchlistItem(Base):
     __tablename__ = "watchlist"
     __table_args__ = (UniqueConstraint("symbol", name="uq_watchlist_symbol"),)
