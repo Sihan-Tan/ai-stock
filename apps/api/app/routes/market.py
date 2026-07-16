@@ -125,11 +125,36 @@ def bars_daily(
     from_: date = Query(alias="from"),
     to: date = Query(...),
     adj: str | None = None,
+    period: str | None = Query(None),
     db: Session = Depends(get_db),
 ):
-    """读库日线；adj=None/qfq→前复权默认列，hfq→后复权映射。"""
+    """
+    读库日线；可选聚合成周/月。
+
+    @param symbol: 标的
+    @param from_: 起始日
+    @param to: 结束日
+    @param adj: 复权；None/qfq→前复权，hfq→后复权
+    @param period: day|week|month；week/month 时对日线聚合
+    """
     df = MarketService(db).load_daily_df(symbol, from_, to, adj=adj)
+    if period in ("week", "month"):
+        from desk_market.stock_detail import aggregate_ohlcv
+
+        df = aggregate_ohlcv(df, period)
     return df.to_dict(orient="records")
+
+
+@router.get("/stock/{symbol}/technicals")
+def stock_technicals(symbol: str, db: Session = Depends(get_db)):
+    """单标的技术指标（MA / MACD / RSI）。"""
+    from desk_market.stock_detail import compute_technicals
+
+    try:
+        return compute_technicals(db, symbol)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("technicals failed %s", symbol)
+        return {"available": False, "symbol": symbol, "error": str(exc)[:200]}
 
 
 @router.get("/bars/minute")
