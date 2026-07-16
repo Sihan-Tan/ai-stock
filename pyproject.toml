@@ -25,6 +25,7 @@ dependencies = [
   "python-multipart>=0.0.12",
   "openai>=1.54.0",
   "akshare>=1.14.0",
+  "pypinyin>=0.53.0",
   "backtrader>=1.9.78",
   "lightgbm>=4.5.0",
   "xgboost>=2.1.0",

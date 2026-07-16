@@ -1,7 +1,7 @@
 # 股票搜索（名称 / 拼音）设计
 
 日期：2026-07-16  
-状态：待实现
+状态：已完成
 
 ## 背景与目标
 
@@ -31,9 +31,9 @@
 
 ```
 AppShell Input（防抖）
-    → GET /api/market/stock/search?q=&limit=20
+    → GET /api/market/stock/search?q=&limit=6
     → security_meta（在市）+ pypinyin 匹配
-    → 下拉列表 → 点选 navigate(/stock/:symbol)
+    → 下拉列表（最多 6 条）→ 点选 navigate(/stock/:symbol)
 ```
 
 纯合法代码路径保留：`parseSearchSymbol` 成功时可回车直达，不必点选。
@@ -77,7 +77,7 @@ AppShell Input（防抖）
 
 ## 前端交互
 
-- 输入变化：清空旧 hint；`q` 非空则防抖约 200ms 请求；展示下拉（代码 + 名称）。
+- 输入变化：清空旧 hint；`q` 非空则防抖约 200ms 请求 `limit=6`；下拉最多展示 6 条（代码 + 名称）。
 - 点选一行：关闭下拉，跳转 `/stock/:symbol`，可清空或保留输入框内容（建议保留选中名称/代码）。
 - 回车提交：
   - `parseSearchSymbol(q)` 成功 → 直达该 symbol

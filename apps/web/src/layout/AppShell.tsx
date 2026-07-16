@@ -1,8 +1,12 @@
 import { Alert, Button, Chip, Input, Popover, Switch } from "@heroui/react";
 import type { FormEvent, ReactNode } from "react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
-import { parseSearchSymbol } from "../stock/parseSearchSymbol";
+import { api } from "../api";
+import {
+  resolveSearchNavigation,
+  type SearchHit,
+} from "../stock/resolveSearchNavigation";
 import { applyTheme, type ThemeId } from "../theme/theme";
 import { NAV } from "./nav";
 
@@ -55,6 +59,8 @@ function healthSummary(
   };
 }
 
+type SearchResponse = { query: string; items: SearchHit[] };
+
 /**
  * 渲染 Desk 工作台的导航、运行状态与路由内容壳层。
  * @param props 壳层展示及主题切换所需状态
@@ -71,17 +77,66 @@ export function AppShell({
   const navigate = useNavigate();
   const [searchQuery, setSearchQuery] = useState("");
   const [searchHint, setSearchHint] = useState<string | null>(null);
+  const [suggestions, setSuggestions] = useState<SearchHit[]>([]);
+  const [openSuggest, setOpenSuggest] = useState(false);
+  const searchWrapRef = useRef<HTMLDivElement | null>(null);
 
-  /** 提交顶部搜索：合法则跳转股票详情页，否则展示简短提示。 */
-  const handleSearchSubmit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const symbol = parseSearchSymbol(searchQuery);
-    if (symbol) {
-      setSearchHint(null);
-      navigate(`/stock/${symbol}`);
+  useEffect(() => {
+    const q = searchQuery.trim();
+    if (!q) {
+      setSuggestions([]);
+      setOpenSuggest(false);
       return;
     }
-    setSearchHint("请输入 6 位代码或 000001.SZ 格式");
+    const timer = window.setTimeout(() => {
+      api<SearchResponse>(
+        `/api/market/stock/search?q=${encodeURIComponent(q)}&limit=6`
+      )
+        .then((res) => {
+          setSuggestions(res.items || []);
+          setOpenSuggest((res.items || []).length > 0);
+        })
+        .catch(() => {
+          setSuggestions([]);
+          setOpenSuggest(false);
+        });
+    }, 200);
+    return () => window.clearTimeout(timer);
+  }, [searchQuery]);
+
+  useEffect(() => {
+    /** 点击搜索区域外关闭下拉。 */
+    const onDocMouseDown = (event: MouseEvent) => {
+      if (!searchWrapRef.current?.contains(event.target as Node)) {
+        setOpenSuggest(false);
+      }
+    };
+    document.addEventListener("mousedown", onDocMouseDown);
+    return () => document.removeEventListener("mousedown", onDocMouseDown);
+  }, []);
+
+  /**
+   * 跳转到股票详情并收起下拉。
+   * @param symbol 标的代码
+   * @param label 输入框展示文案
+   */
+  const goStock = (symbol: string, label?: string) => {
+    setSearchHint(null);
+    setOpenSuggest(false);
+    if (label != null) setSearchQuery(label);
+    navigate(`/stock/${encodeURIComponent(symbol)}`);
+  };
+
+  /** 提交顶部搜索：代码直达，否则取候选第一条。 */
+  const handleSearchSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const target = resolveSearchNavigation(searchQuery, suggestions);
+    if (target) {
+      goStock(target);
+      return;
+    }
+    setSearchHint("未找到匹配标的");
+    setOpenSuggest(false);
   };
 
   const changeTheme = (isSelected: boolean) => {
@@ -133,27 +188,58 @@ export function AppShell({
         <header className="sticky top-0 z-20 mb-5 flex flex-wrap items-start justify-between gap-4 border-b border-[var(--desk-line)] bg-[var(--desk-ink)]/95 py-3 backdrop-blur-sm">
           <div className="flex min-w-0 flex-1 flex-wrap items-center gap-3">
             <h1 className="text-2xl font-semibold text-[var(--desk-accent)]">{title}</h1>
-            <form
-              className="flex flex-wrap items-center gap-2"
-              onSubmit={handleSearchSubmit}
-            >
-              <Input
-                aria-label="搜索股票代码"
-                className="w-36"
-                placeholder="600519 或 000001.SZ"
-                value={searchQuery}
-                onChange={(e) => {
-                  setSearchQuery(e.target.value);
-                  if (searchHint) setSearchHint(null);
-                }}
-              />
-              <Button size="sm" type="submit" variant="secondary">
-                搜索
-              </Button>
-              {searchHint && (
-                <span className="text-xs text-[var(--danger)]">{searchHint}</span>
+            <div ref={searchWrapRef} className="relative">
+              <form
+                className="flex flex-wrap items-center gap-2"
+                onSubmit={handleSearchSubmit}
+              >
+                <Input
+                  aria-label="搜索股票代码或名称"
+                  className="w-44"
+                  placeholder="代码 / 名称 / 拼音"
+                  value={searchQuery}
+                  onChange={(e) => {
+                    setSearchQuery(e.target.value);
+                    if (searchHint) setSearchHint(null);
+                  }}
+                  onFocus={() => {
+                    if (suggestions.length > 0) setOpenSuggest(true);
+                  }}
+                />
+                <Button size="sm" type="submit" variant="secondary">
+                  搜索
+                </Button>
+                {searchHint && (
+                  <span className="text-xs text-[var(--danger)]">{searchHint}</span>
+                )}
+              </form>
+              {openSuggest && suggestions.length > 0 && (
+                <ul
+                  className="absolute left-0 top-full z-30 mt-1 w-72 overflow-hidden rounded-lg border border-[var(--desk-line)] bg-[var(--desk-panel)] shadow-lg"
+                  role="listbox"
+                >
+                  {suggestions.map((item) => (
+                    <li key={item.symbol}>
+                      <button
+                        type="button"
+                        className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-[var(--desk-line)]"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() =>
+                          goStock(item.symbol, `${item.symbol} ${item.name}`)
+                        }
+                      >
+                        <span className="font-mono text-xs text-[var(--desk-mist)]">
+                          {item.symbol}
+                        </span>
+                        <span className="truncate text-[var(--desk-text)]">
+                          {item.name}
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
               )}
-            </form>
+            </div>
           </div>
           <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
             <Chip color={summary.apiColor} variant="soft">

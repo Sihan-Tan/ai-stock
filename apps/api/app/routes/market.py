@@ -100,6 +100,23 @@ def boards(board_type: str | None = None, db: Session = Depends(get_db)):
     return MarketService(db).list_boards(board_type)
 
 
+@router.get("/stock/search")
+def stock_search(
+    q: str = Query(""),
+    limit: int = Query(6, ge=1, le=50),
+    db: Session = Depends(get_db),
+):
+    """
+    全市场标的模糊搜索（代码 / 名称 / 拼音）。
+
+    须注册在 `/stock/{symbol}/...` 之前，避免 `search` 被当成 symbol。
+    """
+    from desk_market.stock_search import search_securities
+
+    items = search_securities(db, q, limit=limit)
+    return {"query": (q or "").strip(), "items": items}
+
+
 @router.get("/stock/{symbol}/meta")
 def stock_meta(symbol: str, db: Session = Depends(get_db)):
     """单标的元数据。"""
