@@ -34,10 +34,10 @@ export function AppShell({
   };
 
   return (
-    <div className="grid min-h-screen grid-cols-[220px_1fr] bg-[var(--desk-bg)] text-[var(--desk-text)] max-md:grid-cols-1">
+    <div className="grid min-h-screen grid-cols-[220px_1fr] bg-[var(--desk-ink)] text-[var(--desk-text)] max-md:grid-cols-1">
       <aside className="flex min-h-full flex-col border-r border-[var(--desk-line)] bg-[var(--desk-panel)] p-4 max-md:border-r-0 max-md:border-b">
         <div className="mb-6 text-lg font-semibold tracking-wide text-[var(--desk-accent)]">
-          刻度<span className="text-[var(--desk-text-muted)]">·</span>Desk
+          刻度<span className="text-[var(--desk-mist)]">·</span>Desk
         </div>
         <nav aria-label="主导航" className="flex flex-1 flex-col gap-1">
           {NAV.map((item) => (
@@ -50,7 +50,7 @@ export function AppShell({
                   "rounded-md px-3 py-2 text-sm transition-colors",
                   isActive
                     ? "bg-[var(--desk-accent)] text-[var(--desk-panel)] font-semibold"
-                    : "text-[var(--desk-text-muted)] hover:bg-[var(--desk-panel-strong)] hover:text-[var(--desk-text)]",
+                    : "text-[var(--desk-mist)] hover:bg-[var(--desk-line)] hover:text-[var(--desk-text)]",
                 ].join(" ")
               }
             >
@@ -59,7 +59,7 @@ export function AppShell({
           ))}
         </nav>
         <div className="mt-6 flex items-center justify-between border-t border-[var(--desk-line)] pt-4">
-          <span className="text-sm text-[var(--desk-text-muted)]">浅色主题</span>
+          <span className="text-sm text-[var(--desk-mist)]">浅色主题</span>
           <Switch
             aria-label="切换浅色主题"
             isSelected={theme === "desk-light"}
@@ -86,13 +86,13 @@ export function AppShell({
             <Chip color={health?.db === true ? "success" : "warning"} variant="soft">
               API 健康
             </Chip>
-            <span className="break-all font-mono text-sm text-[var(--desk-text-muted)]">
+            <span className="break-all font-mono text-sm text-[var(--desk-mist)]">
               {health ? JSON.stringify(health) : "检测中…"}
             </span>
           </div>
         </div>
         <div>{children}</div>
-        <p className="mt-6 border-t border-[var(--desk-line)] pt-3 text-sm text-[var(--desk-text-muted)]">
+        <p className="mt-6 border-t border-[var(--desk-line)] pt-3 text-sm text-[var(--desk-mist)]">
           {log}
         </p>
       </main>
