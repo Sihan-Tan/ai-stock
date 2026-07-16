@@ -15,6 +15,7 @@ import Research from "./pages/Research";
 import Review from "./pages/Review";
 import Risk from "./pages/Risk";
 import Sentiment from "./pages/Sentiment";
+import StockDetail from "./pages/StockDetail";
 import Strategies from "./pages/Strategies";
 import Watchlist from "./pages/Watchlist";
 import { readStoredTheme } from "./theme/theme";
@@ -45,7 +46,10 @@ export default function App() {
   }, []);
 
   const title = useMemo(
-    () => NAV.find((item) => location.pathname === item.path)?.label ?? "",
+    () =>
+      location.pathname.startsWith("/stock/")
+        ? "股票详情"
+        : (NAV.find((item) => location.pathname === item.path)?.label ?? ""),
     [location.pathname]
   );
 
@@ -75,6 +79,7 @@ export default function App() {
         <Route path="/morning" element={<Morning setLog={setLog} />} />
         <Route path="/review" element={<Review setLog={setLog} />} />
         <Route path="/knowledge" element={<Knowledge setLog={setLog} />} />
+        <Route path="/stock/:symbol" element={<StockDetail />} />
         <Route path="*" element={<Navigate to="/monitor" replace />} />
       </Routes>
     </AppShell>
