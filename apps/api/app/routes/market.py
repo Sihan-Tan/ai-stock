@@ -157,6 +157,18 @@ def stock_technicals(symbol: str, db: Session = Depends(get_db)):
         return {"available": False, "symbol": symbol, "error": str(exc)[:200]}
 
 
+@router.get("/stock/{symbol}/capital-flow")
+def stock_capital_flow(symbol: str, db: Session = Depends(get_db)):
+    """单标的资金流（库优先，缺失时 AkShare 实时补充）。"""
+    from desk_market.stock_detail import get_capital_flow
+
+    try:
+        return get_capital_flow(db, symbol)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("capital flow failed %s", symbol)
+        return {"available": False, "symbol": symbol, "error": str(exc)[:200]}
+
+
 @router.get("/bars/minute")
 def bars_minute(
     symbol: str,

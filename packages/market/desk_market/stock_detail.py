@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
+from functools import lru_cache
 from typing import Any
 
 import pandas as pd
@@ -10,8 +11,20 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from desk_common.symbols import normalize_symbol
-from desk_db.models import BoardMember, SecurityMeta
+from desk_db.models import BoardMember, CapitalFlowDaily, SecurityMeta
 from desk_indicators import compute
+
+
+@lru_cache(maxsize=1)
+def get_capital_client():
+    """
+    获取默认 AkShare 资金流客户端单例。
+
+    将工厂放在本模块，便于 API 测试替换实时数据源。
+    """
+    from desk_market.akshare_capital import AkshareCapitalClient
+
+    return AkshareCapitalClient()
 
 
 def _f(v: Any) -> float | None:
@@ -159,5 +172,96 @@ def compute_technicals(db: Session, symbol: str, *, lookback_days: int = 180) ->
             "macd_hist": _f(last.get("macd_hist")),
             "rsi14": _f(last.get("rsi_14")),
         },
+        "series": series,
+    }
+
+
+def _capital_flow_point(row: CapitalFlowDaily) -> dict:
+    """
+    将资金流 ORM 行序列化为 API 数据点。
+
+    @param row: 资金流日频行
+    """
+    return {
+        "ts": row.ts.isoformat(),
+        "main_net": float(row.main_net),
+        "super_net": float(row.super_net),
+        "large_net": float(row.large_net),
+        "medium_net": float(row.medium_net),
+        "small_net": float(row.small_net),
+    }
+
+
+def get_capital_flow(db: Session, symbol: str, *, days: int = 20) -> dict:
+    """
+    优先从库内读取个股资金流，缺失时通过 AkShare 拉取并落库。
+
+    @param db: 数据库 Session
+    @param symbol: 标的代码
+    @param days: 返回的最大交易日数
+    @returns: available/source/latest/series 等字段
+    """
+    sym = normalize_symbol(symbol)
+    rows = db.scalars(
+        select(CapitalFlowDaily)
+        .where(CapitalFlowDaily.symbol == sym)
+        .order_by(CapitalFlowDaily.ts.desc())
+        .limit(days)
+    ).all()
+    if rows:
+        series = [_capital_flow_point(row) for row in reversed(rows)]
+        return {
+            "available": True,
+            "symbol": sym,
+            "source": "db",
+            "as_of": series[-1]["ts"],
+            "latest": {key: series[-1][key] for key in series[-1] if key != "ts"},
+            "series": series,
+        }
+
+    try:
+        live_rows = get_capital_client().fetch_daily(sym, days=days)
+        if not live_rows:
+            raise RuntimeError("capital flow client returned no data")
+
+        for point in live_rows:
+            ts = point["ts"]
+            if not isinstance(ts, date):
+                ts = pd.Timestamp(ts).date()
+            existing = db.scalar(
+                select(CapitalFlowDaily).where(
+                    CapitalFlowDaily.symbol == sym,
+                    CapitalFlowDaily.ts == ts,
+                )
+            )
+            values = {
+                key: float(point[key])
+                for key in ("main_net", "super_net", "large_net", "medium_net", "small_net")
+            }
+            if existing:
+                for key, value in values.items():
+                    setattr(existing, key, value)
+            else:
+                db.add(CapitalFlowDaily(symbol=sym, ts=ts, **values))
+        db.commit()
+    except Exception as exc:  # noqa: BLE001 — 实时源失败需降级为可用性响应
+        db.rollback()
+        return {"available": False, "error": str(exc)[:200], "symbol": sym}
+
+    persisted = db.scalars(
+        select(CapitalFlowDaily)
+        .where(CapitalFlowDaily.symbol == sym)
+        .order_by(CapitalFlowDaily.ts.desc())
+        .limit(days)
+    ).all()
+    series = [_capital_flow_point(row) for row in reversed(persisted)]
+    if not series:
+        return {"available": False, "error": "capital flow persistence failed", "symbol": sym}
+    return {
+        "available": True,
+        "symbol": sym,
+        "source": "live",
+        "as_of": series[-1]["ts"],
+        "latest": {key: series[-1][key] for key in series[-1] if key != "ts"},
         "series": series,
     }
