@@ -9,6 +9,8 @@ import {
 } from "@heroui/react";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { api } from "../api";
+import { StockDetailDrawer } from "../stock/StockDetailDrawer";
+import type { PositionContext } from "../stock/types";
 import type { PageLogProps } from "./types";
 
 type PaperPosition = { symbol: string; qty: number; cost: number };
@@ -39,6 +41,7 @@ type RiskState = {
 };
 
 type ModeTab = "monitor" | "live";
+type DrawerState = { symbol: string; position: PositionContext };
 
 /**
  * 实盘监控仪表盘：持仓 / 信号 / 资金 / 成交 / 风控说明。
@@ -54,6 +57,7 @@ export default function Paper({ setLog }: PageLogProps) {
   const [addSymbol, setAddSymbol] = useState("");
   const [busy, setBusy] = useState(false);
   const [openPanel, setOpenPanel] = useState<string | null>(null);
+  const [drawer, setDrawer] = useState<DrawerState | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -286,7 +290,28 @@ export default function Paper({ setLog }: PageLogProps) {
                           key={p.symbol}
                           className="border-b border-[var(--desk-line)] last:border-0"
                         >
-                          <td className="px-2 py-2.5 font-mono text-xs">{p.symbol}</td>
+                          <td className="px-2 py-2.5 font-mono text-xs">
+                            <button
+                              type="button"
+                              className="text-left text-[var(--desk-text)] underline-offset-2 hover:text-[var(--desk-accent)] hover:underline"
+                              onClick={() =>
+                                setDrawer({
+                                  symbol: p.symbol,
+                                  position: {
+                                    symbol: p.symbol,
+                                    qty: p.qty,
+                                    cost: p.cost,
+                                    last: p.last,
+                                    pnl: p.pnl,
+                                    pnlPct: p.pnlPct,
+                                    weightPct: totalEquity > 0 ? (p.mv / totalEquity) * 100 : 0,
+                                  },
+                                })
+                              }
+                            >
+                              {p.symbol}
+                            </button>
+                          </td>
                           <td className="px-2 py-2.5">{p.name}</td>
                           <td className="px-2 py-2.5">
                             <button
@@ -588,6 +613,12 @@ export default function Paper({ setLog }: PageLogProps) {
           </div>
         </div>
       )}
+      <StockDetailDrawer
+        open={drawer !== null}
+        symbol={drawer?.symbol ?? ""}
+        position={drawer?.position}
+        onClose={() => setDrawer(null)}
+      />
     </div>
   );
 }
