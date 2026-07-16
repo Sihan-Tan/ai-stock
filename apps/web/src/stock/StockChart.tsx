@@ -4,7 +4,7 @@ import {
   ColorType,
   createChart,
 } from "lightweight-charts";
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { toChartBars } from "./format";
 import type { ChartPeriod, OhlcvBar } from "./types";
 
@@ -20,7 +20,7 @@ export type StockChartProps = {
  */
 export function StockChart({ period, bars, compact = false }: StockChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const chartBars = toChartBars(bars, period);
+  const chartBars = useMemo(() => toChartBars(bars, period), [bars, period]);
 
   useEffect(() => {
     const container = containerRef.current;

@@ -16,7 +16,17 @@ export type ChartBar = {
  * @param period 当前展示周期
  */
 export function toChartBars(bars: OhlcvBar[], period: ChartPeriod): ChartBar[] {
-  return bars.flatMap((bar) => {
+  const sortedBars = [...bars].sort((a, b) => {
+    if (period === "intraday") {
+      const timeA = a.ts ? Date.parse(a.ts) : Number.NaN;
+      const timeB = b.ts ? Date.parse(b.ts) : Number.NaN;
+      return timeA - timeB;
+    }
+
+    return (a.date ?? "").localeCompare(b.date ?? "");
+  });
+
+  return sortedBars.flatMap((bar) => {
     const time = period === "intraday" ? toUnixSeconds(bar.ts) : toBusinessDay(bar.date);
 
     if (time == null) {
