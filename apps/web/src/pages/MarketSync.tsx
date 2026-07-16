@@ -1,7 +1,7 @@
 import { Button, Card, CardContent, CardHeader, CardTitle, Chip } from "@heroui/react";
 import { useEffect, useState } from "react";
 import { api, formatBeijingTime } from "../api";
-import type { PageLogProps } from "./Overview";
+import type { PageLogProps } from "./types";
 
 type JobRun = {
   id: number;

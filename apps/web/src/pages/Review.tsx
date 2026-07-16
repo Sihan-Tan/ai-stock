@@ -1,7 +1,7 @@
 import { Button, Card, CardContent, CardHeader, CardTitle } from "@heroui/react";
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import type { PageLogProps } from "./Overview";
+import type { PageLogProps } from "./types";
 
 /**
  * 查看并写入每日盘面复盘。

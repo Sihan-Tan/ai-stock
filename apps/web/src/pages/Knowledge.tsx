@@ -1,7 +1,7 @@
 import { Button, Card, CardContent, CardHeader, CardTitle } from "@heroui/react";
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import type { PageLogProps } from "./Overview";
+import type { PageLogProps } from "./types";
 
 /**
  * 展示知识库文档，并上传固定示例笔记。

@@ -1,7 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle, Chip } from "@heroui/react";
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import type { PageLogProps } from "./Overview";
+import type { PageLogProps } from "./types";
 
 type SentimentSnapshot = {
   limit_up_count?: number;

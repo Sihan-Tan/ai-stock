@@ -1,7 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@heroui/react";
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import type { PageLogProps } from "./Overview";
+import type { PageLogProps } from "./types";
 
 /**
  * 展示同步后的龙虎榜原始记录。

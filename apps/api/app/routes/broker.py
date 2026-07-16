@@ -49,6 +49,12 @@ def paper_summary(db: Session = Depends(get_db)):
     return get_gate(db).paper.summary()
 
 
+@router.post("/paper/reset")
+def paper_reset(db: Session = Depends(get_db)):
+    """重置模拟账户持仓与成交流水。"""
+    return get_gate(db).paper.reset_account()
+
+
 @router.get("/qmt/ping")
 def qmt_ping(db: Session = Depends(get_db)):
     return get_gate(db).live.ping()

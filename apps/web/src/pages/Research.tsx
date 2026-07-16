@@ -1,7 +1,7 @@
 import { Button, Card, CardContent, CardHeader, CardTitle, TextArea } from "@heroui/react";
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import type { PageLogProps } from "./Overview";
+import type { PageLogProps } from "./types";
 
 type AiSkill = { name: string; description: string };
 

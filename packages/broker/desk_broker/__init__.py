@@ -50,18 +50,65 @@ class PaperBroker:
         return acc
 
     def summary(self) -> dict:
-        """账户摘要。"""
+        """账户摘要（含近期成交）。"""
         acc = self._ensure_account()
         positions = self.db.scalars(
             select(PaperPosition).where(PaperPosition.account_id == acc.id)
         ).all()
+        trades = self.db.scalars(
+            select(PaperTrade)
+            .where(PaperTrade.account_id == acc.id)
+            .order_by(PaperTrade.id.desc())
+            .limit(50)
+        ).all()
+        settings = get_settings()
         return {
             "cash": acc.cash,
             "equity": acc.equity,
+            "initial_cash": settings.paper_initial_cash,
+            "account": acc.name,
+            "updated_at": acc.updated_at.isoformat() if acc.updated_at else None,
             "positions": [
                 {"symbol": p.symbol, "qty": p.qty, "cost": p.cost} for p in positions
             ],
+            "trades": [
+                {
+                    "id": t.id,
+                    "symbol": t.symbol,
+                    "side": t.side,
+                    "qty": t.qty,
+                    "price": t.price,
+                    "created_at": t.created_at.isoformat() if t.created_at else None,
+                }
+                for t in trades
+            ],
         }
+
+    def reset_account(self) -> dict:
+        """重置持仓与成交，恢复初始资金。"""
+        acc = self._ensure_account()
+        for p in self.db.scalars(
+            select(PaperPosition).where(PaperPosition.account_id == acc.id)
+        ).all():
+            self.db.delete(p)
+        for t in self.db.scalars(
+            select(PaperTrade).where(PaperTrade.account_id == acc.id)
+        ).all():
+            self.db.delete(t)
+        for o in self.db.scalars(
+            select(PaperOrder).where(PaperOrder.account_id == acc.id)
+        ).all():
+            self.db.delete(o)
+        cash = get_settings().paper_initial_cash
+        acc.cash = cash
+        acc.equity = cash
+        acc.updated_at = datetime.utcnow()
+        self.db.add(
+            CashLedger(account_id=acc.id, delta=cash, balance=cash, reason="reset")
+        )
+        self.db.flush()
+        return self.summary()
+
 
     def place_order(self, intent: OrderIntent) -> OrderResult:
         """以指定价或市价假设成交。"""

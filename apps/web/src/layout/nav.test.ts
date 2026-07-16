@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import { NAV } from "./nav";
 
 describe("NAV", () => {
-  it("covers all temporary application routes", () => {
+  it("covers all application routes", () => {
     expect(NAV).toEqual([
-      { path: "/", label: "总览", end: true },
+      { path: "/monitor", label: "实盘监控", end: true },
       { path: "/market-sync", label: "行情同步" },
       { path: "/watchlist", label: "行情自选" },
       { path: "/sentiment", label: "打板情绪" },
@@ -12,7 +12,6 @@ describe("NAV", () => {
       { path: "/calendar", label: "日历/停牌" },
       { path: "/strategies", label: "策略" },
       { path: "/factors", label: "因子/ML" },
-      { path: "/paper", label: "模拟盘" },
       { path: "/risk", label: "实盘风控" },
       { path: "/alerts", label: "告警" },
       { path: "/ai", label: "投研 nanobot" },
