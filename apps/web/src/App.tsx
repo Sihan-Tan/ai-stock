@@ -4,6 +4,8 @@ import { api } from "./api";
 import { AppShell } from "./layout/AppShell";
 import { NAV } from "./layout/nav";
 import MarketSync from "./pages/MarketSync";
+import Overview from "./pages/Overview";
+import Watchlist from "./pages/Watchlist";
 import { readStoredTheme } from "./theme/theme";
 
 /**
@@ -64,74 +66,6 @@ export default function App() {
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
     </AppShell>
-  );
-}
-
-function Overview({ setLog }: { setLog: (s: string) => void }) {
-  const syncJobs = async () => {
-    try {
-      await api("/api/strategies/sync-python", { method: "POST" });
-      await api("/api/strategies/load-yaml-file", { method: "POST" });
-      setLog("已同步策略");
-    } catch (e) {
-      setLog(String(e));
-    }
-  };
-  return (
-    <div className="card">
-      <p className="muted">
-        v1 工作台。行情同步请到「行情同步」页触发；策略列表可在此刷新。
-      </p>
-      <button type="button" className="btn" onClick={syncJobs}>
-        同步策略列表
-      </button>
-    </div>
-  );
-}
-
-/**
- * 行情自选列表（与「行情同步」页分离）。
- */
-function Watchlist({ setLog }: { setLog: (s: string) => void }) {
-  const [rows, setRows] = useState<any[]>([]);
-
-  const loadWatch = () =>
-    api<any[]>("/api/market/watchlist")
-      .then(setRows)
-      .catch((e) => setLog(String(e)));
-
-  useEffect(() => {
-    loadWatch();
-  }, []);
-
-  return (
-    <div className="card">
-      <div className="row">
-        <button type="button" className="btn" onClick={loadWatch}>
-          刷新自选
-        </button>
-      </div>
-      <table>
-        <thead>
-          <tr>
-            <th>代码</th>
-            <th>名称</th>
-            <th>现价</th>
-            <th>涨跌</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r) => (
-            <tr key={r.symbol}>
-              <td className="mono">{r.symbol}</td>
-              <td>{r.name}</td>
-              <td className="mono">{r.last}</td>
-              <td className="mono">{r.pct_chg}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
   );
 }
 
