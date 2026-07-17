@@ -174,26 +174,50 @@ def test_technicals_available(client, _db):
     assert "rsi14" in body["latest"]
 
 
-def test_capital_flow_from_db(client, _db):
-    """资金流优先读取库内最近数据。"""
+def test_capital_flow_from_db(client, _db, monkeypatch):
+    """资金流优先读取库内最近数据，并附带占比与融资。"""
     from desk_db.models import CapitalFlowDaily
 
     db = get_session_factory()()
     try:
-        db.add(
-            CapitalFlowDaily(
-                symbol="600519.SH",
-                ts=date.today(),
-                main_net=1.2e8,
-                super_net=5e7,
-                large_net=3e7,
-                medium_net=-1e7,
-                small_net=-2e7,
+        for offset, main in ((0, 1.2e8), (1, 2e7), (2, 3e7)):
+            db.add(
+                CapitalFlowDaily(
+                    symbol="600519.SH",
+                    ts=date.today() - timedelta(days=offset),
+                    main_net=main,
+                    super_net=5e7,
+                    large_net=3e7,
+                    medium_net=-1e7,
+                    small_net=-2e7,
+                )
             )
-        )
         db.commit()
     finally:
         db.close()
+
+    class Fake:
+        def fetch_daily(self, symbol: str, days: int = 20):
+            return [
+                {
+                    "ts": date.today(),
+                    "main_net": 1.2e8,
+                    "super_net": 5e7,
+                    "large_net": 3e7,
+                    "medium_net": -1e7,
+                    "small_net": -2e7,
+                    "super_pct": 1.5,
+                    "large_pct": -0.8,
+                }
+            ]
+
+        def fetch_margin(self, symbol: str):
+            return {"balance": 1.0e9, "change": 1.2e7, "as_of": date.today().isoformat()}
+
+    monkeypatch.setattr(
+        "desk_market.stock_detail.get_capital_client",
+        lambda: Fake(),
+    )
 
     r = client.get("/api/market/stock/600519.SH/capital-flow")
 
@@ -202,6 +226,12 @@ def test_capital_flow_from_db(client, _db):
     assert body["available"] is True
     assert body["source"] == "db"
     assert body["latest"]["main_net"] == 1.2e8
+    assert body["periods"]["1"] == 1.2e8
+    assert body["periods"]["3"] == 1.7e8
+    assert body["structure"]["super_pct"] == 1.5
+    assert body["structure"]["large_pct"] == -0.8
+    assert body["margin"]["balance"] == 1.0e9
+    assert body["margin"]["change"] == 1.2e7
 
 
 def test_capital_flow_live_fallback(client, _db, monkeypatch):
@@ -217,8 +247,13 @@ def test_capital_flow_live_fallback(client, _db, monkeypatch):
                     "large_net": 20.0,
                     "medium_net": 30.0,
                     "small_net": 40.0,
+                    "super_pct": 2.0,
+                    "large_pct": 1.0,
                 }
             ]
+
+        def fetch_margin(self, symbol: str):
+            return {"balance": 5e8, "change": None, "as_of": date.today().isoformat()}
 
     monkeypatch.setattr(
         "desk_market.stock_detail.get_capital_client",
@@ -228,8 +263,11 @@ def test_capital_flow_live_fallback(client, _db, monkeypatch):
     r = client.get("/api/market/stock/600519.SH/capital-flow")
 
     assert r.status_code == 200
-    assert r.json()["available"] is True
-    assert r.json()["source"] == "live"
+    body = r.json()
+    assert body["available"] is True
+    assert body["source"] == "live"
+    assert body["structure"]["super_pct"] == 2.0
+    assert body["margin"]["balance"] == 5e8
 
 
 def test_capital_flow_unavailable(client, _db, monkeypatch):
@@ -237,6 +275,9 @@ def test_capital_flow_unavailable(client, _db, monkeypatch):
 
     class Boom:
         def fetch_daily(self, symbol: str, days: int = 20):
+            raise RuntimeError("network")
+
+        def fetch_margin(self, symbol: str):
             raise RuntimeError("network")
 
     monkeypatch.setattr(

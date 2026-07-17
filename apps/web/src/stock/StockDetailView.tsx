@@ -44,6 +44,16 @@ type CapitalFlow = {
   available: boolean;
   source?: string;
   latest?: Record<string, number | null>;
+  periods?: Record<string, number | null>;
+  structure?: {
+    super_pct?: number | null;
+    large_pct?: number | null;
+  };
+  margin?: {
+    balance?: number | null;
+    change?: number | null;
+    as_of?: string | null;
+  } | null;
   series?: unknown[];
   error?: string;
 };
@@ -382,14 +392,67 @@ export function StockDetailView({
           </div>
         </SectionCard>
 
-        <SectionCard title="资金面" state={capitalFlow}>
+        <SectionCard
+          title="资金面"
+          titleExtra={
+            capitalFlow.data?.available
+              ? `数据来源：${capitalFlow.data.source ?? "—"}`
+              : undefined
+          }
+          state={capitalFlow}
+        >
           {capitalFlow.data?.available ? (
-            <div className="space-y-3">
-              <p className="text-xs text-[var(--desk-mist)]">数据来源：{capitalFlow.data.source ?? "—"}</p>
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                <Metric label="主力净流入" value={formatCompactNumber(capitalFlow.data.latest?.main_net)} tone={capitalFlow.data.latest?.main_net} />
-                <Metric label="超大单" value={formatCompactNumber(capitalFlow.data.latest?.super_net)} tone={capitalFlow.data.latest?.super_net} />
-                <Metric label="大单" value={formatCompactNumber(capitalFlow.data.latest?.large_net)} tone={capitalFlow.data.latest?.large_net} />
+            <div className="space-y-4">
+              <div>
+                <p className="mb-2 text-sm font-medium text-[var(--desk-text)]">主力净流入</p>
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+                  {(
+                    [
+                      ["1", "当日"],
+                      ["3", "3日"],
+                      ["5", "5日"],
+                      ["10", "10日"],
+                      ["20", "20日"],
+                    ] as const
+                  ).map(([key, label]) => (
+                    <Metric
+                      key={key}
+                      label={label}
+                      value={formatCompactNumber(capitalFlow.data?.periods?.[key])}
+                      tone={capitalFlow.data?.periods?.[key]}
+                    />
+                  ))}
+                </div>
+              </div>
+              <div>
+                <p className="mb-2 text-sm font-medium text-[var(--desk-text)]">结构净占比</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <Metric
+                    label="超大单"
+                    value={formatSignedPercent(capitalFlow.data.structure?.super_pct)}
+                    tone={capitalFlow.data.structure?.super_pct}
+                  />
+                  <Metric
+                    label="大单"
+                    value={formatSignedPercent(capitalFlow.data.structure?.large_pct)}
+                    tone={capitalFlow.data.structure?.large_pct}
+                  />
+                </div>
+              </div>
+              <div>
+                <p className="mb-2 text-sm font-medium text-[var(--desk-text)]">融资余额</p>
+                {capitalFlow.data.margin ? (
+                  <div className="grid grid-cols-2 gap-3">
+                    <Metric label="余额" value={formatCompactNumber(capitalFlow.data.margin.balance)} />
+                    <Metric
+                      label="较上日"
+                      value={formatCompactNumber(capitalFlow.data.margin.change)}
+                      tone={capitalFlow.data.margin.change}
+                    />
+                  </div>
+                ) : (
+                  <EmptyCopy text="暂无融资余额数据" />
+                )}
               </div>
             </div>
           ) : (
@@ -496,21 +559,26 @@ function toDateString(value: Date): string {
 
 /**
  * 展示独立分区的加载、错误和内容状态。
- * @param props 卡片标题、请求状态及内容
+ * @param props 卡片标题、可选标题旁说明、请求状态及内容
  */
 function SectionCard<T>({
   title,
+  titleExtra,
   state,
   children,
 }: {
   title: string;
+  titleExtra?: string;
   state: LoadState<T>;
   children: ReactNode;
 }) {
   return (
     <Card className="border border-[var(--desk-line)] bg-[var(--desk-panel)]">
       <CardHeader className="p-5 pb-2">
-        <CardTitle className="text-base text-[var(--desk-text)]">{title}</CardTitle>
+        <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+          <CardTitle className="text-base text-[var(--desk-text)]">{title}</CardTitle>
+          {titleExtra ? <span className="text-xs text-[var(--desk-mist)]">{titleExtra}</span> : null}
+        </div>
       </CardHeader>
       <CardContent className="min-h-24 p-5 pt-2">
         {state.loading ? <LoadingBlock label="正在加载" /> : state.error ? <ErrorBlock message={state.error} /> : children}
@@ -690,6 +758,16 @@ function formatCompactNumber(value: number | undefined | null): string {
 function formatPercent(value: number | undefined | null, digits = 2): string {
   if (value == null || Number.isNaN(value)) return "—";
   return `${formatNumber(value, digits)}%`;
+}
+
+/**
+ * 格式化带符号的净占比。
+ * @param value 百分数
+ * @param digits 小数位
+ */
+function formatSignedPercent(value: number | undefined | null, digits = 2): string {
+  if (value == null || Number.isNaN(value)) return "—";
+  return `${formatSigned(value, digits)}%`;
 }
 
 /**

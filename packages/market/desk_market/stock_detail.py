@@ -263,6 +263,9 @@ def compute_technicals(db: Session, symbol: str, *, lookback_days: int = 180) ->
     }
 
 
+_PERIOD_WINDOWS = (1, 3, 5, 10, 20)
+
+
 def _capital_flow_point(row: CapitalFlowDaily) -> dict:
     """
     将资金流 ORM 行序列化为 API 数据点。
@@ -279,76 +282,139 @@ def _capital_flow_point(row: CapitalFlowDaily) -> dict:
     }
 
 
+def _sum_main_net_periods(series: list[dict[str, Any]]) -> dict[str, float | None]:
+    """
+    汇总主力净流入 N 日合计。
+
+    @param series: 按时间升序的资金流序列
+    """
+    periods: dict[str, float | None] = {}
+    for window in _PERIOD_WINDOWS:
+        if len(series) < window:
+            periods[str(window)] = None
+            continue
+        periods[str(window)] = float(sum(float(point["main_net"]) for point in series[-window:]))
+    return periods
+
+
+def _structure_from_live(live_rows: list[dict[str, Any]] | None) -> dict[str, float | None]:
+    """
+    从实时资金流行提取最新超大单/大单净占比。
+
+    @param live_rows: 实时资金流行
+    """
+    if not live_rows:
+        return {"super_pct": None, "large_pct": None}
+    latest = live_rows[-1]
+    return {
+        "super_pct": latest.get("super_pct"),
+        "large_pct": latest.get("large_pct"),
+    }
+
+
+def _persist_capital_rows(db: Session, sym: str, live_rows: list[dict[str, Any]]) -> None:
+    """
+    将实时资金流写入/更新库表。
+
+    @param db: Session
+    @param sym: 规范化 symbol
+    @param live_rows: 实时行
+    """
+    for point in live_rows:
+        ts = point["ts"]
+        if not isinstance(ts, date):
+            ts = pd.Timestamp(ts).date()
+        existing = db.scalar(
+            select(CapitalFlowDaily).where(
+                CapitalFlowDaily.symbol == sym,
+                CapitalFlowDaily.ts == ts,
+            )
+        )
+        values = {
+            key: float(point[key])
+            for key in ("main_net", "super_net", "large_net", "medium_net", "small_net")
+        }
+        if existing:
+            for key, value in values.items():
+                setattr(existing, key, value)
+        else:
+            db.add(CapitalFlowDaily(symbol=sym, ts=ts, **values))
+    db.commit()
+
+
 def get_capital_flow(db: Session, symbol: str, *, days: int = 20) -> dict:
     """
-    优先从库内读取个股资金流，缺失时通过 AkShare 拉取并落库。
+    优先从库内读取个股资金流，缺失时 live 拉取并落库。
+
+    额外附带 N 日主力净流入合计、当日超大单/大单净占比、融资余额。
 
     @param db: 数据库 Session
     @param symbol: 标的代码
     @param days: 返回的最大交易日数
-    @returns: available/source/latest/series 等字段
+    @returns: available/source/latest/periods/structure/margin/series 等字段
     """
     sym = normalize_symbol(symbol)
+    need_days = max(days, max(_PERIOD_WINDOWS))
+    client = get_capital_client()
+    live_rows: list[dict[str, Any]] | None = None
+    source = "db"
+
     rows = db.scalars(
         select(CapitalFlowDaily)
         .where(CapitalFlowDaily.symbol == sym)
         .order_by(CapitalFlowDaily.ts.desc())
-        .limit(days)
+        .limit(need_days)
     ).all()
-    if rows:
-        series = [_capital_flow_point(row) for row in reversed(rows)]
-        return {
-            "available": True,
-            "symbol": sym,
-            "source": "db",
-            "as_of": series[-1]["ts"],
-            "latest": {key: series[-1][key] for key in series[-1] if key != "ts"},
-            "series": series,
-        }
 
-    try:
-        live_rows = get_capital_client().fetch_daily(sym, days=days)
-        if not live_rows:
-            raise RuntimeError("capital flow client returned no data")
+    if not rows:
+        try:
+            live_rows = client.fetch_daily(sym, days=need_days)
+            if not live_rows:
+                raise RuntimeError("capital flow client returned no data")
+            _persist_capital_rows(db, sym, live_rows)
+            source = "live"
+            rows = db.scalars(
+                select(CapitalFlowDaily)
+                .where(CapitalFlowDaily.symbol == sym)
+                .order_by(CapitalFlowDaily.ts.desc())
+                .limit(need_days)
+            ).all()
+        except Exception as exc:  # noqa: BLE001 — 实时源失败需降级为可用性响应
+            db.rollback()
+            return {"available": False, "error": str(exc)[:200], "symbol": sym}
 
-        for point in live_rows:
-            ts = point["ts"]
-            if not isinstance(ts, date):
-                ts = pd.Timestamp(ts).date()
-            existing = db.scalar(
-                select(CapitalFlowDaily).where(
-                    CapitalFlowDaily.symbol == sym,
-                    CapitalFlowDaily.ts == ts,
-                )
-            )
-            values = {
-                key: float(point[key])
-                for key in ("main_net", "super_net", "large_net", "medium_net", "small_net")
-            }
-            if existing:
-                for key, value in values.items():
-                    setattr(existing, key, value)
-            else:
-                db.add(CapitalFlowDaily(symbol=sym, ts=ts, **values))
-        db.commit()
-    except Exception as exc:  # noqa: BLE001 — 实时源失败需降级为可用性响应
-        db.rollback()
-        return {"available": False, "error": str(exc)[:200], "symbol": sym}
-
-    persisted = db.scalars(
-        select(CapitalFlowDaily)
-        .where(CapitalFlowDaily.symbol == sym)
-        .order_by(CapitalFlowDaily.ts.desc())
-        .limit(days)
-    ).all()
-    series = [_capital_flow_point(row) for row in reversed(persisted)]
+    series = [_capital_flow_point(row) for row in reversed(rows)]
     if not series:
         return {"available": False, "error": "capital flow persistence failed", "symbol": sym}
+
+    structure = _structure_from_live(live_rows)
+    if structure.get("super_pct") is None and structure.get("large_pct") is None:
+        try:
+            peek = client.fetch_daily(sym, days=min(5, need_days))
+            structure = _structure_from_live(peek)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("capital structure peek failed for %s: %s", sym, exc)
+
+    margin: dict[str, Any] | None = None
+    try:
+        margin = client.fetch_margin(sym)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("margin fetch failed for %s: %s", sym, exc)
+
+    latest = {key: series[-1][key] for key in series[-1] if key != "ts"}
+    if structure.get("super_pct") is not None:
+        latest["super_pct"] = structure["super_pct"]
+    if structure.get("large_pct") is not None:
+        latest["large_pct"] = structure["large_pct"]
+
     return {
         "available": True,
         "symbol": sym,
-        "source": "live",
+        "source": source,
         "as_of": series[-1]["ts"],
-        "latest": {key: series[-1][key] for key in series[-1] if key != "ts"},
+        "latest": latest,
+        "periods": _sum_main_net_periods(series),
+        "structure": structure,
+        "margin": margin,
         "series": series,
     }
