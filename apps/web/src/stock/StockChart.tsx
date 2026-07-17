@@ -34,14 +34,14 @@ export function StockChart({ period, bars, compact = false }: StockChartProps) {
       height: compact ? 192 : 256,
       layout: {
         background: { type: ColorType.Solid, color: "transparent" },
-        textColor: "var(--desk-mist)",
+        textColor: "#ffffff",
       },
       grid: {
-        vertLines: { color: "rgba(148, 163, 184, 0.15)" },
-        horzLines: { color: "rgba(148, 163, 184, 0.15)" },
+        vertLines: { color: "rgba(255, 255, 255, 0.12)" },
+        horzLines: { color: "rgba(255, 255, 255, 0.12)" },
       },
-      rightPriceScale: { borderColor: "rgba(148, 163, 184, 0.25)" },
-      timeScale: { borderColor: "rgba(148, 163, 184, 0.25)", timeVisible: period === "intraday" },
+      rightPriceScale: { borderColor: "#ffffff" },
+      timeScale: { borderColor: "#ffffff", timeVisible: period === "intraday" },
     });
 
     if (period === "intraday") {
