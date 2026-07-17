@@ -12,7 +12,9 @@ import pandas as pd
 from desk_common.symbols import normalize_symbol
 
 _HFQ_OHLCV = ("open", "high", "low", "close", "volume")
-_AUCTION_END = time(9, 29, 59, 999999)
+# 竞价窗右端（含）；xtdata tick 下载 end_time 用 09:30:00（秒级），勿带微秒后缀
+_AUCTION_END = time(9, 29, 59)
+_AUCTION_DOWNLOAD_END = time(9, 30, 0)
 _LOGGER = logging.getLogger(__name__)
 
 # 主板块：沪深 A（含 ETF 等成分）+ 京市；不去前缀过滤
@@ -112,11 +114,78 @@ def _parse_ts(value: str | datetime | date) -> datetime:
 
 
 def _fmt_qmt_datetime(ts: datetime) -> str:
-    """datetime → YYYYMMDDHHMMSS[ffffff]（xtdata 历史下载时间串）。"""
-    base = ts.strftime("%Y%m%d%H%M%S")
-    if ts.microsecond:
-        return f"{base}{ts.microsecond:06d}"
-    return base
+    """
+    datetime → YYYYMMDDHHMMSS（xtdata 历史下载时间串）。
+
+    tick 接口不接受微秒后缀；带 ``ffffff`` 会触发「结束时间错误」。
+    """
+    return ts.strftime("%Y%m%d%H%M%S")
+
+
+def _side_level_number(value: Any) -> float | None:
+    """
+    解析买卖一档价/量；支持标量或 list/tuple 首档。
+
+    @param value: askPrice/bidPrice/askVol/bidVol 原始值
+    """
+    if value is None or value == "":
+        return None
+    if isinstance(value, (list, tuple)):
+        if not value:
+            return None
+        return _first_number(value[0])
+    try:
+        # numpy 数组等
+        if hasattr(value, "__len__") and not isinstance(value, (str, bytes)):
+            if len(value) == 0:
+                return None
+            return _first_number(value[0])
+    except TypeError:
+        pass
+    return _first_number(value)
+
+
+def _auction_tick_price(row: dict[str, Any]) -> float | None:
+    """
+    集合竞价 tick 价格：成交价优先，否则用虚拟撮合价（买卖一价）。
+
+    QMT 在 09:15–09:24 的 ``lastPrice`` 常为 0，参考价在 askPrice/bidPrice[0]。
+    """
+    last = _first_number(
+        row.get("last"),
+        row.get("lastPrice"),
+        row.get("LastPrice"),
+        row.get("last_price"),
+        row.get("close"),
+    )
+    if last is not None and last > 0:
+        return last
+    for key in ("askPrice", "bidPrice", "ask_price", "bid_price"):
+        price = _side_level_number(row.get(key))
+        if price is not None and price > 0:
+            return price
+    return None
+
+
+def _auction_tick_volume(row: dict[str, Any]) -> tuple[str, float]:
+    """
+    集合竞价 tick 量：真实成交量优先，否则用一档虚拟匹配量（累计口径）。
+
+    @returns: ``(\"abs\"|\"cum\", value)``
+    """
+    volume = _first_number(
+        row.get("volume"),
+        row.get("Volume"),
+        row.get("pvolume"),
+        row.get("pVolume"),
+    )
+    if volume is not None and volume > 0:
+        return "abs", volume
+    for key in ("askVol", "bidVol", "ask_vol", "bid_vol"):
+        matched = _side_level_number(row.get(key))
+        if matched is not None and matched > 0:
+            return "cum", matched
+    return "abs", 0.0
 
 
 def _auction_window(
@@ -160,7 +229,7 @@ def _fill_auction_minutes(
             except (TypeError, ValueError):
                 continue
 
-    grouped: dict[datetime, list[tuple[datetime, float, float, float]]] = {}
+    grouped: dict[datetime, list[tuple[datetime, float, str, float, float]]] = {}
     for row in tick_rows:
         try:
             tick_ts = _parse_ts(row["ts"])
@@ -169,30 +238,37 @@ def _fill_auction_minutes(
         minute = pd.Timestamp(tick_ts).floor("min").to_pydatetime()
         if minute in existing_minutes or not (window_start <= tick_ts <= window_end):
             continue
-        last = _first_number(
-            row.get("last"),
-            row.get("lastPrice"),
-            row.get("LastPrice"),
-            row.get("last_price"),
-            row.get("close"),
-        )
-        if last is None:
+        price = _auction_tick_price(row)
+        if price is None:
             continue
-        volume = _first_number(
-            row.get("volume"),
-            row.get("Volume"),
-            row.get("pvolume"),
-            row.get("pVolume"),
-        )
+        vol_kind, volume = _auction_tick_volume(row)
         amount = _first_number(row.get("amount"), row.get("Amount"), row.get("turnover"))
         grouped.setdefault(minute, []).append(
-            (tick_ts, last, volume if volume is not None else 0.0, amount if amount is not None else 0.0)
+            (
+                tick_ts,
+                price,
+                vol_kind,
+                volume,
+                amount if amount is not None else 0.0,
+            )
         )
 
     rows: list[dict[str, Any]] = []
     for minute, values in grouped.items():
         values.sort(key=lambda value: value[0])
         prices = [value[1] for value in values]
+        abs_vols = [value[3] for value in values if value[2] == "abs" and value[3] > 0]
+        cum_vols = [value[3] for value in values if value[2] == "cum"]
+        if abs_vols:
+            # 竞价确认成交等多用「最新真实量」
+            minute_volume = float(abs_vols[-1])
+        elif cum_vols:
+            minute_volume = float(max(0.0, cum_vols[-1] - cum_vols[0]))
+            if minute_volume == 0.0 and cum_vols[-1] > 0:
+                # 该分钟虚拟量未变：仍记末值，避免整段无量柱
+                minute_volume = float(cum_vols[-1])
+        else:
+            minute_volume = 0.0
         rows.append(
             {
                 "ts": minute,
@@ -200,8 +276,8 @@ def _fill_auction_minutes(
                 "high": max(prices),
                 "low": min(prices),
                 "close": prices[-1],
-                "volume": sum(value[2] for value in values),
-                "amount": sum(value[3] for value in values),
+                "volume": minute_volume,
+                "amount": sum(value[4] for value in values),
             }
         )
     if not rows:
@@ -759,7 +835,7 @@ class XtdataMarketData:
         if window is None:
             return minute_df
         auction_start = datetime.combine(start.date(), time(9, 15))
-        auction_end = datetime.combine(start.date(), _AUCTION_END)
+        auction_end = datetime.combine(start.date(), _AUCTION_DOWNLOAD_END)
         start_s = _fmt_qmt_datetime(auction_start)
         end_s = _fmt_qmt_datetime(auction_end)
         try:
@@ -770,7 +846,15 @@ class XtdataMarketData:
                 end_time=end_s,
             )
             data = self._xt.get_market_data_ex(
-                field_list=["lastPrice", "volume", "amount"],
+                field_list=[
+                    "lastPrice",
+                    "volume",
+                    "amount",
+                    "askPrice",
+                    "bidPrice",
+                    "askVol",
+                    "bidVol",
+                ],
                 stock_list=[symbol],
                 period="tick",
                 start_time=start_s,

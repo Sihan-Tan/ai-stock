@@ -66,6 +66,66 @@ def test_get_minute_bars_fills_auction_from_ticks() -> None:
     assert float(row_915["low"]) == 9.8
 
 
+def test_fill_auction_uses_indicative_price_when_last_is_zero() -> None:
+    """竞价阶段 lastPrice=0 时改用买卖一价作为虚拟撮合价。"""
+    from desk_market.qmt_md import _fill_auction_minutes
+
+    out = _fill_auction_minutes(
+        pd.DataFrame(),
+        [
+            {
+                "ts": datetime(2026, 7, 17, 9, 15, 5),
+                "lastPrice": 0.0,
+                "volume": 0,
+                "amount": 0.0,
+                "askPrice": [1260.1, 0, 0, 0, 0],
+                "bidPrice": [1260.1, 0, 0, 0, 0],
+                "askVol": [1, 0, 0, 0, 0],
+                "bidVol": [1, 0, 0, 0, 0],
+            },
+            {
+                "ts": datetime(2026, 7, 17, 9, 15, 50),
+                "lastPrice": 0.0,
+                "volume": 0,
+                "amount": 0.0,
+                "askPrice": [1259.0, 0, 0, 0, 0],
+                "bidPrice": [1259.0, 0, 0, 0, 0],
+                "askVol": [21, 0, 0, 0, 0],
+                "bidVol": [21, 0, 0, 0, 0],
+            },
+            {
+                "ts": datetime(2026, 7, 17, 9, 25, 2),
+                "lastPrice": 1269.01,
+                "volume": 557,
+                "amount": 70_683_857.0,
+                "askPrice": [0, 0, 0, 0, 0],
+                "bidPrice": [0, 0, 0, 0, 0],
+            },
+        ],
+        datetime(2026, 7, 17, 9, 15),
+        datetime(2026, 7, 17, 9, 35),
+    )
+    minutes = {pd.Timestamp(ts).strftime("%H:%M"): row for ts, row in zip(out["ts"], out.to_dict("records"))}
+    assert "09:15" in minutes
+    assert float(minutes["09:15"]["open"]) == 1260.1
+    assert float(minutes["09:15"]["close"]) == 1259.0
+    assert float(minutes["09:15"]["volume"]) == 20.0  # cum 21-1
+    assert "09:25" in minutes
+    assert float(minutes["09:25"]["close"]) == 1269.01
+    assert float(minutes["09:25"]["volume"]) == 557.0
+
+
+def test_fmt_qmt_datetime_strips_microseconds() -> None:
+    """tick 下载时间串不得带微秒，否则 xtdata 报结束时间错误。"""
+    from desk_market.qmt_md import _fmt_qmt_datetime
+
+    assert (
+        _fmt_qmt_datetime(datetime(2026, 7, 17, 9, 29, 59, 999999))
+        == "20260717092959"
+    )
+    assert _fmt_qmt_datetime(datetime(2026, 7, 17, 9, 30, 0)) == "20260717093000"
+
+
 def test_get_minute_bars_keeps_existing_auction_minute() -> None:
     """已有 1m 竞价分钟不被 tick 聚合覆盖。"""
     md = MockQmtMarketData()
