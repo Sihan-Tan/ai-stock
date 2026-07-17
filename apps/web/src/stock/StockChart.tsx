@@ -2,10 +2,11 @@ import {
   AreaSeries,
   CandlestickSeries,
   ColorType,
+  LineSeries,
   createChart,
 } from "lightweight-charts";
 import { useEffect, useMemo, useRef } from "react";
-import { toChartBars } from "./format";
+import { summarizeIntradayBars, toChartBars } from "./format";
 import type { ChartPeriod, OhlcvBar } from "./types";
 
 export type StockChartProps = {
@@ -50,6 +51,17 @@ export function StockChart({ period, bars, compact = false }: StockChartProps) {
         bottomColor: "rgba(239, 68, 68, 0.02)",
       });
       series.setData(chartBars.map(({ time, value }) => ({ time, value })));
+
+      const summary = summarizeIntradayBars(bars);
+      if (summary.avg != null) {
+        const avgSeries = chart.addSeries(LineSeries, {
+          color: "#f59e0b",
+          lineWidth: 1,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        });
+        avgSeries.setData(chartBars.map(({ time }) => ({ time, value: summary.avg as number })));
+      }
     } else {
       const series = chart.addSeries(CandlestickSeries, {
         upColor: "#ef4444",
@@ -80,7 +92,7 @@ export function StockChart({ period, bars, compact = false }: StockChartProps) {
       resizeObserver.disconnect();
       chart.remove();
     };
-  }, [chartBars, compact, period]);
+  }, [bars, chartBars, compact, period]);
 
   if (chartBars.length === 0) {
     return (

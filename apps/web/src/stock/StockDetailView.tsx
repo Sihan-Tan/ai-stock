@@ -1,6 +1,7 @@
 import { Alert, Button, Card, CardContent, CardHeader, CardTitle, Chip, Spinner } from "@heroui/react";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { api } from "../api";
+import { summarizeIntradayBars } from "./format";
 import { StockChart } from "./StockChart";
 import type { ChartPeriod, OhlcvBar, PositionContext } from "./types";
 
@@ -93,6 +94,11 @@ export function StockDetailView({
   const [capitalFlow, setCapitalFlow] = useState<LoadState<CapitalFlow>>(loadingState());
   const [technicals, setTechnicals] = useState<LoadState<Technicals>>(loadingState());
   const [bars, setBars] = useState<LoadState<OhlcvBar[]>>(loadingState());
+
+  const intradaySummary = useMemo(() => {
+    if (period !== "intraday" || !bars.data?.length) return null;
+    return summarizeIntradayBars(bars.data);
+  }, [bars.data, period]);
 
   useEffect(() => {
     let cancelled = false;
@@ -259,7 +265,18 @@ export function StockDetailView({
           ) : bars.error ? (
             <ErrorBlock message={`行情数据加载失败：${bars.error}`} />
           ) : (
-            <StockChart period={period} bars={bars.data ?? []} compact={compact} />
+            <div className="space-y-3">
+              {intradaySummary && (
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+                  <Metric label="均价" value={formatNumber(intradaySummary.avg)} />
+                  <Metric label="开盘价" value={formatNumber(intradaySummary.open)} />
+                  <Metric label="收盘价" value={formatNumber(intradaySummary.close)} />
+                  <Metric label="最高价" value={formatNumber(intradaySummary.high)} />
+                  <Metric label="最低价" value={formatNumber(intradaySummary.low)} />
+                </div>
+              )}
+              <StockChart period={period} bars={bars.data ?? []} compact={compact} />
+            </div>
           )}
         </CardContent>
       </Card>
