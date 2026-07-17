@@ -20,10 +20,16 @@ export type IntradaySummary = {
   low: number | null;
 };
 
-/** 上午时段跨度（09:30→11:30 = 120 分钟）。 */
+/** 开盘集合竞价+空档跨度（09:15→09:30 = 15 分钟）。 */
+export const ASHARE_AUCTION_SPAN = 15;
+/** 上午连续竞价跨度（09:30→11:30 = 120）。 */
 const AM_SPAN = 11 * 60 + 30 - (9 * 60 + 30);
-/** 全天连续交易分钟数（11:30 与 13:00 共点）：0…240。 */
-export const ASHARE_SESSION_LAST_INDEX = AM_SPAN + (15 * 60 - 13 * 60); // 240
+/** 连续竞价全天分钟数（含午休共点）：0…240，再叠加竞价前缀。 */
+const CONTINUOUS_LAST_INDEX = AM_SPAN + (15 * 60 - 13 * 60); // 240
+/** 含竞价前缀的会话最后序号：09:15→0 … 15:00→255。 */
+export const ASHARE_SESSION_LAST_INDEX = ASHARE_AUCTION_SPAN + CONTINUOUS_LAST_INDEX; // 255
+/** 连续竞价起点序号（=09:30）。 */
+export const ASHARE_CONTINUOUS_START_INDEX = ASHARE_AUCTION_SPAN; // 15
 /** 用于图表的伪时间基数，避免与真实 unix 混淆。 */
 const INTRADAY_TIME_BASE = 1_000_000;
 
@@ -101,24 +107,27 @@ export function getBeijingHourMinute(value: string): { hour: number; minute: num
 /**
  * 将北京时间映射为连续交易分钟序号（跳过午休）。
  *
- * 09:30→0 … 11:30→120；13:00→120（与 11:30 同点）… 15:00→240。
+ * 09:15→0 … 09:29→14；09:30→15 … 11:30→135；13:00→135（与 11:30 同点）… 15:00→255。
  *
  * @param hour 时
  * @param minute 分
  */
 export function toAshareSessionIndex(hour: number, minute: number): number | null {
   const mins = hour * 60 + minute;
+  const auctionStart = 9 * 60 + 15;
   const amStart = 9 * 60 + 30;
   const amEnd = 11 * 60 + 30;
   const pmStart = 13 * 60;
   const pmEnd = 15 * 60;
 
+  if (mins >= auctionStart && mins < amStart) {
+    return mins - auctionStart;
+  }
   if (mins >= amStart && mins <= amEnd) {
-    return mins - amStart;
+    return ASHARE_AUCTION_SPAN + (mins - amStart);
   }
   if (mins >= pmStart && mins <= pmEnd) {
-    // 13:00 与 11:30 共用坐标 120
-    return AM_SPAN + (mins - pmStart);
+    return ASHARE_AUCTION_SPAN + AM_SPAN + (mins - pmStart);
   }
   return null;
 }
@@ -129,15 +138,18 @@ export function toAshareSessionIndex(hour: number, minute: number): number | nul
  */
 export function formatAshareSessionLabel(sessionIndex: number): string {
   const idx = Math.round(sessionIndex);
-  if (idx === 0) return "09:30";
-  if (idx === AM_SPAN) return "11:30/13:00";
+  if (idx === 0) return "09:15";
+  if (idx === ASHARE_CONTINUOUS_START_INDEX) return "09:30";
+  if (idx === ASHARE_AUCTION_SPAN + AM_SPAN) return "11:30/13:00";
   if (idx === ASHARE_SESSION_LAST_INDEX) return "15:00";
 
   let mins: number;
-  if (idx < AM_SPAN) {
-    mins = 9 * 60 + 30 + idx;
+  if (idx < ASHARE_CONTINUOUS_START_INDEX) {
+    mins = 9 * 60 + 15 + idx;
+  } else if (idx < ASHARE_AUCTION_SPAN + AM_SPAN) {
+    mins = 9 * 60 + 30 + (idx - ASHARE_AUCTION_SPAN);
   } else {
-    mins = 13 * 60 + (idx - AM_SPAN);
+    mins = 13 * 60 + (idx - ASHARE_AUCTION_SPAN - AM_SPAN);
   }
   const hour = Math.floor(mins / 60);
   const minute = mins % 60;
@@ -158,8 +170,9 @@ export function chartTimeToSessionIndex(chartTime: Time): number {
  */
 export function formatIntradayTickMark(chartTime: Time): string {
   const idx = Math.round(chartTimeToSessionIndex(chartTime));
-  if (idx === 0) return "09:30";
-  if (idx === AM_SPAN) return "11:30/13:00";
+  if (idx === 0) return "09:15";
+  if (idx === ASHARE_CONTINUOUS_START_INDEX) return "09:30";
+  if (idx === ASHARE_AUCTION_SPAN + AM_SPAN) return "11:30/13:00";
   if (idx === ASHARE_SESSION_LAST_INDEX) return "15:00";
   return "";
 }
@@ -191,7 +204,7 @@ export function formatDailyCrosshairTime(time: Time): string {
 }
 
 /**
- * 生成分时全天占位时间点（保证 09:30、11:30/13:00、15:00 落在轴上）。
+ * 生成分时全天占位时间点（保证 09:15、09:30、11:30/13:00、15:00 落在轴上）。
  */
 export function buildIntradaySessionPlaceholders(): Array<{ time: UTCTimestamp }> {
   const points: Array<{ time: UTCTimestamp }> = [];

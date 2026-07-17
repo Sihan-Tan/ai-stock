@@ -44,6 +44,13 @@ describe("toChartBars", () => {
       toChartBars(
         [
           {
+            ts: "2026-07-15T01:15:00.000Z", // 09:15 CST
+            open: 9.9,
+            high: 10.1,
+            low: 9.8,
+            close: 10,
+          },
+          {
             ts: "2026-07-15T01:30:00.000Z", // 09:30 CST
             open: 10,
             high: 11,
@@ -77,6 +84,15 @@ describe("toChartBars", () => {
     ).toEqual([
       {
         time: 1_000_000,
+        open: 9.9,
+        high: 10.1,
+        low: 9.8,
+        close: 10,
+        value: 10,
+        volume: 0,
+      },
+      {
+        time: 1_000_015,
         open: 10,
         high: 11,
         low: 9,
@@ -85,7 +101,7 @@ describe("toChartBars", () => {
         volume: 0,
       },
       {
-        time: 1_000_120,
+        time: 1_000_135,
         open: 10.6,
         high: 10.7,
         low: 10.4,
@@ -104,24 +120,30 @@ describe("toChartBars", () => {
 });
 
 describe("ashare session axis", () => {
-  it("maps morning and afternoon onto continuous indexes", () => {
-    expect(toAshareSessionIndex(9, 30)).toBe(0);
-    expect(toAshareSessionIndex(11, 30)).toBe(120);
-    expect(toAshareSessionIndex(13, 0)).toBe(120);
-    expect(toAshareSessionIndex(15, 0)).toBe(240);
+  it("maps auction and continuous session onto continuous indexes", () => {
+    expect(toAshareSessionIndex(9, 15)).toBe(0);
+    expect(toAshareSessionIndex(9, 25)).toBe(10);
+    expect(toAshareSessionIndex(9, 29)).toBe(14);
+    expect(toAshareSessionIndex(9, 30)).toBe(15);
+    expect(toAshareSessionIndex(11, 30)).toBe(135);
+    expect(toAshareSessionIndex(13, 0)).toBe(135);
+    expect(toAshareSessionIndex(15, 0)).toBe(255);
     expect(toAshareSessionIndex(12, 0)).toBeNull();
+    expect(toAshareSessionIndex(9, 14)).toBeNull();
   });
 
   it("formats key session labels", () => {
-    expect(formatAshareSessionLabel(0)).toBe("09:30");
-    expect(formatAshareSessionLabel(120)).toBe("11:30/13:00");
-    expect(formatAshareSessionLabel(240)).toBe("15:00");
+    expect(formatAshareSessionLabel(0)).toBe("09:15");
+    expect(formatAshareSessionLabel(15)).toBe("09:30");
+    expect(formatAshareSessionLabel(135)).toBe("11:30/13:00");
+    expect(formatAshareSessionLabel(255)).toBe("15:00");
   });
 
   it("formats intraday crosshair as HH:mm", () => {
-    expect(formatIntradayCrosshairTime(1_000_000 as never)).toBe("09:30");
-    expect(formatIntradayCrosshairTime(1_000_031 as never)).toBe("10:01");
-    expect(formatIntradayCrosshairTime(1_000_120 as never)).toBe("11:30/13:00");
+    expect(formatIntradayCrosshairTime(1_000_000 as never)).toBe("09:15");
+    expect(formatIntradayCrosshairTime(1_000_015 as never)).toBe("09:30");
+    expect(formatIntradayCrosshairTime(1_000_046 as never)).toBe("10:01");
+    expect(formatIntradayCrosshairTime(1_000_135 as never)).toBe("11:30/13:00");
   });
 });
 
