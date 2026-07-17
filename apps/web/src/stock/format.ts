@@ -21,6 +21,8 @@ export type IntradaySummary = {
 
 /** 上午时段跨度（09:30→11:30 = 120 分钟）。 */
 const AM_SPAN = 11 * 60 + 30 - (9 * 60 + 30);
+/** 全天连续交易分钟数（11:30 与 13:00 共点）：0…240。 */
+export const ASHARE_SESSION_LAST_INDEX = AM_SPAN + (15 * 60 - 13 * 60); // 240
 /** 用于图表的伪时间基数，避免与真实 unix 混淆。 */
 const INTRADAY_TIME_BASE = 1_000_000;
 
@@ -40,25 +42,38 @@ export function toChartBars(bars: OhlcvBar[], period: ChartPeriod): ChartBar[] {
     return (a.date ?? "").localeCompare(b.date ?? "");
   });
 
-  return sortedBars.flatMap((bar) => {
-    const time =
-      period === "intraday" ? toIntradayChartTime(bar.ts) : toBusinessDay(bar.date);
+  if (period !== "intraday") {
+    return sortedBars.flatMap((bar) => {
+      const time = toBusinessDay(bar.date);
+      if (time == null) return [];
+      return [
+        {
+          time,
+          open: bar.open,
+          high: bar.high,
+          low: bar.low,
+          close: bar.close,
+          value: bar.close,
+        },
+      ];
+    });
+  }
 
-    if (time == null) {
-      return [];
-    }
-
-    return [
-      {
-        time,
-        open: bar.open,
-        high: bar.high,
-        low: bar.low,
-        close: bar.close,
-        value: bar.close,
-      },
-    ];
-  });
+  // 分时：同一坐标后写覆盖（11:30 与 13:00 共点）
+  const byTime = new Map<number, ChartBar>();
+  for (const bar of sortedBars) {
+    const time = toIntradayChartTime(bar.ts);
+    if (time == null) continue;
+    byTime.set(Number(time), {
+      time,
+      open: bar.open,
+      high: bar.high,
+      low: bar.low,
+      close: bar.close,
+      value: bar.close,
+    });
+  }
+  return [...byTime.values()].sort((a, b) => Number(a.time) - Number(b.time));
 }
 
 /**
@@ -83,7 +98,7 @@ export function getBeijingHourMinute(value: string): { hour: number; minute: num
 /**
  * 将北京时间映射为连续交易分钟序号（跳过午休）。
  *
- * 09:30→0 … 11:30→120；13:00→121 … 15:00→241。
+ * 09:30→0 … 11:30→120；13:00→120（与 11:30 同点）… 15:00→240。
  *
  * @param hour 时
  * @param minute 分
@@ -99,7 +114,8 @@ export function toAshareSessionIndex(hour: number, minute: number): number | nul
     return mins - amStart;
   }
   if (mins >= pmStart && mins <= pmEnd) {
-    return AM_SPAN + 1 + (mins - pmStart);
+    // 13:00 与 11:30 共用坐标 120
+    return AM_SPAN + (mins - pmStart);
   }
   return null;
 }
@@ -110,11 +126,15 @@ export function toAshareSessionIndex(hour: number, minute: number): number | nul
  */
 export function formatAshareSessionLabel(sessionIndex: number): string {
   const idx = Math.round(sessionIndex);
+  if (idx === 0) return "09:30";
+  if (idx === AM_SPAN) return "11:30/13:00";
+  if (idx === ASHARE_SESSION_LAST_INDEX) return "15:00";
+
   let mins: number;
-  if (idx <= AM_SPAN) {
+  if (idx < AM_SPAN) {
     mins = 9 * 60 + 30 + idx;
   } else {
-    mins = 13 * 60 + (idx - AM_SPAN - 1);
+    mins = 13 * 60 + (idx - AM_SPAN);
   }
   const hour = Math.floor(mins / 60);
   const minute = mins % 60;
@@ -130,11 +150,26 @@ export function chartTimeToSessionIndex(chartTime: Time): number {
 }
 
 /**
- * 分时图时间轴格式化（北京交易时段）。
+ * 分时图时间轴刻度：仅展示关键节点。
  * @param chartTime 图表时间
  */
 export function formatIntradayTickMark(chartTime: Time): string {
-  return formatAshareSessionLabel(chartTimeToSessionIndex(chartTime));
+  const idx = Math.round(chartTimeToSessionIndex(chartTime));
+  if (idx === 0) return "09:30";
+  if (idx === AM_SPAN) return "11:30/13:00";
+  if (idx === ASHARE_SESSION_LAST_INDEX) return "15:00";
+  return "";
+}
+
+/**
+ * 生成分时全天占位时间点（保证 09:30、11:30/13:00、15:00 落在轴上）。
+ */
+export function buildIntradaySessionPlaceholders(): Array<{ time: UTCTimestamp }> {
+  const points: Array<{ time: UTCTimestamp }> = [];
+  for (let index = 0; index <= ASHARE_SESSION_LAST_INDEX; index += 1) {
+    points.push({ time: (INTRADAY_TIME_BASE + index) as UTCTimestamp });
+  }
+  return points;
 }
 
 /**
@@ -148,6 +183,27 @@ export function toIntradayChartTime(value: string | undefined): UTCTimestamp | n
   const index = toAshareSessionIndex(hm.hour, hm.minute);
   if (index == null) return null;
   return (INTRADAY_TIME_BASE + index) as UTCTimestamp;
+}
+
+/**
+ * 将分时 bars 转为图表数据，同一坐标后写覆盖（使 13:00 与 11:30 共点）。
+ * @param bars 分钟线
+ */
+export function toIntradaySeriesPoints(
+  bars: OhlcvBar[]
+): Array<{ time: UTCTimestamp; value: number }> {
+  const sorted = [...bars].sort((a, b) => {
+    const timeA = a.ts ? Date.parse(a.ts) : Number.NaN;
+    const timeB = b.ts ? Date.parse(b.ts) : Number.NaN;
+    return timeA - timeB;
+  });
+  const byTime = new Map<number, { time: UTCTimestamp; value: number }>();
+  for (const bar of sorted) {
+    const time = toIntradayChartTime(bar.ts);
+    if (time == null) continue;
+    byTime.set(Number(time), { time, value: bar.close });
+  }
+  return [...byTime.values()].sort((a, b) => Number(a.time) - Number(b.time));
 }
 
 /**
@@ -193,7 +249,7 @@ export function buildIntradayAvgSeries(
 
   let turnoverSum = 0;
   let volumeSum = 0;
-  const points: Array<{ time: UTCTimestamp; value: number }> = [];
+  const byTime = new Map<number, { time: UTCTimestamp; value: number }>();
 
   for (const bar of sorted) {
     const time = toIntradayChartTime(bar.ts);
@@ -202,10 +258,10 @@ export function buildIntradayAvgSeries(
     turnoverSum += turnover;
     volumeSum += volume;
     if (volumeSum > 0) {
-      points.push({ time, value: turnoverSum / volumeSum });
+      byTime.set(Number(time), { time, value: turnoverSum / volumeSum });
     }
   }
-  return points;
+  return [...byTime.values()].sort((a, b) => Number(a.time) - Number(b.time));
 }
 
 /**

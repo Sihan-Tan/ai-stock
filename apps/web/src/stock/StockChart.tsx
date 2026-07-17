@@ -4,9 +4,18 @@ import {
   ColorType,
   LineSeries,
   createChart,
+  type UTCTimestamp,
 } from "lightweight-charts";
 import { useEffect, useMemo, useRef } from "react";
-import { buildIntradayAvgSeries, buildSmaSeries, DAILY_MA_LINES, formatIntradayTickMark, toChartBars } from "./format";
+import {
+  ASHARE_SESSION_LAST_INDEX,
+  buildIntradayAvgSeries,
+  buildIntradaySessionPlaceholders,
+  buildSmaSeries,
+  DAILY_MA_LINES,
+  formatIntradayTickMark,
+  toChartBars,
+} from "./format";
 import type { ChartPeriod, OhlcvBar } from "./types";
 
 export type StockChartProps = {
@@ -14,6 +23,8 @@ export type StockChartProps = {
   bars: OhlcvBar[];
   compact?: boolean;
 };
+
+const INTRADAY_TIME_BASE = 1_000_000;
 
 /**
  * 根据行情周期渲染分时走势或日周月 K 线图。
@@ -61,8 +72,19 @@ export function StockChart({ period, bars, compact = false }: StockChartProps) {
         lineColor: "#ef4444",
         topColor: "rgba(239, 68, 68, 0.35)",
         bottomColor: "rgba(239, 68, 68, 0.02)",
+        lastValueVisible: false,
+        priceLineVisible: false,
       });
-      series.setData(chartBars.map(({ time, value }) => ({ time, value })));
+
+      // 先铺全天占位，保证 09:30 / 11:30·13:00 / 15:00 刻度一定落在轴上
+      const placeholders = buildIntradaySessionPlaceholders();
+      const valueByTime = new Map(chartBars.map((bar) => [Number(bar.time), bar.value]));
+      series.setData(
+        placeholders.map((point) => {
+          const value = valueByTime.get(Number(point.time));
+          return value == null ? point : { time: point.time, value };
+        })
+      );
 
       const avgPoints = buildIntradayAvgSeries(bars);
       if (avgPoints.length > 0) {
@@ -73,8 +95,19 @@ export function StockChart({ period, bars, compact = false }: StockChartProps) {
           lastValueVisible: false,
           crosshairMarkerVisible: false,
         });
-        avgSeries.setData(avgPoints);
+        const avgByTime = new Map(avgPoints.map((p) => [Number(p.time), p.value]));
+        avgSeries.setData(
+          placeholders.map((point) => {
+            const value = avgByTime.get(Number(point.time));
+            return value == null ? point : { time: point.time, value };
+          })
+        );
       }
+
+      chart.timeScale().setVisibleRange({
+        from: (INTRADAY_TIME_BASE + 0) as UTCTimestamp,
+        to: (INTRADAY_TIME_BASE + ASHARE_SESSION_LAST_INDEX) as UTCTimestamp,
+      });
     } else {
       const series = chart.addSeries(CandlestickSeries, {
         upColor: "#ef4444",
@@ -107,9 +140,9 @@ export function StockChart({ period, bars, compact = false }: StockChartProps) {
           maSeries.setData(points);
         }
       }
-    }
 
-    chart.timeScale().fitContent();
+      chart.timeScale().fitContent();
+    }
 
     const resizeObserver = new ResizeObserver(([entry]) => {
       chart.applyOptions({ width: entry.contentRect.width });

@@ -47,11 +47,18 @@ describe("toChartBars", () => {
             close: 10.5,
           },
           {
-            ts: "2026-07-15T05:00:00.000Z", // 13:00 CST
+            ts: "2026-07-15T03:30:00.000Z", // 11:30 CST
+            open: 10.4,
+            high: 10.5,
+            low: 10.3,
+            close: 10.4,
+          },
+          {
+            ts: "2026-07-15T05:00:00.000Z", // 13:00 CST，与 11:30 同点
             open: 10.6,
             high: 10.7,
             low: 10.4,
-            close: 10.5,
+            close: 10.55,
           },
           {
             ts: "2026-07-15T04:00:00.000Z", // 12:00 午休，应丢弃
@@ -73,12 +80,12 @@ describe("toChartBars", () => {
         value: 10.5,
       },
       {
-        time: 1_000_121,
+        time: 1_000_120,
         open: 10.6,
         high: 10.7,
         low: 10.4,
-        close: 10.5,
-        value: 10.5,
+        close: 10.55,
+        value: 10.55,
       },
     ]);
   });
@@ -94,16 +101,15 @@ describe("ashare session axis", () => {
   it("maps morning and afternoon onto continuous indexes", () => {
     expect(toAshareSessionIndex(9, 30)).toBe(0);
     expect(toAshareSessionIndex(11, 30)).toBe(120);
-    expect(toAshareSessionIndex(13, 0)).toBe(121);
-    expect(toAshareSessionIndex(15, 0)).toBe(241);
+    expect(toAshareSessionIndex(13, 0)).toBe(120);
+    expect(toAshareSessionIndex(15, 0)).toBe(240);
     expect(toAshareSessionIndex(12, 0)).toBeNull();
   });
 
-  it("formats session labels", () => {
+  it("formats key session labels", () => {
     expect(formatAshareSessionLabel(0)).toBe("09:30");
-    expect(formatAshareSessionLabel(120)).toBe("11:30");
-    expect(formatAshareSessionLabel(121)).toBe("13:00");
-    expect(formatAshareSessionLabel(241)).toBe("15:00");
+    expect(formatAshareSessionLabel(120)).toBe("11:30/13:00");
+    expect(formatAshareSessionLabel(240)).toBe("15:00");
   });
 });
 
