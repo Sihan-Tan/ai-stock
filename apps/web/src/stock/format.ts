@@ -105,7 +105,7 @@ export function getBeijingHourMinute(value: string): { hour: number; minute: num
 }
 
 /**
- * 将北京时间映射为连续交易分钟序号（跳过午休）。
+ * 将北京时间映射为 A 股分时会话分钟序号（含竞价前缀，跳过午休）。
  *
  * 09:15→0 … 09:29→14；09:30→15 … 11:30→135；13:00→135（与 11:30 同点）… 15:00→255。
  *
@@ -215,6 +215,18 @@ export function buildIntradaySessionPlaceholders(): Array<{ time: UTCTimestamp }
 }
 
 /**
+ * 是否属于连续竞价段（≥09:30）。
+ * @param value ISO 时间
+ */
+export function isContinuousSessionTs(value: string | undefined): boolean {
+  if (!value) return false;
+  const hm = getBeijingHourMinute(value);
+  if (!hm) return false;
+  const index = toAshareSessionIndex(hm.hour, hm.minute);
+  return index != null && index >= ASHARE_CONTINUOUS_START_INDEX;
+}
+
+/**
  * 将分钟线时间转为分时图连续轴坐标；非交易时段返回 null。
  * @param value ISO 时间
  */
@@ -296,9 +308,11 @@ export function buildIntradayAvgSeries(
   for (const bar of sorted) {
     const time = toIntradayChartTime(bar.ts);
     if (time == null) continue;
-    const { turnover, volume } = barTurnoverAndVolume(bar);
-    turnoverSum += turnover;
-    volumeSum += volume;
+    if (isContinuousSessionTs(bar.ts)) {
+      const { turnover, volume } = barTurnoverAndVolume(bar);
+      turnoverSum += turnover;
+      volumeSum += volume;
+    }
     if (volumeSum > 0) {
       byTime.set(Number(time), { time, value: turnoverSum / volumeSum });
     }
@@ -324,9 +338,14 @@ export function summarizeIntradayBars(bars: OhlcvBar[]): IntradaySummary {
     return timeA - timeB;
   });
 
+  const continuous = sorted.filter((bar) => isContinuousSessionTs(bar.ts));
+  if (!continuous.length) {
+    return { avg: null, open: null, close: null, high: null, low: null };
+  }
+
   let high = -Infinity;
   let low = Infinity;
-  for (const bar of sorted) {
+  for (const bar of continuous) {
     high = Math.max(high, bar.high);
     low = Math.min(low, bar.low);
   }
@@ -335,12 +354,12 @@ export function summarizeIntradayBars(bars: OhlcvBar[]): IntradaySummary {
   const avg =
     avgSeries.length > 0
       ? avgSeries[avgSeries.length - 1].value
-      : sorted.reduce((sum, bar) => sum + bar.close, 0) / sorted.length;
+      : continuous.reduce((sum, bar) => sum + bar.close, 0) / continuous.length;
 
   return {
     avg: Number.isFinite(avg) ? avg : null,
-    open: sorted[0].open,
-    close: sorted[sorted.length - 1].close,
+    open: continuous[0].open,
+    close: continuous[continuous.length - 1].close,
     high: Number.isFinite(high) ? high : null,
     low: Number.isFinite(low) ? low : null,
   };

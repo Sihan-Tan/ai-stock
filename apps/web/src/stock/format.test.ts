@@ -257,4 +257,44 @@ describe("summarizeIntradayBars", () => {
       low: null,
     });
   });
+
+  it("ignores auction bars before 09:30 for OHLC and VWAP", () => {
+    expect(
+      summarizeIntradayBars([
+        {
+          ts: "2026-07-15T01:20:00.000Z", // 09:20 竞价
+          open: 9,
+          high: 12,
+          low: 8,
+          close: 11,
+          volume: 1000,
+          amount: 11000,
+        },
+        {
+          ts: "2026-07-15T01:30:00.000Z", // 09:30
+          open: 10,
+          high: 10.3,
+          low: 9.9,
+          close: 10.2,
+          volume: 100,
+          amount: 1020,
+        },
+        {
+          ts: "2026-07-15T01:31:00.000Z",
+          open: 10.2,
+          high: 10.5,
+          low: 10.1,
+          close: 10.4,
+          volume: 100,
+          amount: 1040,
+        },
+      ])
+    ).toEqual({
+      avg: 10.3,
+      open: 10,
+      close: 10.4,
+      high: 10.5,
+      low: 9.9,
+    });
+  });
 });
