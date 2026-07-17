@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { buildSmaSeries, summarizeIntradayBars, toChartBars } from "./format";
+import {
+  buildSmaSeries,
+  formatAshareSessionLabel,
+  summarizeIntradayBars,
+  toAshareSessionIndex,
+  toChartBars,
+} from "./format";
 
 describe("toChartBars", () => {
   it("converts daily bars to business-day candlestick data", () => {
@@ -29,26 +35,48 @@ describe("toChartBars", () => {
     ]);
   });
 
-  it("converts ISO intraday timestamps to unix seconds", () => {
+  it("maps intraday bars onto continuous A-share session axis", () => {
     expect(
       toChartBars(
         [
           {
-            ts: "2026-07-15T01:30:00.000Z",
+            ts: "2026-07-15T01:30:00.000Z", // 09:30 CST
             open: 10,
             high: 11,
             low: 9,
             close: 10.5,
+          },
+          {
+            ts: "2026-07-15T05:00:00.000Z", // 13:00 CST
+            open: 10.6,
+            high: 10.7,
+            low: 10.4,
+            close: 10.5,
+          },
+          {
+            ts: "2026-07-15T04:00:00.000Z", // 12:00 午休，应丢弃
+            open: 10,
+            high: 10,
+            low: 10,
+            close: 10,
           },
         ],
         "intraday"
       )
     ).toEqual([
       {
-        time: 1784079000,
+        time: 1_000_000,
         open: 10,
         high: 11,
         low: 9,
+        close: 10.5,
+        value: 10.5,
+      },
+      {
+        time: 1_000_121,
+        open: 10.6,
+        high: 10.7,
+        low: 10.4,
         close: 10.5,
         value: 10.5,
       },
@@ -59,6 +87,23 @@ describe("toChartBars", () => {
     expect(
       toChartBars([{ open: 10, high: 11, low: 9, close: 10.5 }], "day")
     ).toEqual([]);
+  });
+});
+
+describe("ashare session axis", () => {
+  it("maps morning and afternoon onto continuous indexes", () => {
+    expect(toAshareSessionIndex(9, 30)).toBe(0);
+    expect(toAshareSessionIndex(11, 30)).toBe(120);
+    expect(toAshareSessionIndex(13, 0)).toBe(121);
+    expect(toAshareSessionIndex(15, 0)).toBe(241);
+    expect(toAshareSessionIndex(12, 0)).toBeNull();
+  });
+
+  it("formats session labels", () => {
+    expect(formatAshareSessionLabel(0)).toBe("09:30");
+    expect(formatAshareSessionLabel(120)).toBe("11:30");
+    expect(formatAshareSessionLabel(121)).toBe("13:00");
+    expect(formatAshareSessionLabel(241)).toBe("15:00");
   });
 });
 

@@ -6,7 +6,7 @@ import {
   createChart,
 } from "lightweight-charts";
 import { useEffect, useMemo, useRef } from "react";
-import { buildIntradayAvgSeries, buildSmaSeries, DAILY_MA_LINES, toChartBars } from "./format";
+import { buildIntradayAvgSeries, buildSmaSeries, DAILY_MA_LINES, formatIntradayTickMark, toChartBars } from "./format";
 import type { ChartPeriod, OhlcvBar } from "./types";
 
 export type StockChartProps = {
@@ -41,7 +41,19 @@ export function StockChart({ period, bars, compact = false }: StockChartProps) {
         horzLines: { color: "rgba(255, 255, 255, 0.12)" },
       },
       rightPriceScale: { borderColor: "#ffffff" },
-      timeScale: { borderColor: "#ffffff", timeVisible: period === "intraday" },
+      localization:
+        period === "intraday"
+          ? {
+              timeFormatter: (time) => formatIntradayTickMark(time),
+            }
+          : undefined,
+      timeScale: {
+        borderColor: "#ffffff",
+        timeVisible: period === "intraday",
+        secondsVisible: false,
+        tickMarkFormatter:
+          period === "intraday" ? (time) => formatIntradayTickMark(time) : undefined,
+      },
     });
 
     if (period === "intraday") {

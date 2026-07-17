@@ -19,6 +19,11 @@ export type IntradaySummary = {
   low: number | null;
 };
 
+/** 上午时段跨度（09:30→11:30 = 120 分钟）。 */
+const AM_SPAN = 11 * 60 + 30 - (9 * 60 + 30);
+/** 用于图表的伪时间基数，避免与真实 unix 混淆。 */
+const INTRADAY_TIME_BASE = 1_000_000;
+
 /**
  * 将接口 OHLCV 数据转换为 lightweight-charts 所需的时间序列格式。
  * @param bars 接口返回的原始行情数据
@@ -36,7 +41,8 @@ export function toChartBars(bars: OhlcvBar[], period: ChartPeriod): ChartBar[] {
   });
 
   return sortedBars.flatMap((bar) => {
-    const time = period === "intraday" ? toUnixSeconds(bar.ts) : toBusinessDay(bar.date);
+    const time =
+      period === "intraday" ? toIntradayChartTime(bar.ts) : toBusinessDay(bar.date);
 
     if (time == null) {
       return [];
@@ -53,6 +59,95 @@ export function toChartBars(bars: OhlcvBar[], period: ChartPeriod): ChartBar[] {
       },
     ];
   });
+}
+
+/**
+ * 读取北京时间的时、分。
+ * @param value ISO 时间
+ */
+export function getBeijingHourMinute(value: string): { hour: number; minute: number } | null {
+  const ms = Date.parse(value);
+  if (Number.isNaN(ms)) return null;
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Shanghai",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(new Date(ms));
+  const hour = Number(parts.find((p) => p.type === "hour")?.value);
+  const minute = Number(parts.find((p) => p.type === "minute")?.value);
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
+  return { hour, minute };
+}
+
+/**
+ * 将北京时间映射为连续交易分钟序号（跳过午休）。
+ *
+ * 09:30→0 … 11:30→120；13:00→121 … 15:00→241。
+ *
+ * @param hour 时
+ * @param minute 分
+ */
+export function toAshareSessionIndex(hour: number, minute: number): number | null {
+  const mins = hour * 60 + minute;
+  const amStart = 9 * 60 + 30;
+  const amEnd = 11 * 60 + 30;
+  const pmStart = 13 * 60;
+  const pmEnd = 15 * 60;
+
+  if (mins >= amStart && mins <= amEnd) {
+    return mins - amStart;
+  }
+  if (mins >= pmStart && mins <= pmEnd) {
+    return AM_SPAN + 1 + (mins - pmStart);
+  }
+  return null;
+}
+
+/**
+ * 将连续交易分钟序号格式化为 HH:mm。
+ * @param sessionIndex 会话分钟序号
+ */
+export function formatAshareSessionLabel(sessionIndex: number): string {
+  const idx = Math.round(sessionIndex);
+  let mins: number;
+  if (idx <= AM_SPAN) {
+    mins = 9 * 60 + 30 + idx;
+  } else {
+    mins = 13 * 60 + (idx - AM_SPAN - 1);
+  }
+  const hour = Math.floor(mins / 60);
+  const minute = mins % 60;
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+/**
+ * 从图表伪时间还原会话序号。
+ * @param chartTime lightweight-charts 时间
+ */
+export function chartTimeToSessionIndex(chartTime: Time): number {
+  return Number(chartTime) - INTRADAY_TIME_BASE;
+}
+
+/**
+ * 分时图时间轴格式化（北京交易时段）。
+ * @param chartTime 图表时间
+ */
+export function formatIntradayTickMark(chartTime: Time): string {
+  return formatAshareSessionLabel(chartTimeToSessionIndex(chartTime));
+}
+
+/**
+ * 将分钟线时间转为分时图连续轴坐标；非交易时段返回 null。
+ * @param value ISO 时间
+ */
+export function toIntradayChartTime(value: string | undefined): UTCTimestamp | null {
+  if (!value) return null;
+  const hm = getBeijingHourMinute(value);
+  if (!hm) return null;
+  const index = toAshareSessionIndex(hm.hour, hm.minute);
+  if (index == null) return null;
+  return (INTRADAY_TIME_BASE + index) as UTCTimestamp;
 }
 
 /**
@@ -101,7 +196,7 @@ export function buildIntradayAvgSeries(
   const points: Array<{ time: UTCTimestamp; value: number }> = [];
 
   for (const bar of sorted) {
-    const time = toUnixSeconds(bar.ts);
+    const time = toIntradayChartTime(bar.ts);
     if (time == null) continue;
     const { turnover, volume } = barTurnoverAndVolume(bar);
     turnoverSum += turnover;
@@ -198,17 +293,4 @@ export function buildSmaSeries(
  */
 function toBusinessDay(value: string | undefined): string | null {
   return value && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : null;
-}
-
-/**
- * 将 ISO 时间转换为 Unix 秒时间戳。
- * @param value 接口返回的分时数据时间
- */
-function toUnixSeconds(value: string | undefined): UTCTimestamp | null {
-  if (!value) {
-    return null;
-  }
-
-  const milliseconds = Date.parse(value);
-  return Number.isNaN(milliseconds) ? null : (Math.floor(milliseconds / 1000) as UTCTimestamp);
 }
