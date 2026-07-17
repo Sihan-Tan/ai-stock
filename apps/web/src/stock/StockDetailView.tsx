@@ -293,10 +293,10 @@ export function StockDetailView({
               {intradaySummary && (
                 <>
                   <PriceChip label="均价" value={formatNumber(intradaySummary.avg)} color="#f59e0b" />
-                  <PriceChip label="开" value={formatNumber(intradaySummary.open)} />
-                  <PriceChip label="收" value={formatNumber(intradaySummary.close)} />
                   <PriceChip label="高" value={formatNumber(intradaySummary.high)} color="#ef4444" />
                   <PriceChip label="低" value={formatNumber(intradaySummary.low)} color="#22c55e" />
+                  <PriceChip label="开" value={formatNumber(intradaySummary.open)} />
+                  <PriceChip label="收" value={formatNumber(intradaySummary.close)} />
                 </>
               )}
               {dailyMaPrices.map((ma) => (
