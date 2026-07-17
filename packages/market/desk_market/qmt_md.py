@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, time
+import logging
 from typing import Any, Protocol
 
 import pandas as pd
@@ -11,6 +12,7 @@ import pandas as pd
 from desk_common.symbols import normalize_symbol
 
 _HFQ_OHLCV = ("open", "high", "low", "close", "volume")
+_LOGGER = logging.getLogger(__name__)
 
 # 主板块：沪深 A（含 ETF 等成分）+ 京市；不去前缀过滤
 _A_SHARE_SECTORS = ("沪深A股", "京市A股", "北交所", "沪深京A股")
@@ -108,6 +110,97 @@ def _parse_ts(value: str | datetime | date) -> datetime:
     return pd.Timestamp(value).to_pydatetime()
 
 
+def _auction_window(
+    start: datetime, end: datetime
+) -> tuple[datetime, datetime] | None:
+    """返回查询窗口与当日集合竞价的交集。"""
+    if start.date() != end.date():
+        return None
+    auction_start = datetime.combine(start.date(), time(9, 15))
+    auction_end = datetime.combine(start.date(), time(9, 29, 59, 999999))
+    if start > auction_end or end < auction_start:
+        return None
+    return max(start, auction_start), min(end, auction_end)
+
+
+def _fill_auction_minutes(
+    minute_df: pd.DataFrame,
+    tick_rows: list[dict[str, Any]],
+    start: datetime,
+    end: datetime,
+) -> pd.DataFrame:
+    """
+    用 tick 聚合缺失的 09:15–09:29 分钟 K 线。
+
+    @param minute_df: 已取得的分钟 K 线
+    @param tick_rows: 含 ts/last/volume/amount 的 tick 行
+    @param start: 查询起始时间
+    @param end: 查询结束时间
+    @returns: 补齐后的分钟 K 线
+    """
+    window = _auction_window(start, end)
+    if window is None or not tick_rows:
+        return minute_df
+    window_start, window_end = window
+
+    existing_minutes: set[datetime] = set()
+    if not minute_df.empty and "ts" in minute_df:
+        for value in minute_df["ts"]:
+            try:
+                existing_minutes.add(pd.Timestamp(value).floor("min").to_pydatetime())
+            except (TypeError, ValueError):
+                continue
+
+    grouped: dict[datetime, list[tuple[datetime, float, float, float]]] = {}
+    for row in tick_rows:
+        try:
+            tick_ts = _parse_ts(row["ts"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        minute = pd.Timestamp(tick_ts).floor("min").to_pydatetime()
+        if minute in existing_minutes or not (window_start <= tick_ts <= window_end):
+            continue
+        last = _first_number(
+            row.get("last"),
+            row.get("lastPrice"),
+            row.get("LastPrice"),
+            row.get("last_price"),
+            row.get("close"),
+        )
+        if last is None:
+            continue
+        volume = _first_number(
+            row.get("volume"),
+            row.get("Volume"),
+            row.get("pvolume"),
+            row.get("pVolume"),
+        )
+        amount = _first_number(row.get("amount"), row.get("Amount"), row.get("turnover"))
+        grouped.setdefault(minute, []).append(
+            (tick_ts, last, volume if volume is not None else 0.0, amount if amount is not None else 0.0)
+        )
+
+    rows: list[dict[str, Any]] = []
+    for minute, values in grouped.items():
+        values.sort(key=lambda value: value[0])
+        prices = [value[1] for value in values]
+        rows.append(
+            {
+                "ts": minute,
+                "open": prices[0],
+                "high": max(prices),
+                "low": min(prices),
+                "close": prices[-1],
+                "volume": sum(value[2] for value in values),
+                "amount": sum(value[3] for value in values),
+            }
+        )
+    if not rows:
+        return minute_df
+    out = pd.concat([minute_df, pd.DataFrame(rows)], ignore_index=True, sort=False)
+    return out.sort_values("ts").reset_index(drop=True)
+
+
 def _merge_qfq_hfq(qfq: dict[str, Any], hfq: dict[str, Any]) -> dict[str, Any]:
     """合并前复权默认列与后复权 *_hfq 列。"""
     row = dict(qfq)
@@ -168,6 +261,7 @@ class MockQmtMarketData:
             )
         self._daily: dict[str, list[dict[str, Any]]] = {}
         self._minute: dict[str, list[dict[str, Any]]] = {}
+        self._ticks: dict[str, list[dict[str, Any]]] = {}
         self._snapshots: dict[str, dict[str, Any]] = {}
 
     def list_instruments(self) -> list[InstrumentInfo]:
@@ -245,6 +339,21 @@ class MockQmtMarketData:
         if ohlcv.get("amount") is not None:
             snap["amount"] = ohlcv.get("amount")
 
+    def seed_ticks(self, symbol: str, rows: list[dict[str, Any]]) -> None:
+        """
+        写入多条 tick 种子。
+
+        @param symbol: 标的
+        @param rows: 含 ts/last/volume/amount 的 tick 行
+        """
+        sym = normalize_symbol(symbol)
+        seeded: list[dict[str, Any]] = []
+        for row in rows:
+            tick = dict(row)
+            tick["ts"] = _parse_ts(tick["ts"])
+            seeded.append(tick)
+        self._ticks.setdefault(sym, []).extend(seeded)
+
     def get_daily_bars(self, symbol: str, start: date, end: date) -> pd.DataFrame:
         """日线：默认列为前复权，另含 *_hfq。"""
         sym = normalize_symbol(symbol)
@@ -272,9 +381,12 @@ class MockQmtMarketData:
             for r in self._minute.get(sym, [])
             if start_ts <= r["ts"] <= end_ts
         ]
-        if not rows:
-            return pd.DataFrame()
-        return pd.DataFrame(rows)
+        return _fill_auction_minutes(
+            pd.DataFrame(rows),
+            self._ticks.get(sym, []),
+            start_ts,
+            end_ts,
+        )
 
     def get_snapshots(self, symbols: list[str]) -> dict[str, dict]:
         """最新快照（只读）。"""
@@ -606,15 +718,68 @@ class XtdataMarketData:
             end_time=end_s,
             dividend_type="none",
         )
+        out = pd.DataFrame()
         if not data:
-            return pd.DataFrame()
+            return self._ensure_auction_minutes(symbol, out, start_ts, end_ts)
         df = data.get(symbol) if isinstance(data, dict) else None
-        if df is None or getattr(df, "empty", True):
-            return pd.DataFrame()
-        out = df.copy()
-        out["ts"] = [pd.Timestamp(i).to_pydatetime() for i in out.index]
-        out = out[(out["ts"] >= start_ts) & (out["ts"] <= end_ts)]
-        return out.reset_index(drop=True)
+        if df is not None and not getattr(df, "empty", True):
+            out = df.copy()
+            out["ts"] = [pd.Timestamp(i).to_pydatetime() for i in out.index]
+            out = out[(out["ts"] >= start_ts) & (out["ts"] <= end_ts)].reset_index(
+                drop=True
+            )
+        return self._ensure_auction_minutes(symbol, out, start_ts, end_ts)
+
+    def _ensure_auction_minutes(
+        self,
+        symbol: str,
+        minute_df: pd.DataFrame,
+        start: datetime,
+        end: datetime,
+    ) -> pd.DataFrame:
+        """
+        在 1 分钟行情缺失时以 QMT tick 补齐集合竞价分钟。
+
+        @param symbol: 标的
+        @param minute_df: 已取得的分钟 K 线
+        @param start: 查询起始时间
+        @param end: 查询结束时间
+        @returns: 补齐后的分钟 K 线；tick 拉取失败时返回原结果
+        """
+        window = _auction_window(start, end)
+        if window is None:
+            return minute_df
+        auction_start = datetime.combine(start.date(), time(9, 15))
+        auction_end = datetime.combine(start.date(), time(9, 29, 59))
+        try:
+            self._xt.download_history_data(
+                symbol,
+                period="tick",
+                start_time=auction_start.strftime("%Y%m%d%H%M%S"),
+                end_time=auction_end.strftime("%Y%m%d%H%M%S"),
+            )
+            data = self._xt.get_market_data_ex(
+                field_list=["lastPrice", "volume", "amount"],
+                stock_list=[symbol],
+                period="tick",
+                start_time=auction_start.strftime("%Y%m%d%H%M%S"),
+                end_time=auction_end.strftime("%Y%m%d%H%M%S"),
+                dividend_type="none",
+            )
+            tick_df = data.get(symbol) if isinstance(data, dict) else None
+            if tick_df is None or getattr(tick_df, "empty", True):
+                return minute_df
+            tick_rows: list[dict[str, Any]] = []
+            for tick_ts, tick in tick_df.iterrows():
+                row = tick.to_dict()
+                row["ts"] = tick_ts
+                tick_rows.append(row)
+            return _fill_auction_minutes(minute_df, tick_rows, start, end)
+        except Exception:  # noqa: BLE001 — tick 缓存或字段差异不能影响分钟行情
+            _LOGGER.warning(
+                "QMT tick 聚合集合竞价分钟失败: symbol=%s", symbol, exc_info=True
+            )
+            return minute_df
 
     def get_snapshots(self, symbols: list[str]) -> dict[str, dict]:
         """
