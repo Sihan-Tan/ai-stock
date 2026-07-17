@@ -94,6 +94,22 @@ describe("summarizeIntradayBars", () => {
     });
   });
 
+  it("treats volume as lots when amount/volume is far above price", () => {
+    // amount 元、volume 手：amount/volume=102000，应折算为 amount/(volume*100)=1020
+    const summary = summarizeIntradayBars([
+      {
+        ts: "2026-07-15T01:30:00.000Z",
+        open: 1000,
+        high: 1020,
+        low: 990,
+        close: 1010,
+        volume: 10,
+        amount: 1_020_000,
+      },
+    ]);
+    expect(summary.avg).toBeCloseTo(1020, 5);
+  });
+
   it("returns nulls for empty bars", () => {
     expect(summarizeIntradayBars([])).toEqual({
       avg: null,

@@ -6,7 +6,7 @@ import {
   createChart,
 } from "lightweight-charts";
 import { useEffect, useMemo, useRef } from "react";
-import { summarizeIntradayBars, toChartBars } from "./format";
+import { buildIntradayAvgSeries, toChartBars } from "./format";
 import type { ChartPeriod, OhlcvBar } from "./types";
 
 export type StockChartProps = {
@@ -52,15 +52,16 @@ export function StockChart({ period, bars, compact = false }: StockChartProps) {
       });
       series.setData(chartBars.map(({ time, value }) => ({ time, value })));
 
-      const summary = summarizeIntradayBars(bars);
-      if (summary.avg != null) {
+      const avgPoints = buildIntradayAvgSeries(bars);
+      if (avgPoints.length > 0) {
         const avgSeries = chart.addSeries(LineSeries, {
           color: "#f59e0b",
           lineWidth: 1,
           priceLineVisible: false,
-          lastValueVisible: false,
+          lastValueVisible: true,
+          title: "均价",
         });
-        avgSeries.setData(chartBars.map(({ time }) => ({ time, value: summary.avg as number })));
+        avgSeries.setData(avgPoints);
       }
     } else {
       const series = chart.addSeries(CandlestickSeries, {
