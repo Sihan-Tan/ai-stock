@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -353,3 +353,61 @@ def test_bars_minute_live_fallback_when_db_empty(client, _db, monkeypatch):
     body = r.json()
     assert len(body) == 1
     assert body[0]["close"] == 10.2
+
+
+def test_bars_minute_backfills_missing_auction_when_db_has_regular_minutes(
+    client, _db, monkeypatch
+):
+    """已有常规分钟线时仍应补齐缺失的集合竞价分钟。"""
+    from desk_market.qmt_md import InstrumentInfo, MockQmtMarketData
+    import app.routes.market as market_routes
+
+    db = get_session_factory()()
+    try:
+        MarketService(db).upsert_minute_bars(
+            "600519.SH",
+            pd.DataFrame(
+                [
+                    {
+                        "ts": datetime(2024, 1, 2, 9, 30),
+                        "open": 10.0,
+                        "high": 10.5,
+                        "low": 9.8,
+                        "close": 10.2,
+                        "volume": 1000,
+                        "amount": 10200,
+                    }
+                ]
+            ),
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    md = MockQmtMarketData(instruments=[InstrumentInfo("600519.SH", status="listed")])
+    md.seed_minute(
+        "600519.SH",
+        datetime(2024, 1, 2, 9, 15),
+        open=9.5,
+        high=9.9,
+        low=9.4,
+        close=9.8,
+        volume=100,
+        amount=980,
+    )
+    monkeypatch.setattr(market_routes, "get_market_data", lambda: md)
+
+    r = client.get(
+        "/api/market/bars/minute",
+        params={
+            "symbol": "600519.SH",
+            "from": "2024-01-02T09:15:00+08:00",
+            "to": "2024-01-02T15:00:00+08:00",
+        },
+    )
+
+    assert r.status_code == 200
+    assert {row["ts"][:16] for row in r.json()} == {
+        "2024-01-02T09:15",
+        "2024-01-02T09:30",
+    }

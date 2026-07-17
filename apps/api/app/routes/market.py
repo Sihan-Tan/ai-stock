@@ -198,7 +198,7 @@ def bars_minute(
 
     详情页分时依赖本接口；分钟定时任务仅同步自选∪指数，故须 live 回退。
     """
-    from datetime import timedelta
+    from datetime import time, timedelta
     from zoneinfo import ZoneInfo
 
     import pandas as pd
@@ -256,6 +256,38 @@ def bars_minute(
         .order_by(BarMinute.ts)
     ).all()
     if rows:
+        auction_start = datetime.combine(start.date(), time(9, 15))
+        auction_end = datetime.combine(start.date(), time(9, 30))
+        overlaps_auction = (
+            start.date() == end.date()
+            and start < auction_end
+            and end >= auction_start
+        )
+        has_auction_row = any(auction_start <= row.ts < auction_end for row in rows)
+        if overlaps_auction and not has_auction_row:
+            auction_from = max(start, auction_start)
+            auction_to = min(end, auction_end - timedelta(microseconds=1))
+            try:
+                auction_df = get_market_data().get_minute_bars(
+                    sym, auction_from, auction_to
+                )
+                if auction_df is not None and not auction_df.empty:
+                    MarketService(db).upsert_minute_bars(sym, auction_df)
+                    db.commit()
+                    rows = db.scalars(
+                        select(BarMinute)
+                        .where(
+                            BarMinute.symbol == sym,
+                            BarMinute.ts >= start,
+                            BarMinute.ts <= end,
+                        )
+                        .order_by(BarMinute.ts)
+                    ).all()
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "minute auction live backfill failed symbol=%s", sym
+                )
+                db.rollback()
         return _serialize_rows(list(rows))
 
     md = get_market_data()
