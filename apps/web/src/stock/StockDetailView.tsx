@@ -180,38 +180,39 @@ export function StockDetailView({
 
   return (
     <div className={compact ? "space-y-3" : "space-y-4"}>
-      <div className="flex items-center justify-end gap-2">
-        {onExpand && (
-          <Button size="sm" variant="secondary" onPress={onExpand}>
-            展开
-          </Button>
-        )}
-        <Button size="sm" variant="secondary" onPress={() => setReloadKey((value) => value + 1)}>
-          刷新
-        </Button>
-        {onClose && (
-          <Button size="sm" variant="ghost" onPress={onClose}>
-            关闭
-          </Button>
-        )}
-      </div>
-
       <Card className="border border-[var(--desk-line)] bg-[var(--desk-panel)]">
         <CardContent className="p-5">
-          <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-xl font-semibold text-[var(--desk-text)]">{displayName}</h1>
-            <span className="font-mono text-sm text-[var(--desk-mist)]">{normalizedSymbol}</span>
-            {meta.data?.status && <Chip size="sm" variant="soft">{meta.data.status}</Chip>}
-            {limitTag === "up" && (
-              <Chip size="sm" color="danger" variant="soft">
-                涨停
-              </Chip>
-            )}
-            {limitTag === "down" && (
-              <Chip size="sm" color="success" variant="soft">
-                跌停
-              </Chip>
-            )}
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <h1 className="text-xl font-semibold text-[var(--desk-text)]">{displayName}</h1>
+              <span className="font-mono text-sm text-[var(--desk-mist)]">{normalizedSymbol}</span>
+              {meta.data?.status && <Chip size="sm" variant="soft">{meta.data.status}</Chip>}
+              {limitTag === "up" && (
+                <Chip size="sm" color="danger" variant="soft">
+                  涨停
+                </Chip>
+              )}
+              {limitTag === "down" && (
+                <Chip size="sm" color="success" variant="soft">
+                  跌停
+                </Chip>
+              )}
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              {onExpand && (
+                <Button size="sm" variant="secondary" onPress={onExpand}>
+                  展开
+                </Button>
+              )}
+              <Button size="sm" variant="secondary" onPress={() => setReloadKey((value) => value + 1)}>
+                刷新
+              </Button>
+              {onClose && (
+                <Button size="sm" variant="ghost" onPress={onClose}>
+                  关闭
+                </Button>
+              )}
+            </div>
           </div>
           {quote.loading ? (
             <div className="mt-3 flex items-center gap-2 text-sm text-[var(--desk-mist)]">
