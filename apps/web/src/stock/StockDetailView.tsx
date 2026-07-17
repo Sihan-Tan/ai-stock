@@ -1,7 +1,7 @@
 import { Alert, Button, Card, CardContent, CardHeader, CardTitle, Chip, Spinner } from "@heroui/react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { api } from "../api";
-import { summarizeIntradayBars } from "./format";
+import { summarizeIntradayBars, buildSmaSeries, DAILY_MA_LINES, toChartBars } from "./format";
 import { calcPctChg, detectLimitTag } from "./limitStatus";
 import { StockChart } from "./StockChart";
 import type { ChartPeriod, OhlcvBar, PositionContext } from "./types";
@@ -100,6 +100,16 @@ export function StockDetailView({
   const intradaySummary = useMemo(() => {
     if (period !== "intraday" || !bars.data?.length) return null;
     return summarizeIntradayBars(bars.data);
+  }, [bars.data, period]);
+
+  const dailyMaPrices = useMemo(() => {
+    if (period !== "day" || !bars.data?.length) return [];
+    const chartBars = toChartBars(bars.data, "day");
+    return DAILY_MA_LINES.map((ma) => {
+      const points = buildSmaSeries(chartBars, ma.window);
+      const latest = points.length > 0 ? points[points.length - 1].value : null;
+      return { ...ma, value: latest };
+    });
   }, [bars.data, period]);
 
   useEffect(() => {
@@ -260,44 +270,51 @@ export function StockDetailView({
       )}
 
       <Card className="border border-[var(--desk-line)] bg-[var(--desk-panel)]">
-        <CardHeader className="flex flex-wrap items-center justify-between gap-3 p-5 pb-2">
-          <CardTitle className="text-base text-[var(--desk-text)]">行情走势</CardTitle>
-          <div className="inline-flex rounded-lg border border-[var(--desk-line)] bg-[var(--desk-ink)] p-1">
-            {PERIODS.map((item) => (
-              <button
-                key={item.value}
-                type="button"
-                className={[
-                  "rounded-md px-3 py-1.5 text-sm transition-colors",
-                  period === item.value
-                    ? "bg-[var(--desk-accent)] font-medium text-[var(--desk-panel)]"
-                    : "text-[var(--desk-mist)] hover:text-[var(--desk-text)]",
-                ].join(" ")}
-                onClick={() => setPeriod(item.value)}
-              >
-                {item.label}
-              </button>
-            ))}
+        <CardContent className="space-y-3 p-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="inline-flex rounded-lg border border-[var(--desk-line)] bg-[var(--desk-ink)] p-1">
+              {PERIODS.map((item) => (
+                <button
+                  key={item.value}
+                  type="button"
+                  className={[
+                    "rounded-md px-3 py-1.5 text-sm transition-colors",
+                    period === item.value
+                      ? "bg-[var(--desk-accent)] font-medium text-[var(--desk-panel)]"
+                      : "text-[var(--desk-mist)] hover:text-[var(--desk-text)]",
+                  ].join(" ")}
+                  onClick={() => setPeriod(item.value)}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+            <div className="flex min-w-0 flex-wrap items-center justify-end gap-x-3 gap-y-1 text-xs">
+              {intradaySummary && (
+                <>
+                  <PriceChip label="均价" value={formatNumber(intradaySummary.avg)} />
+                  <PriceChip label="开" value={formatNumber(intradaySummary.open)} />
+                  <PriceChip label="收" value={formatNumber(intradaySummary.close)} />
+                  <PriceChip label="高" value={formatNumber(intradaySummary.high)} />
+                  <PriceChip label="低" value={formatNumber(intradaySummary.low)} />
+                </>
+              )}
+              {dailyMaPrices.map((ma) => (
+                <span key={ma.label} className="inline-flex items-center gap-1 font-mono whitespace-nowrap">
+                  <span className="inline-block h-0.5 w-3 rounded" style={{ backgroundColor: ma.color }} />
+                  <span style={{ color: ma.color }}>
+                    {ma.label} {formatNumber(ma.value)}
+                  </span>
+                </span>
+              ))}
+            </div>
           </div>
-        </CardHeader>
-        <CardContent className="p-5 pt-2">
           {bars.loading ? (
             <LoadingBlock label="正在加载行情数据" compact={compact} />
           ) : bars.error ? (
             <ErrorBlock message={`行情数据加载失败：${bars.error}`} />
           ) : (
-            <div className="space-y-3">
-              {intradaySummary && (
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-                  <Metric label="均价" value={formatNumber(intradaySummary.avg)} />
-                  <Metric label="开盘价" value={formatNumber(intradaySummary.open)} />
-                  <Metric label="收盘价" value={formatNumber(intradaySummary.close)} />
-                  <Metric label="最高价" value={formatNumber(intradaySummary.high)} />
-                  <Metric label="最低价" value={formatNumber(intradaySummary.low)} />
-                </div>
-              )}
-              <StockChart period={period} bars={bars.data ?? []} compact={compact} />
-            </div>
+            <StockChart period={period} bars={bars.data ?? []} compact={compact} />
           )}
         </CardContent>
       </Card>
@@ -476,6 +493,19 @@ function Metric({ label, value, tone }: { label: string; value: string; tone?: n
       <p className="text-xs text-[var(--desk-mist)]">{label}</p>
       <p className={`mt-1 font-mono text-sm ${tone == null ? "text-[var(--desk-text)]" : valueClass(tone)}`}>{value}</p>
     </div>
+  );
+}
+
+/**
+ * 顶栏紧凑价格项。
+ * @param props 标签与数值
+ */
+function PriceChip({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="font-mono text-[var(--desk-text)] whitespace-nowrap">
+      <span className="text-[var(--desk-mist)]">{label} </span>
+      {value}
+    </span>
   );
 }
 

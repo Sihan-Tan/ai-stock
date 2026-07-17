@@ -23,15 +23,6 @@ export function StockChart({ period, bars, compact = false }: StockChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartBars = useMemo(() => toChartBars(bars, period), [bars, period]);
 
-  const dailyMaLegend = useMemo(() => {
-    if (period !== "day" || chartBars.length === 0) return [];
-    return DAILY_MA_LINES.map((ma) => {
-      const points = buildSmaSeries(chartBars, ma.window);
-      const latest = points.length > 0 ? points[points.length - 1].value : null;
-      return { ...ma, value: latest };
-    });
-  }, [chartBars, period]);
-
   useEffect(() => {
     const container = containerRef.current;
     if (!container || chartBars.length === 0) {
@@ -131,33 +122,5 @@ export function StockChart({ period, bars, compact = false }: StockChartProps) {
     );
   }
 
-  return (
-    <div className="space-y-2">
-      {dailyMaLegend.length > 0 && (
-        <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
-          {dailyMaLegend.map((ma) => (
-            <span key={ma.label} className="inline-flex items-center gap-1.5 font-mono">
-              <span className="inline-block h-0.5 w-3 rounded" style={{ backgroundColor: ma.color }} />
-              <span style={{ color: ma.color }}>
-                {ma.label} {formatMaPrice(ma.value)}
-              </span>
-            </span>
-          ))}
-        </div>
-      )}
-      <div ref={containerRef} className={compact ? "h-48 w-full" : "h-64 w-full"} />
-    </div>
-  );
-}
-
-/**
- * 格式化均线最新价展示。
- * @param value 均线数值
- */
-function formatMaPrice(value: number | null): string {
-  if (value == null || Number.isNaN(value)) return "—";
-  return value.toLocaleString("zh-CN", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
+  return <div ref={containerRef} className={compact ? "h-48 w-full" : "h-64 w-full"} />;
 }
