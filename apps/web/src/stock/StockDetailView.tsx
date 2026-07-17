@@ -2,6 +2,7 @@ import { Alert, Button, Card, CardContent, CardHeader, CardTitle, Chip, Spinner 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { api } from "../api";
 import { summarizeIntradayBars } from "./format";
+import { calcPctChg, detectLimitTag } from "./limitStatus";
 import { StockChart } from "./StockChart";
 import type { ChartPeriod, OhlcvBar, PositionContext } from "./types";
 
@@ -16,6 +17,7 @@ type Props = {
 type Quote = {
   name?: string;
   last?: number;
+  pre_close?: number;
   pct_chg?: number;
   amount?: number;
   updated_at?: string;
@@ -160,7 +162,13 @@ export function StockDetailView({
   }, [normalizedSymbol, period, reloadKey]);
 
   const displayName = meta.data?.name ?? quote.data?.name ?? normalizedSymbol;
-  const quoteChange = Number(quote.data?.pct_chg ?? 0);
+  const lastPrice = quote.data?.last;
+  const preClose = quote.data?.pre_close;
+  const quoteChange =
+    quote.data?.pct_chg != null && Number.isFinite(Number(quote.data.pct_chg))
+      ? Number(quote.data.pct_chg)
+      : calcPctChg(lastPrice, preClose) ?? 0;
+  const limitTag = detectLimitTag(normalizedSymbol, lastPrice, preClose, displayName);
 
   if (notFound) {
     return (
@@ -172,46 +180,58 @@ export function StockDetailView({
 
   return (
     <div className={compact ? "space-y-3" : "space-y-4"}>
+      <div className="flex items-center justify-end gap-2">
+        {onExpand && (
+          <Button size="sm" variant="secondary" onPress={onExpand}>
+            展开
+          </Button>
+        )}
+        <Button size="sm" variant="secondary" onPress={() => setReloadKey((value) => value + 1)}>
+          刷新
+        </Button>
+        {onClose && (
+          <Button size="sm" variant="ghost" onPress={onClose}>
+            关闭
+          </Button>
+        )}
+      </div>
+
       <Card className="border border-[var(--desk-line)] bg-[var(--desk-panel)]">
-        <CardContent className="flex flex-wrap items-start justify-between gap-4 p-5">
-          <div>
-            <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-xl font-semibold text-[var(--desk-text)]">{displayName}</h1>
-              <span className="font-mono text-sm text-[var(--desk-mist)]">{normalizedSymbol}</span>
-              {meta.data?.status && <Chip size="sm" variant="soft">{meta.data.status}</Chip>}
+        <CardContent className="p-5">
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="text-xl font-semibold text-[var(--desk-text)]">{displayName}</h1>
+            <span className="font-mono text-sm text-[var(--desk-mist)]">{normalizedSymbol}</span>
+            {meta.data?.status && <Chip size="sm" variant="soft">{meta.data.status}</Chip>}
+            {limitTag === "up" && (
+              <Chip size="sm" color="danger" variant="soft">
+                涨停
+              </Chip>
+            )}
+            {limitTag === "down" && (
+              <Chip size="sm" color="success" variant="soft">
+                跌停
+              </Chip>
+            )}
+          </div>
+          {quote.loading ? (
+            <div className="mt-3 flex items-center gap-2 text-sm text-[var(--desk-mist)]">
+              <Spinner size="sm" /> 正在加载报价
             </div>
-            {quote.loading ? (
-              <div className="mt-3 flex items-center gap-2 text-sm text-[var(--desk-mist)]">
-                <Spinner size="sm" /> 正在加载报价
-              </div>
-            ) : quote.error ? (
-              <p className="mt-3 text-sm text-[var(--danger)]">报价加载失败：{quote.error}</p>
-            ) : (
-              <div className="mt-3 flex items-end gap-3">
-                <span className="font-mono text-3xl font-semibold text-[var(--desk-text)]">
-                  {formatNumber(quote.data?.last)}
-                </span>
-                <span className={`font-mono text-sm ${valueClass(quoteChange)}`}>
-                  {formatSigned(quoteChange)}%
-                </span>
-              </div>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            {onExpand && (
-              <Button size="sm" variant="secondary" onPress={onExpand}>
-                展开
-              </Button>
-            )}
-            <Button size="sm" variant="secondary" onPress={() => setReloadKey((value) => value + 1)}>
-              刷新
-            </Button>
-            {onClose && (
-              <Button size="sm" variant="ghost" onPress={onClose}>
-                关闭
-              </Button>
-            )}
-          </div>
+          ) : quote.error ? (
+            <p className="mt-3 text-sm text-[var(--danger)]">报价加载失败：{quote.error}</p>
+          ) : (
+            <div className="mt-3 flex flex-wrap items-end gap-3">
+              <span className="font-mono text-3xl font-semibold text-[var(--desk-text)]">
+                {formatNumber(lastPrice)}
+              </span>
+              <span className={`font-mono text-sm ${valueClass(quoteChange)}`}>
+                {formatSigned(quoteChange)}%
+              </span>
+              {preClose != null && (
+                <span className="text-xs text-[var(--desk-mist)]">昨收 {formatNumber(preClose)}</span>
+              )}
+            </div>
+          )}
         </CardContent>
       </Card>
 

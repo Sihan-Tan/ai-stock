@@ -17,6 +17,24 @@ _A_SHARE_SECTORS = ("沪深A股", "京市A股", "北交所", "沪深京A股")
 _DELISTED_SECTORS = ("退市股票", "退市", "已退市", "退市板块")
 
 
+def _first_number(*values: Any) -> float | None:
+    """
+    取第一个可解析为有限浮点数的值。
+
+    @param values: 候选字段
+    """
+    for value in values:
+        if value is None or value == "":
+            continue
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            continue
+        if number == number:  # not NaN
+            return number
+    return None
+
+
 @dataclass
 class InstrumentInfo:
     """标的元信息（Mock 用字符串 status；真实 xtdata 映射到此）。"""
@@ -217,7 +235,15 @@ class MockQmtMarketData:
         for raw in symbols:
             sym = normalize_symbol(raw)
             if sym in self._snapshots:
-                out[sym] = dict(self._snapshots[sym])
+                snap = dict(self._snapshots[sym])
+                last = snap.get("last")
+                pre = snap.get("pre_close")
+                if pre is None and last is not None:
+                    pre = last
+                    snap["pre_close"] = pre
+                if snap.get("pct_chg") is None and last is not None and pre:
+                    snap["pct_chg"] = (float(last) - float(pre)) / float(pre) * 100.0
+                out[sym] = snap
         return out
 
 
@@ -535,20 +561,57 @@ class XtdataMarketData:
         return out.reset_index(drop=True)
 
     def get_snapshots(self, symbols: list[str]) -> dict[str, dict]:
-        """最新快照（instrument detail 中的 PreClose 等，能取则返回）。"""
+        """
+        最新快照：优先 full_tick 最新价，其次 InstrumentDetail；并计算涨跌幅。
+
+        @returns: symbol → {symbol,name,last,pre_close,pct_chg}
+        """
         out: dict[str, dict] = {}
-        for raw in symbols:
-            sym = normalize_symbol(raw)
+        syms = [normalize_symbol(s) for s in symbols if s and str(s).strip()]
+        ticks: dict[str, Any] = {}
+        if syms:
+            try:
+                ticks = self._xt.get_full_tick(syms) or {}
+            except Exception:  # noqa: BLE001
+                ticks = {}
+
+        for sym in syms:
             try:
                 d = self._xt.get_instrument_detail(sym) or {}
             except Exception:  # noqa: BLE001
-                continue
-            if not d:
+                d = {}
+            tick = ticks.get(sym) if isinstance(ticks, dict) else None
+            if not isinstance(tick, dict):
+                tick = {}
+
+            last = _first_number(
+                tick.get("lastPrice"),
+                tick.get("LastPrice"),
+                d.get("LastPrice"),
+                d.get("lastPrice"),
+            )
+            pre_close = _first_number(
+                tick.get("lastClose"),
+                tick.get("LastClose"),
+                tick.get("preClose"),
+                d.get("PreClose"),
+                d.get("preClose"),
+            )
+            # 无最新价时不要用昨充数，避免涨跌幅恒为 0
+            if last is None:
+                last = pre_close
+
+            pct_chg = None
+            if last is not None and pre_close is not None and pre_close != 0:
+                pct_chg = (last - pre_close) / pre_close * 100.0
+
+            if not d and not tick:
                 continue
             out[sym] = {
                 "symbol": sym,
-                "name": d.get("InstrumentName") or "",
-                "last": d.get("PreClose"),
-                "pre_close": d.get("PreClose"),
+                "name": d.get("InstrumentName") or tick.get("InstrumentName") or "",
+                "last": last,
+                "pre_close": pre_close,
+                "pct_chg": pct_chg,
             }
         return out
