@@ -45,9 +45,9 @@ export function StockChart({ period, bars, compact = false }: StockChartProps) {
 
     if (period === "intraday") {
       const series = chart.addSeries(AreaSeries, {
-        lineColor: "#22c55e",
-        topColor: "rgba(34, 197, 94, 0.35)",
-        bottomColor: "rgba(34, 197, 94, 0.02)",
+        lineColor: "#ef4444",
+        topColor: "rgba(239, 68, 68, 0.35)",
+        bottomColor: "rgba(239, 68, 68, 0.02)",
       });
       series.setData(chartBars.map(({ time, value }) => ({ time, value })));
     } else {
