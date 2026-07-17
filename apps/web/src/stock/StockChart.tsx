@@ -12,6 +12,7 @@ import {
 } from "lightweight-charts";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  ASHARE_CONTINUOUS_START_INDEX,
   ASHARE_SESSION_LAST_INDEX,
   buildIntradayAvgSeries,
   buildIntradaySessionPlaceholders,
@@ -151,6 +152,8 @@ function formatHoverPrice(price: number): string {
  */
 export function StockChart({ period, bars, compact = false }: StockChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const auctionBandRef = useRef<HTMLDivElement>(null);
+  const auctionLineRef = useRef<HTMLDivElement>(null);
   const [hoverLabel, setHoverLabel] = useState<HoverPriceLabel | null>(null);
   const chartBars = useMemo(() => toChartBars(bars, period), [bars, period]);
   const showVolume =
@@ -233,7 +236,7 @@ export function StockChart({ period, bars, compact = false }: StockChartProps) {
       });
       mainSeries = series;
 
-      // 先铺全天占位，保证 09:30 / 11:30·13:00 / 15:00 刻度一定落在轴上
+      // 先铺全天占位，保证 09:15 / 09:30 / 11:30·13:00 / 15:00 刻度一定落在轴上
       const placeholders = buildIntradaySessionPlaceholders();
       const valueByTime = new Map(chartBars.map((bar) => [Number(bar.time), bar.value]));
       series.setData(
@@ -317,6 +320,36 @@ export function StockChart({ period, bars, compact = false }: StockChartProps) {
       chart.timeScale().fitContent();
     }
 
+    const syncAuctionOverlay = () => {
+      if (period !== "intraday") {
+        return;
+      }
+
+      const x0 = chart.timeScale().timeToCoordinate((INTRADAY_TIME_BASE + 0) as Time);
+      const x1 = chart
+        .timeScale()
+        .timeToCoordinate((INTRADAY_TIME_BASE + ASHARE_CONTINUOUS_START_INDEX) as Time);
+
+      if (auctionBandRef.current) {
+        auctionBandRef.current.style.display = x0 == null || x1 == null ? "none" : "block";
+      }
+      if (auctionLineRef.current) {
+        auctionLineRef.current.style.display = x0 == null || x1 == null ? "none" : "block";
+      }
+      if (x0 == null || x1 == null) {
+        return;
+      }
+      if (auctionBandRef.current) {
+        auctionBandRef.current.style.left = `${x0}px`;
+        auctionBandRef.current.style.width = `${Math.max(0, x1 - x0)}px`;
+      }
+      if (auctionLineRef.current) {
+        auctionLineRef.current.style.left = `${x1}px`;
+      }
+    };
+    syncAuctionOverlay();
+    chart.timeScale().subscribeVisibleLogicalRangeChange(syncAuctionOverlay);
+
     const onCrosshairMove = (param: {
       point?: { x: number; y: number } | undefined;
       time?: Time;
@@ -346,10 +379,12 @@ export function StockChart({ period, bars, compact = false }: StockChartProps) {
 
     const resizeObserver = new ResizeObserver(([entry]) => {
       chart.applyOptions({ width: entry.contentRect.width });
+      syncAuctionOverlay();
     });
     resizeObserver.observe(container);
 
     return () => {
+      chart.timeScale().unsubscribeVisibleLogicalRangeChange(syncAuctionOverlay);
       chart.unsubscribeCrosshairMove(onCrosshairMove);
       resizeObserver.disconnect();
       chart.remove();
@@ -381,7 +416,21 @@ export function StockChart({ period, bars, compact = false }: StockChartProps) {
 
   return (
     <div className={`relative w-full ${heightClass}`}>
-      <div ref={containerRef} className="absolute inset-0 w-full" />
+      {period === "intraday" && (
+        <>
+          <div
+            ref={auctionBandRef}
+            className="pointer-events-none absolute inset-y-0 z-0"
+            style={{ backgroundColor: "rgba(148, 163, 184, 0.12)" }}
+          />
+          <div
+            ref={auctionLineRef}
+            className="pointer-events-none absolute inset-y-0 z-0 w-px"
+            style={{ backgroundColor: "rgba(148, 163, 184, 0.55)" }}
+          />
+        </>
+      )}
+      <div ref={containerRef} className="absolute inset-0 z-10 w-full" />
       {hoverLabel && (
         <div
           className="pointer-events-none absolute z-10 -translate-y-1/2 rounded px-1.5 py-0.5 font-mono text-xs text-white shadow"
