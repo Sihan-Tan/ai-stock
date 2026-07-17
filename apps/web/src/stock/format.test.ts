@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { summarizeIntradayBars, toChartBars } from "./format";
+import { buildSmaSeries, summarizeIntradayBars, toChartBars } from "./format";
 
 describe("toChartBars", () => {
   it("converts daily bars to business-day candlestick data", () => {
@@ -59,6 +59,21 @@ describe("toChartBars", () => {
     expect(
       toChartBars([{ open: 10, high: 11, low: 9, close: 10.5 }], "day")
     ).toEqual([]);
+  });
+});
+
+describe("buildSmaSeries", () => {
+  it("computes simple moving averages", () => {
+    const bars = [
+      { time: "2026-01-01", open: 1, high: 1, low: 1, close: 1, value: 1 },
+      { time: "2026-01-02", open: 2, high: 2, low: 2, close: 2, value: 2 },
+      { time: "2026-01-03", open: 3, high: 3, low: 3, close: 3, value: 3 },
+      { time: "2026-01-04", open: 4, high: 4, low: 4, close: 4, value: 4 },
+    ];
+    expect(buildSmaSeries(bars as never, 3)).toEqual([
+      { time: "2026-01-03", value: 2 },
+      { time: "2026-01-04", value: 3 },
+    ]);
   });
 });
 

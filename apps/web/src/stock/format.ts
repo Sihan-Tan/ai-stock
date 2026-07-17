@@ -153,6 +153,45 @@ export function summarizeIntradayBars(bars: OhlcvBar[]): IntradaySummary {
   };
 }
 
+/** 日 K 均线配置（周期与颜色）。 */
+export const DAILY_MA_LINES = [
+  { window: 5, color: "#fbbf24", label: "MA5" },
+  { window: 10, color: "#38bdf8", label: "MA10" },
+  { window: 20, color: "#c084fc", label: "MA20" },
+  { window: 30, color: "#2dd4bf", label: "MA30" },
+  { window: 60, color: "#fb923c", label: "MA60" },
+] as const;
+
+/**
+ * 计算简单移动平均线序列。
+ *
+ * @param bars 已按时间排序的 K 线
+ * @param window 均线窗口（交易日数）
+ */
+export function buildSmaSeries(
+  bars: ChartBar[],
+  window: number
+): Array<{ time: Time; value: number }> {
+  if (window <= 0 || bars.length < window) {
+    return [];
+  }
+
+  const points: Array<{ time: Time; value: number }> = [];
+  let sum = 0;
+
+  for (let i = 0; i < bars.length; i += 1) {
+    sum += bars[i].close;
+    if (i >= window) {
+      sum -= bars[i - window].close;
+    }
+    if (i >= window - 1) {
+      points.push({ time: bars[i].time, value: sum / window });
+    }
+  }
+
+  return points;
+}
+
 /**
  * 提取日线、周线、月线可用的 YYYY-MM-DD 交易日。
  * @param value 接口返回的日期

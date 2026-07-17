@@ -6,7 +6,7 @@ import {
   createChart,
 } from "lightweight-charts";
 import { useEffect, useMemo, useRef } from "react";
-import { buildIntradayAvgSeries, toChartBars } from "./format";
+import { buildIntradayAvgSeries, buildSmaSeries, DAILY_MA_LINES, toChartBars } from "./format";
 import type { ChartPeriod, OhlcvBar } from "./types";
 
 export type StockChartProps = {
@@ -80,6 +80,21 @@ export function StockChart({ period, bars, compact = false }: StockChartProps) {
           close,
         }))
       );
+
+      if (period === "day") {
+        for (const ma of DAILY_MA_LINES) {
+          const points = buildSmaSeries(chartBars, ma.window);
+          if (points.length === 0) continue;
+          const maSeries = chart.addSeries(LineSeries, {
+            color: ma.color,
+            lineWidth: 1,
+            priceLineVisible: false,
+            lastValueVisible: false,
+            title: ma.label,
+          });
+          maSeries.setData(points);
+        }
+      }
     }
 
     chart.timeScale().fitContent();
@@ -107,5 +122,19 @@ export function StockChart({ period, bars, compact = false }: StockChartProps) {
     );
   }
 
-  return <div ref={containerRef} className={compact ? "h-48 w-full" : "h-64 w-full"} />;
+  return (
+    <div className="space-y-2">
+      {period === "day" && (
+        <div className="flex flex-wrap gap-3 text-xs">
+          {DAILY_MA_LINES.map((ma) => (
+            <span key={ma.label} className="inline-flex items-center gap-1.5 font-mono">
+              <span className="inline-block h-0.5 w-3 rounded" style={{ backgroundColor: ma.color }} />
+              <span style={{ color: ma.color }}>{ma.label}</span>
+            </span>
+          ))}
+        </div>
+      )}
+      <div ref={containerRef} className={compact ? "h-48 w-full" : "h-64 w-full"} />
+    </div>
+  );
 }
