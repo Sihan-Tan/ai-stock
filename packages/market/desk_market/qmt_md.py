@@ -12,6 +12,7 @@ import pandas as pd
 from desk_common.symbols import normalize_symbol
 
 _HFQ_OHLCV = ("open", "high", "low", "close", "volume")
+_AUCTION_END = time(9, 29, 59, 999999)
 _LOGGER = logging.getLogger(__name__)
 
 # 主板块：沪深 A（含 ETF 等成分）+ 京市；不去前缀过滤
@@ -110,6 +111,14 @@ def _parse_ts(value: str | datetime | date) -> datetime:
     return pd.Timestamp(value).to_pydatetime()
 
 
+def _fmt_qmt_datetime(ts: datetime) -> str:
+    """datetime → YYYYMMDDHHMMSS[ffffff]（xtdata 历史下载时间串）。"""
+    base = ts.strftime("%Y%m%d%H%M%S")
+    if ts.microsecond:
+        return f"{base}{ts.microsecond:06d}"
+    return base
+
+
 def _auction_window(
     start: datetime, end: datetime
 ) -> tuple[datetime, datetime] | None:
@@ -117,7 +126,7 @@ def _auction_window(
     if start.date() != end.date():
         return None
     auction_start = datetime.combine(start.date(), time(9, 15))
-    auction_end = datetime.combine(start.date(), time(9, 29, 59, 999999))
+    auction_end = datetime.combine(start.date(), _AUCTION_END)
     if start > auction_end or end < auction_start:
         return None
     return max(start, auction_start), min(end, auction_end)
@@ -750,20 +759,22 @@ class XtdataMarketData:
         if window is None:
             return minute_df
         auction_start = datetime.combine(start.date(), time(9, 15))
-        auction_end = datetime.combine(start.date(), time(9, 29, 59))
+        auction_end = datetime.combine(start.date(), _AUCTION_END)
+        start_s = _fmt_qmt_datetime(auction_start)
+        end_s = _fmt_qmt_datetime(auction_end)
         try:
             self._xt.download_history_data(
                 symbol,
                 period="tick",
-                start_time=auction_start.strftime("%Y%m%d%H%M%S"),
-                end_time=auction_end.strftime("%Y%m%d%H%M%S"),
+                start_time=start_s,
+                end_time=end_s,
             )
             data = self._xt.get_market_data_ex(
                 field_list=["lastPrice", "volume", "amount"],
                 stock_list=[symbol],
                 period="tick",
-                start_time=auction_start.strftime("%Y%m%d%H%M%S"),
-                end_time=auction_end.strftime("%Y%m%d%H%M%S"),
+                start_time=start_s,
+                end_time=end_s,
                 dividend_type="none",
             )
             tick_df = data.get(symbol) if isinstance(data, dict) else None
