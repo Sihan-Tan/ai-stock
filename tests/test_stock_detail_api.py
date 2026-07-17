@@ -248,3 +248,37 @@ def test_capital_flow_unavailable(client, _db, monkeypatch):
 
     assert r.status_code == 200
     assert r.json()["available"] is False
+
+
+def test_bars_minute_live_fallback_when_db_empty(client, _db, monkeypatch):
+    """库无分钟线时从行情源现拉并返回。"""
+    from datetime import datetime
+
+    from desk_market.qmt_md import InstrumentInfo, MockQmtMarketData
+    import app.routes.market as market_routes
+
+    md = MockQmtMarketData(instruments=[InstrumentInfo("600519.SH", status="listed")])
+    md.seed_minute(
+        "600519.SH",
+        datetime(2024, 1, 2, 10, 0, 0),
+        open=10.0,
+        high=10.5,
+        low=9.8,
+        close=10.2,
+        volume=1000,
+        amount=10200,
+    )
+    monkeypatch.setattr(market_routes, "get_market_data", lambda: md)
+
+    r = client.get(
+        "/api/market/bars/minute",
+        params={
+            "symbol": "600519.SH",
+            "from": "2024-01-02T09:30:00+08:00",
+            "to": "2024-01-02T15:00:00+08:00",
+        },
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert len(body) == 1
+    assert body[0]["close"] == 10.2

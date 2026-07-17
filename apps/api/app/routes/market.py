@@ -193,29 +193,94 @@ def bars_minute(
     to: str = Query(...),
     db: Session = Depends(get_db),
 ):
-    """读库分钟线。"""
-    start = datetime.fromisoformat(from_)
-    end = datetime.fromisoformat(to)
-    from desk_common.symbols import normalize_symbol
+    """
+    分钟线：库优先；若窗口内无数据则 xtdata/Mock 现拉，并可落库。
 
+    详情页分时依赖本接口；分钟定时任务仅同步自选∪指数，故须 live 回退。
+    """
+    from datetime import timedelta
+    from zoneinfo import ZoneInfo
+
+    import pandas as pd
+
+    from desk_common.symbols import normalize_symbol
+    from desk_market import MarketService
+
+    def _as_naive_cn(dt: datetime) -> datetime:
+        """统一为 Asia/Shanghai 朴素时间，便于与库内 ts 比较。"""
+        if dt.tzinfo is not None:
+            return dt.astimezone(ZoneInfo("Asia/Shanghai")).replace(tzinfo=None)
+        return dt
+
+    def _serialize_rows(items: list) -> list[dict]:
+        out: list[dict] = []
+        for r in items:
+            if hasattr(r, "ts"):
+                out.append(
+                    {
+                        "ts": r.ts.isoformat(),
+                        "open": r.open,
+                        "high": r.high,
+                        "low": r.low,
+                        "close": r.close,
+                        "volume": r.volume,
+                        "amount": r.amount,
+                    }
+                )
+            else:
+                ts = r["ts"]
+                if hasattr(ts, "isoformat"):
+                    ts_s = ts.isoformat()
+                else:
+                    ts_s = str(ts)
+                out.append(
+                    {
+                        "ts": ts_s,
+                        "open": float(r["open"]),
+                        "high": float(r["high"]),
+                        "low": float(r["low"]),
+                        "close": float(r["close"]),
+                        "volume": float(r.get("volume", 0) or 0),
+                        "amount": float(r.get("amount", 0) or 0),
+                    }
+                )
+        return out
+
+    start = _as_naive_cn(datetime.fromisoformat(from_))
+    end = _as_naive_cn(datetime.fromisoformat(to))
     sym = normalize_symbol(symbol)
+
     rows = db.scalars(
         select(BarMinute)
         .where(BarMinute.symbol == sym, BarMinute.ts >= start, BarMinute.ts <= end)
         .order_by(BarMinute.ts)
     ).all()
-    return [
-        {
-            "ts": r.ts.isoformat(),
-            "open": r.open,
-            "high": r.high,
-            "low": r.low,
-            "close": r.close,
-            "volume": r.volume,
-            "amount": r.amount,
-        }
-        for r in rows
-    ]
+    if rows:
+        return _serialize_rows(list(rows))
+
+    md = get_market_data()
+    df = md.get_minute_bars(sym, start, end)
+    if df is None or df.empty:
+        # 非交易日 / 今日尚未同步：回看近 7 日，取有数据的最后一天
+        wide_start = end - timedelta(days=7)
+        df = md.get_minute_bars(sym, wide_start, end)
+        if df is not None and not df.empty:
+            ts_s = pd.to_datetime(df["ts"])
+            last_day = ts_s.dt.date.max()
+            df = df.loc[ts_s.dt.date == last_day].copy()
+
+    if df is None or df.empty:
+        return []
+
+    try:
+        MarketService(db).upsert_minute_bars(sym, df)
+        db.commit()
+    except Exception:  # noqa: BLE001
+        logger.exception("minute live upsert failed symbol=%s", sym)
+        db.rollback()
+
+    records = df.to_dict(orient="records")
+    return _serialize_rows(records)
 
 
 @router.get("/intraday/quote")
