@@ -250,6 +250,77 @@ def test_capital_flow_unavailable(client, _db, monkeypatch):
     assert r.json()["available"] is False
 
 
+def test_boards_live_fallback_and_persist(client, _db, monkeypatch):
+    """库无板块时 live 拉取并落库。"""
+
+    class Fake:
+        def fetch(self, symbol: str):
+            assert symbol == "600519.SH"
+            return [
+                {"board_code": "BK04741", "board_name": "白酒", "board_type": "sector"},
+                {"board_code": "BK0896", "board_name": "高端品牌", "board_type": "concept"},
+            ]
+
+    monkeypatch.setattr(
+        "desk_market.stock_detail.get_boards_client",
+        lambda: Fake(),
+    )
+
+    r = client.get("/api/market/stock/600519.SH/boards")
+    assert r.status_code == 200
+    boards = r.json()["boards"]
+    assert {b["board_name"] for b in boards} == {"白酒", "高端品牌"}
+
+    # 再次请求应走库，不依赖 live
+    monkeypatch.setattr(
+        "desk_market.stock_detail.get_boards_client",
+        lambda: (_ for _ in ()).throw(RuntimeError("should not call live")),
+    )
+    again = client.get("/api/market/stock/600519.SH/boards")
+    assert again.status_code == 200
+    assert len(again.json()["boards"]) == 2
+
+
+def test_boards_live_failure_returns_empty(client, _db, monkeypatch):
+    """live 失败时返回空 boards，不抛 500。"""
+
+    class Boom:
+        def fetch(self, symbol: str):
+            raise RuntimeError("network")
+
+    monkeypatch.setattr(
+        "desk_market.stock_detail.get_boards_client",
+        lambda: Boom(),
+    )
+
+    r = client.get("/api/market/stock/000001.SZ/boards")
+    assert r.status_code == 200
+    assert r.json()["boards"] == []
+
+
+def test_quote_includes_volume_amount_from_snapshot(client, _db, monkeypatch):
+    """报价快照应包含成交量、成交额与换手率。"""
+    from desk_market.qmt_md import InstrumentInfo, MockQmtMarketData
+    import app.routes.market as market_routes
+
+    md = MockQmtMarketData(instruments=[InstrumentInfo("600519.SH", status="listed")])
+    md.seed_daily(
+        "600519.SH",
+        date(2024, 1, 2),
+        qfq={"open": 10, "high": 11, "low": 9, "close": 10.5, "volume": 58417, "amount": 7.3e9},
+        hfq={"open": 100, "high": 110, "low": 90, "close": 105, "volume": 58417},
+        float_volume=1_250_081_601,
+    )
+    monkeypatch.setattr(market_routes, "get_market_data", lambda: md)
+
+    r = client.get("/api/market/intraday/quote", params={"symbols": "600519.SH"})
+    assert r.status_code == 200
+    body = r.json()["600519.SH"]
+    assert body["volume"] == 58417
+    assert body["amount"] == 7.3e9
+    assert body["turnover_rate"] == pytest.approx(58417 * 100 / 1_250_081_601 * 100, rel=1e-6)
+
+
 def test_bars_minute_live_fallback_when_db_empty(client, _db, monkeypatch):
     """库无分钟线时从行情源现拉并返回。"""
     from datetime import datetime

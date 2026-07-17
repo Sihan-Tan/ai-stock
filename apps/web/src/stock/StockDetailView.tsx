@@ -1,7 +1,7 @@
 import { Alert, Button, Card, CardContent, CardHeader, CardTitle, Chip, Spinner } from "@heroui/react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { api } from "../api";
-import { summarizeIntradayBars, buildSmaSeries, DAILY_MA_LINES, toChartBars } from "./format";
+import { summarizeIntradayBars, buildMacdSeries, buildSmaSeries, DAILY_MA_LINES, MACD_LINE_COLORS, toChartBars } from "./format";
 import { calcPctChg, detectLimitTag } from "./limitStatus";
 import { StockChart } from "./StockChart";
 import type { ChartPeriod, OhlcvBar, PositionContext } from "./types";
@@ -19,7 +19,9 @@ type Quote = {
   last?: number;
   pre_close?: number;
   pct_chg?: number;
+  volume?: number;
   amount?: number;
+  turnover_rate?: number;
   updated_at?: string;
 };
 
@@ -35,6 +37,7 @@ type Board = {
   board_code: string;
   board_name: string;
   board_type: string;
+  is_primary?: boolean;
 };
 
 type CapitalFlow = {
@@ -110,6 +113,13 @@ export function StockDetailView({
       const latest = points.length > 0 ? points[points.length - 1].value : null;
       return { ...ma, value: latest };
     });
+  }, [bars.data, period]);
+
+  const dailyMacdLatest = useMemo(() => {
+    if ((period !== "day" && period !== "intraday") || !bars.data?.length) return null;
+    const points = buildMacdSeries(toChartBars(bars.data, period));
+    if (points.length === 0) return null;
+    return points[points.length - 1];
   }, [bars.data, period]);
 
   useEffect(() => {
@@ -241,6 +251,12 @@ export function StockDetailView({
               {preClose != null && (
                 <span className="text-xs text-[var(--desk-mist)]">昨收 {formatNumber(preClose)}</span>
               )}
+              <span className="text-xs text-[var(--desk-mist)]">
+                成交量 {formatCompactNumber(quote.data?.volume)}
+              </span>
+              <span className="text-xs text-[var(--desk-mist)]">
+                成交额 {formatCompactNumber(quote.data?.amount)}
+              </span>
             </div>
           )}
         </CardContent>
@@ -307,6 +323,24 @@ export function StockDetailView({
                   </span>
                 </span>
               ))}
+              {dailyMacdLatest && (
+                <>
+                  <span className="inline-flex items-center gap-1 font-mono whitespace-nowrap" style={{ color: MACD_LINE_COLORS.dif }}>
+                    <span className="inline-block h-0.5 w-3 rounded" style={{ backgroundColor: MACD_LINE_COLORS.dif }} />
+                    DIF {formatNumber(dailyMacdLatest.dif)}
+                  </span>
+                  <span className="inline-flex items-center gap-1 font-mono whitespace-nowrap" style={{ color: MACD_LINE_COLORS.dea }}>
+                    <span className="inline-block h-0.5 w-3 rounded" style={{ backgroundColor: MACD_LINE_COLORS.dea }} />
+                    DEA {formatNumber(dailyMacdLatest.dea)}
+                  </span>
+                  <span
+                    className="inline-flex items-center gap-1 font-mono whitespace-nowrap"
+                    style={{ color: dailyMacdLatest.hist >= 0 ? "#ef4444" : "#22c55e" }}
+                  >
+                    MACD {formatNumber(dailyMacdLatest.hist)}
+                  </span>
+                </>
+              )}
             </div>
           </div>
           {bars.loading ? (
@@ -324,26 +358,28 @@ export function StockDetailView({
           {meta.data && (
             <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
               <InfoRow label="股票代码" value={meta.data.symbol} mono />
-              <InfoRow label="上市状态" value={meta.data.status} />
               <InfoRow label="是否退市" value={meta.data.is_delisted ? "是" : "否"} />
               <InfoRow label="更新时间" value={formatDateTime(meta.data.updated_at)} />
+              <InfoRow label="成交量" value={formatCompactNumber(quote.data?.volume)} />
               <InfoRow label="成交额" value={formatCompactNumber(quote.data?.amount)} />
+              <InfoRow label="真实换手率" value={formatPercent(quote.data?.turnover_rate)} />
             </dl>
           )}
         </SectionCard>
 
-        <SectionCard title="行业概念" state={boards}>
-          {(boards.data?.length ?? 0) > 0 ? (
-            <div className="flex flex-wrap gap-2">
-              {boards.data?.map((board) => (
-                <Chip key={`${board.board_type}-${board.board_code}`} variant="soft">
-                  {board.board_name}
-                </Chip>
-              ))}
-            </div>
-          ) : (
-            <EmptyCopy text="暂无行业或概念数据" />
-          )}
+        <SectionCard title="行业/概念" state={boards}>
+          <div className="space-y-3">
+            <BoardGroup
+              label="所属行业"
+              tone="sector"
+              items={(boards.data ?? []).filter((board) => board.board_type === "sector")}
+            />
+            <BoardGroup
+              label="所属概念"
+              tone="concept"
+              items={(boards.data ?? []).filter((board) => board.board_type === "concept")}
+            />
+          </div>
         </SectionCard>
 
         <SectionCard title="资金面" state={capitalFlow}>
@@ -534,6 +570,57 @@ function InfoRow({ label, value, mono = false }: { label: string; value: string;
 }
 
 /**
+ * 按类型展示行业/概念标签组。
+ * @param props 分组标题、色调与板块列表
+ */
+function BoardGroup({
+  label,
+  items,
+  tone,
+}: {
+  label: string;
+  items: Board[];
+  tone: "sector" | "concept";
+}) {
+  const labelClass =
+    tone === "sector"
+      ? "mb-1.5 text-sm font-bold text-[var(--desk-accent)]"
+      : "mb-1.5 text-sm font-bold text-[var(--desk-signal)]";
+  const sortedItems = [...items].sort((a, b) => Number(Boolean(b.is_primary)) - Number(Boolean(a.is_primary)));
+
+  if (sortedItems.length === 0) {
+    return (
+      <div>
+        <p className={labelClass}>{label}</p>
+        <p className="text-sm text-[var(--desk-mist)]">暂无</p>
+      </div>
+    );
+  }
+  return (
+    <div>
+      <p className={labelClass}>{label}</p>
+      <div className="flex flex-wrap gap-2">
+        {sortedItems.map((board) => {
+          const primaryClass =
+            tone === "sector"
+              ? "font-bold text-[var(--desk-accent)] ring-1 ring-[var(--desk-accent)] bg-[var(--desk-accent)]/20"
+              : "font-bold text-[var(--desk-signal)] ring-1 ring-[var(--desk-signal)] bg-[var(--desk-signal)]/20";
+          return (
+            <Chip
+              key={`${board.board_type}-${board.board_code}`}
+              variant="soft"
+              className={board.is_primary ? primaryClass : undefined}
+            >
+              {board.board_name}
+            </Chip>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/**
  * 展示通用加载状态。
  * @param props 展示文字与紧凑模式
  */
@@ -593,6 +680,16 @@ function formatCompactNumber(value: number | undefined | null): string {
   if (Math.abs(value) >= 100_000_000) return `${(value / 100_000_000).toFixed(2)}亿`;
   if (Math.abs(value) >= 10_000) return `${(value / 10_000).toFixed(2)}万`;
   return formatNumber(value);
+}
+
+/**
+ * 格式化百分比（已为百分数数值，如 1.23 表示 1.23%）。
+ * @param value 百分数
+ * @param digits 小数位
+ */
+function formatPercent(value: number | undefined | null, digits = 2): string {
+  if (value == null || Number.isNaN(value)) return "—";
+  return `${formatNumber(value, digits)}%`;
 }
 
 /**

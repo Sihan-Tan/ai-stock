@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildMacdSeries,
   buildSmaSeries,
   formatAshareSessionLabel,
+  formatDailyCrosshairTime,
+  formatIntradayCrosshairTime,
   summarizeIntradayBars,
   toAshareSessionIndex,
   toChartBars,
@@ -31,6 +34,7 @@ describe("toChartBars", () => {
         low: 9,
         close: 10.5,
         value: 10.5,
+        volume: 100,
       },
     ]);
   });
@@ -78,6 +82,7 @@ describe("toChartBars", () => {
         low: 9,
         close: 10.5,
         value: 10.5,
+        volume: 0,
       },
       {
         time: 1_000_120,
@@ -86,6 +91,7 @@ describe("toChartBars", () => {
         low: 10.4,
         close: 10.55,
         value: 10.55,
+        volume: 0,
       },
     ]);
   });
@@ -111,6 +117,19 @@ describe("ashare session axis", () => {
     expect(formatAshareSessionLabel(120)).toBe("11:30/13:00");
     expect(formatAshareSessionLabel(240)).toBe("15:00");
   });
+
+  it("formats intraday crosshair as HH:mm", () => {
+    expect(formatIntradayCrosshairTime(1_000_000 as never)).toBe("09:30");
+    expect(formatIntradayCrosshairTime(1_000_031 as never)).toBe("10:01");
+    expect(formatIntradayCrosshairTime(1_000_120 as never)).toBe("11:30/13:00");
+  });
+});
+
+describe("formatDailyCrosshairTime", () => {
+  it("formats business day as MM-DD", () => {
+    expect(formatDailyCrosshairTime("2026-07-15")).toBe("07-15");
+    expect(formatDailyCrosshairTime({ year: 2026, month: 7, day: 15 })).toBe("07-15");
+  });
 });
 
 describe("buildSmaSeries", () => {
@@ -125,6 +144,37 @@ describe("buildSmaSeries", () => {
       { time: "2026-01-03", value: 2 },
       { time: "2026-01-04", value: 3 },
     ]);
+  });
+});
+
+describe("buildMacdSeries", () => {
+  it("returns DIF/DEA/hist from the first bar", () => {
+    const bars = Array.from({ length: 40 }, (_, index) => {
+      const close = 10 + index * 0.2;
+      return {
+        time: `2026-01-${String(index + 1).padStart(2, "0")}`,
+        open: close,
+        high: close,
+        low: close,
+        close,
+        value: close,
+      };
+    });
+    const points = buildMacdSeries(bars as never);
+    expect(points.length).toBe(40);
+    expect(points[0].time).toBe(bars[0].time);
+    const latest = points[points.length - 1];
+    expect(latest.dif).toBeGreaterThan(0);
+    expect(latest.dea).toBeGreaterThan(0);
+    expect(latest.hist).toBeCloseTo(latest.dif - latest.dea, 8);
+  });
+
+  it("returns empty when bars are insufficient", () => {
+    expect(
+      buildMacdSeries([
+        { time: "2026-01-01", open: 1, high: 1, low: 1, close: 1, value: 1 },
+      ] as never)
+    ).toEqual([]);
   });
 });
 

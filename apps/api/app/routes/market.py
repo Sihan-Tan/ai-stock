@@ -286,14 +286,33 @@ def bars_minute(
 @router.get("/intraday/quote")
 def intraday_quote(symbols: str, db: Session = Depends(get_db)):
     """
-    盘中报价：直连行情源快照（可不落库）。
+    盘中报价：直连行情源快照（可不落库）；量额缺失时用最近日线兜底。
 
     @param symbols: 逗号分隔
     """
-    _ = db
+    from desk_db.models import BarDaily
+
     md = get_market_data()
     syms = [s.strip() for s in symbols.split(",") if s.strip()]
-    return md.get_snapshots(syms)
+    snaps = md.get_snapshots(syms)
+    for sym, snap in list(snaps.items()):
+        need_volume = snap.get("volume") is None
+        need_amount = snap.get("amount") is None
+        if not need_volume and not need_amount:
+            continue
+        row = db.scalar(
+            select(BarDaily)
+            .where(BarDaily.symbol == sym)
+            .order_by(BarDaily.ts.desc())
+            .limit(1)
+        )
+        if row is None:
+            continue
+        if need_volume:
+            snap["volume"] = float(row.volume)
+        if need_amount:
+            snap["amount"] = float(row.amount)
+    return snaps
 
 
 @router.get("/jobs/status")

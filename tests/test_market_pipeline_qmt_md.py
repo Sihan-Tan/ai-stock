@@ -33,8 +33,19 @@ def test_get_daily_bars_returns_qfq_and_hfq_columns():
 
 def test_get_minute_and_snapshot_readonly():
     md = MockQmtMarketData()
-    md.seed_minute("600519.SH", "2024-01-02 09:31:00", open=10, high=10, low=10, close=10, volume=1)
+    md.seed_minute(
+        "600519.SH",
+        "2024-01-02 09:31:00",
+        open=10,
+        high=10,
+        low=10,
+        close=10,
+        volume=100,
+        amount=1000,
+    )
     m = md.get_minute_bars("600519.SH", start="2024-01-02 09:30:00", end="2024-01-02 15:00:00")
     assert len(m) == 1
     q = md.get_snapshots(["600519.SH"])
     assert "600519.SH" in q
+    assert q["600519.SH"]["volume"] == 100
+    assert q["600519.SH"]["amount"] == 1000

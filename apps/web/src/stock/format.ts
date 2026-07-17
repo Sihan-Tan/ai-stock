@@ -8,6 +8,7 @@ export type ChartBar = {
   low: number;
   close: number;
   value: number;
+  volume?: number;
 };
 
 /** 分时会话摘要（均价 / OHLC）。 */
@@ -54,6 +55,7 @@ export function toChartBars(bars: OhlcvBar[], period: ChartPeriod): ChartBar[] {
           low: bar.low,
           close: bar.close,
           value: bar.close,
+          volume: Number(bar.volume ?? 0),
         },
       ];
     });
@@ -71,6 +73,7 @@ export function toChartBars(bars: OhlcvBar[], period: ChartPeriod): ChartBar[] {
       low: bar.low,
       close: bar.close,
       value: bar.close,
+      volume: Number(bar.volume ?? 0),
     });
   }
   return [...byTime.values()].sort((a, b) => Number(a.time) - Number(b.time));
@@ -158,6 +161,32 @@ export function formatIntradayTickMark(chartTime: Time): string {
   if (idx === 0) return "09:30";
   if (idx === AM_SPAN) return "11:30/13:00";
   if (idx === ASHARE_SESSION_LAST_INDEX) return "15:00";
+  return "";
+}
+
+/**
+ * 分时图十字光标悬浮：展示具体交易时间（HH:mm）。
+ * @param chartTime 图表时间
+ */
+export function formatIntradayCrosshairTime(chartTime: Time): string {
+  return formatAshareSessionLabel(chartTimeToSessionIndex(chartTime));
+}
+
+/**
+ * 日 K 图十字光标悬浮：展示月-日（MM-DD）。
+ * @param time lightweight-charts 业务日时间
+ */
+export function formatDailyCrosshairTime(time: Time): string {
+  if (typeof time === "object" && time !== null && "month" in time && "day" in time) {
+    const month = Number((time as { month: number }).month);
+    const day = Number((time as { day: number }).day);
+    if (!Number.isFinite(month) || !Number.isFinite(day)) return "";
+    return `${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  }
+  if (typeof time === "string") {
+    const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(time);
+    if (match) return `${match[2]}-${match[3]}`;
+  }
   return "";
 }
 
@@ -341,6 +370,76 @@ export function buildSmaSeries(
   }
 
   return points;
+}
+
+/** MACD 线颜色（DIF / DEA）。 */
+export const MACD_LINE_COLORS = {
+  dif: "#fbbf24",
+  dea: "#38bdf8",
+} as const;
+
+export type MacdSeriesPoint = {
+  time: Time;
+  dif: number;
+  dea: number;
+  hist: number;
+};
+
+/**
+ * 计算 MACD(12,26,9)：DIF / DEA / 柱。
+ *
+ * 使用递推 EMA，从首根起即可出值（与常见行情软件一致，避免左侧大段空白）。
+ * 前期数值会随样本变长逐渐稳定。
+ *
+ * @param bars 已按时间排序的 K 线
+ */
+export function buildMacdSeries(bars: ChartBar[]): MacdSeriesPoint[] {
+  if (bars.length < 2) {
+    return [];
+  }
+
+  const closes = bars.map((bar) => bar.close);
+  const ema12 = emaSeries(closes, 12);
+  const ema26 = emaSeries(closes, 26);
+  const dif = closes.map((_, index) => ema12[index] - ema26[index]);
+  const dea = emaSeries(dif, 9);
+
+  const points: MacdSeriesPoint[] = [];
+  for (let i = 0; i < bars.length; i += 1) {
+    const difValue = dif[i];
+    const deaValue = dea[i];
+    if (!Number.isFinite(difValue) || !Number.isFinite(deaValue)) {
+      continue;
+    }
+    points.push({
+      time: bars[i].time,
+      dif: difValue,
+      dea: deaValue,
+      hist: difValue - deaValue,
+    });
+  }
+  return points;
+}
+
+/**
+ * 指数移动平均（adjust=False，对齐 pandas ewm）。
+ *
+ * @param values 原始序列
+ * @param window 跨度
+ */
+function emaSeries(values: number[], window: number): number[] {
+  if (values.length === 0 || window <= 0) {
+    return [];
+  }
+  const alpha = 2 / (window + 1);
+  const out: number[] = new Array(values.length);
+  let prev = values[0];
+  out[0] = prev;
+  for (let i = 1; i < values.length; i += 1) {
+    prev = alpha * values[i] + (1 - alpha) * prev;
+    out[i] = prev;
+  }
+  return out;
 }
 
 /**

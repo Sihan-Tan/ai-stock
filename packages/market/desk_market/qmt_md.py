@@ -35,6 +35,32 @@ def _first_number(*values: Any) -> float | None:
     return None
 
 
+def _turnover_rate(
+    *,
+    volume_lots: float | None,
+    volume_shares: float | None,
+    float_shares: float | None,
+) -> float | None:
+    """
+    按流通股本计算换手率（%）。
+
+    xtdata 日/分钟成交量多为「手」；tick ``pvolume`` 为股。
+    换手率 = 成交股数 / 流通股本 × 100。
+
+    @param volume_lots: 成交量（手）
+    @param volume_shares: 成交量（股）
+    @param float_shares: 流通股本（股）
+    """
+    if float_shares is None or float_shares <= 0:
+        return None
+    shares = volume_shares
+    if shares is None and volume_lots is not None:
+        shares = volume_lots * 100.0
+    if shares is None or shares <= 0:
+        return None
+    return shares / float_shares * 100.0
+
+
 @dataclass
 class InstrumentInfo:
     """标的元信息（Mock 用字符串 status；真实 xtdata 映射到此）。"""
@@ -164,6 +190,7 @@ class MockQmtMarketData:
         *,
         qfq: dict[str, Any],
         hfq: dict[str, Any],
+        float_volume: float | None = None,
     ) -> None:
         """
         写入一条日线种子（前复权 + 后复权）。
@@ -172,12 +199,27 @@ class MockQmtMarketData:
         @param bar_date: 交易日
         @param qfq: 前复权 OHLCV（及 amount）
         @param hfq: 后复权 OHLCV
+        @param float_volume: 可选流通股本（股），用于快照换手率
         """
         sym = normalize_symbol(symbol)
         row = _merge_qfq_hfq(qfq, hfq)
         row["date"] = bar_date
         self._daily.setdefault(sym, []).append(row)
-        self._snapshots.setdefault(sym, {"last": qfq.get("close"), "symbol": sym})
+        snap = self._snapshots.setdefault(sym, {"symbol": sym})
+        snap["last"] = qfq.get("close")
+        if qfq.get("volume") is not None:
+            snap["volume"] = qfq.get("volume")
+        if qfq.get("amount") is not None:
+            snap["amount"] = qfq.get("amount")
+        if float_volume is not None:
+            snap["float_volume"] = float_volume
+        turnover = _turnover_rate(
+            volume_lots=_first_number(snap.get("volume")),
+            volume_shares=None,
+            float_shares=_first_number(snap.get("float_volume")),
+        )
+        if turnover is not None:
+            snap["turnover_rate"] = turnover
 
     def seed_minute(
         self,
@@ -196,7 +238,12 @@ class MockQmtMarketData:
         row = dict(ohlcv)
         row["ts"] = _parse_ts(ts)
         self._minute.setdefault(sym, []).append(row)
-        self._snapshots.setdefault(sym, {"last": ohlcv.get("close"), "symbol": sym})
+        snap = self._snapshots.setdefault(sym, {"symbol": sym})
+        snap["last"] = ohlcv.get("close")
+        if ohlcv.get("volume") is not None:
+            snap["volume"] = ohlcv.get("volume")
+        if ohlcv.get("amount") is not None:
+            snap["amount"] = ohlcv.get("amount")
 
     def get_daily_bars(self, symbol: str, start: date, end: date) -> pd.DataFrame:
         """日线：默认列为前复权，另含 *_hfq。"""
@@ -234,16 +281,25 @@ class MockQmtMarketData:
         out: dict[str, dict] = {}
         for raw in symbols:
             sym = normalize_symbol(raw)
-            if sym in self._snapshots:
-                snap = dict(self._snapshots[sym])
-                last = snap.get("last")
-                pre = snap.get("pre_close")
-                if pre is None and last is not None:
-                    pre = last
-                    snap["pre_close"] = pre
-                if snap.get("pct_chg") is None and last is not None and pre:
-                    snap["pct_chg"] = (float(last) - float(pre)) / float(pre) * 100.0
-                out[sym] = snap
+            if sym not in self._snapshots:
+                continue
+            snap = dict(self._snapshots[sym])
+            last = snap.get("last")
+            pre = snap.get("pre_close")
+            if pre is None and last is not None:
+                pre = last
+                snap["pre_close"] = pre
+            if snap.get("pct_chg") is None and last is not None and pre:
+                snap["pct_chg"] = (float(last) - float(pre)) / float(pre) * 100.0
+            if snap.get("turnover_rate") is None:
+                turnover = _turnover_rate(
+                    volume_lots=_first_number(snap.get("volume")),
+                    volume_shares=_first_number(snap.get("pvolume")),
+                    float_shares=_first_number(snap.get("float_volume")),
+                )
+                if turnover is not None:
+                    snap["turnover_rate"] = turnover
+            out[sym] = snap
         return out
 
 
@@ -562,9 +618,9 @@ class XtdataMarketData:
 
     def get_snapshots(self, symbols: list[str]) -> dict[str, dict]:
         """
-        最新快照：优先 full_tick 最新价，其次 InstrumentDetail；并计算涨跌幅。
+        最新快照：优先 full_tick 最新价/量额，其次 InstrumentDetail；并计算涨跌幅。
 
-        @returns: symbol → {symbol,name,last,pre_close,pct_chg}
+        @returns: symbol → {symbol,name,last,pre_close,pct_chg,volume,amount,turnover_rate}
         """
         out: dict[str, dict] = {}
         syms = [normalize_symbol(s) for s in symbols if s and str(s).strip()]
@@ -605,6 +661,31 @@ class XtdataMarketData:
             if last is not None and pre_close is not None and pre_close != 0:
                 pct_chg = (last - pre_close) / pre_close * 100.0
 
+            volume = _first_number(
+                tick.get("volume"),
+                tick.get("Volume"),
+                tick.get("pvolume"),
+                d.get("LastVolume"),
+            )
+            # tick.volume 为手；pvolume 为股。优先用手，避免与 pvolume 混用。
+            volume_lots = _first_number(tick.get("volume"), tick.get("Volume"), d.get("LastVolume"))
+            volume_shares = _first_number(tick.get("pvolume"), tick.get("pVolume"))
+            amount = _first_number(
+                tick.get("amount"),
+                tick.get("Amount"),
+            )
+            float_shares = _first_number(d.get("FloatVolume"), d.get("floatVolume"))
+            turnover_rate = _turnover_rate(
+                volume_lots=volume_lots,
+                volume_shares=volume_shares,
+                float_shares=float_shares,
+            )
+            # 快照 volume 字段：优先手；若只有股则回退股数
+            if volume_lots is not None:
+                volume = volume_lots
+            elif volume_shares is not None:
+                volume = volume_shares
+
             if not d and not tick:
                 continue
             out[sym] = {
@@ -613,5 +694,9 @@ class XtdataMarketData:
                 "last": last,
                 "pre_close": pre_close,
                 "pct_chg": pct_chg,
+                "volume": volume,
+                "amount": amount,
+                "float_volume": float_shares,
+                "turnover_rate": turnover_rate,
             }
         return out
