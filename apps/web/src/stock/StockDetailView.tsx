@@ -430,7 +430,7 @@ async function loadBars(symbol: string, period: ChartPeriod): Promise<OhlcvBar[]
     }).format(new Date());
     const params = new URLSearchParams({
       symbol,
-      from: `${date}T09:30:00+08:00`,
+      from: `${date}T09:15:00+08:00`,
       to: `${date}T15:00:00+08:00`,
     });
     return api<OhlcvBar[]>(`/api/market/bars/minute?${params}`);
