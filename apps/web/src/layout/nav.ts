@@ -9,7 +9,6 @@ export type NavigationItem = {
  */
 export const NAV: NavigationItem[] = [
   { path: "/monitor", label: "实盘监控", end: true },
-  { path: "/market-sync", label: "行情同步" },
   { path: "/watchlist", label: "行情自选" },
   { path: "/sentiment", label: "打板情绪" },
   { path: "/lhb", label: "龙虎榜" },
@@ -20,6 +19,7 @@ export const NAV: NavigationItem[] = [
   { path: "/alerts", label: "告警" },
   { path: "/ai", label: "投研 nanobot" },
   { path: "/morning", label: "晨会" },
+  { path: "/market-sync", label: "行情同步" },
   { path: "/review", label: "复盘" },
   { path: "/knowledge", label: "知识库" },
 ];

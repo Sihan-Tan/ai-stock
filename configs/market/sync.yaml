@@ -1,5 +1,5 @@
-daily_start_date: "2018-01-01"
-incremental_days: 3
+daily_start_date: "2023-01-01"
+incremental_days: 7
 batch_size: 100
 # 调度默认意图（可被 Settings 覆盖）
 jobs:
