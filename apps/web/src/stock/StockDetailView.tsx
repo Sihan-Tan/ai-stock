@@ -498,12 +498,23 @@ function Metric({ label, value, tone }: { label: string; value: string; tone?: n
 
 /**
  * 顶栏紧凑价格项。
- * @param props 标签与数值
+ * @param props 标签、数值与可选强调色
  */
-function PriceChip({ label, value }: { label: string; value: string }) {
+function PriceChip({
+  label,
+  value,
+  color,
+}: {
+  label: string;
+  value: string;
+  color?: string;
+}) {
   return (
-    <span className="font-mono text-[var(--desk-text)] whitespace-nowrap">
-      <span className="text-[var(--desk-mist)]">{label} </span>
+    <span
+      className="font-mono whitespace-nowrap"
+      style={{ color: color ?? "var(--desk-text)" }}
+    >
+      <span className={color ? "opacity-80" : "text-[var(--desk-mist)]"}>{label} </span>
       {value}
     </span>
   );
