@@ -35,6 +35,7 @@ type AlertRow = { id?: number; title?: string; body?: string; category?: string;
 type RiskState = {
   armed?: boolean;
   kill_switch?: boolean;
+  max_order_position_pct?: number;
   max_order_notional?: number;
   max_daily_notional?: number;
   whitelist?: string[];
@@ -542,7 +543,7 @@ export default function Paper({ setLog }: PageLogProps) {
                 <RuleRow
                   tone="warning"
                   mark="风"
-                  text={`单笔上限 ${fmtNum(risk?.max_order_notional ?? 50000, 0)} · 日累计 ${fmtNum(risk?.max_daily_notional ?? 200000, 0)}；白名单 ${risk?.whitelist?.length ?? 0} 只`}
+                  text={`仓位 ${risk?.max_order_position_pct ?? 10}% · 单笔 ${fmtNum(risk?.max_order_notional ?? 50000, 0)} · 日累计 ${fmtNum(risk?.max_daily_notional ?? 200000, 0)}（模拟/实盘共用，见设置）；白名单 ${risk?.whitelist?.length ?? 0} 只`}
                 />
                 <RuleRow
                   tone="danger"

@@ -325,6 +325,37 @@ def test_paper_order_and_risk(client):
     assert live_reject.json()["status"] == "rejected"
 
 
+def test_live_order_respects_settings_size_limits(client, monkeypatch):
+    """设置页下单限额对已 ARM 的实盘同样拦截超限单。"""
+    monkeypatch.setenv("RISK_MAX_ORDER_NOTIONAL", "1000")
+    monkeypatch.setenv("RISK_MAX_ORDER_POSITION_PCT", "100")
+    get_settings.cache_clear()
+    armed = client.post(
+        "/api/broker/risk",
+        json={
+            "armed": True,
+            "kill_switch": False,
+            "whitelist": ["600519.SH"],
+        },
+    )
+    assert armed.status_code == 200
+    # 100 * 100 = 10000 > 单笔最大金额 1000
+    oversized = client.post(
+        "/api/broker/order",
+        json={
+            "symbol": "600519.SH",
+            "side": "buy",
+            "qty": 100,
+            "price": 100,
+            "mode": "live",
+        },
+    )
+    assert oversized.status_code == 200
+    body = oversized.json()
+    assert body["status"] == "rejected"
+    assert "exceeds" in (body.get("message") or "")
+
+
 def test_ml_both_engines(client):
     a = client.post("/api/ml/train-demo", json={"engine": "lightgbm", "model_id": "lgb_t"})
     b = client.post("/api/ml/train-demo", json={"engine": "xgboost", "model_id": "xgb_t"})

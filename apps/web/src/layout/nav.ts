@@ -23,4 +23,5 @@ export const NAV: NavigationItem[] = [
   { path: "/market-sync", label: "行情同步" },
   { path: "/review", label: "复盘" },
   { path: "/knowledge", label: "知识库" },
+  { path: "/settings", label: "设置" },
 ];

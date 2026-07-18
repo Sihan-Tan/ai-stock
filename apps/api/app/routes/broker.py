@@ -26,6 +26,7 @@ class RiskIn(BaseModel):
     armed: bool | None = None
     kill_switch: bool | None = None
     whitelist: list[str] | None = None
+    max_order_position_pct: float | None = None
     max_order_notional: float | None = None
     max_daily_notional: float | None = None
 
@@ -63,10 +64,13 @@ def qmt_ping(db: Session = Depends(get_db)):
 @router.get("/risk")
 def risk_state(db: Session = Depends(get_db)):
     g = get_gate(db)
+    # 限额以设置页为准，展示前同步
+    g.risk.apply_from_settings()
     return {
         "armed": g.risk.armed,
         "kill_switch": g.risk.kill_switch,
         "whitelist": sorted(g.risk.whitelist),
+        "max_order_position_pct": g.risk.max_order_position_pct,
         "max_order_notional": g.risk.max_order_notional,
         "max_daily_notional": g.risk.max_daily_notional,
         "daily_used": g.risk.daily_used,
@@ -75,6 +79,7 @@ def risk_state(db: Session = Depends(get_db)):
 
 @router.post("/risk")
 def risk_update(body: RiskIn, db: Session = Depends(get_db)):
+    """更新 ARM/Kill/白名单；金额仓位限额请走设置页（写入 .env）。"""
     g = get_gate(db)
     if body.armed is not None:
         g.risk.armed = body.armed
@@ -82,10 +87,8 @@ def risk_update(body: RiskIn, db: Session = Depends(get_db)):
         g.risk.kill_switch = body.kill_switch
     if body.whitelist is not None:
         g.risk.whitelist = set(body.whitelist)
-    if body.max_order_notional is not None:
-        g.risk.max_order_notional = body.max_order_notional
-    if body.max_daily_notional is not None:
-        g.risk.max_daily_notional = body.max_daily_notional
+    # 限额字段若传入则忽略内存覆盖，始终以 Settings 为准
+    g.risk.apply_from_settings()
     return risk_state(db)
 
 

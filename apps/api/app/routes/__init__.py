@@ -14,6 +14,7 @@ from app.routes import (
     morning,
     review,
     sentiment_lhb,
+    settings,
     strategies,
 )
 
@@ -30,3 +31,4 @@ api_router.include_router(ai.router, tags=["ai"])
 api_router.include_router(morning.router, tags=["morning"])
 api_router.include_router(review.router, tags=["review"])
 api_router.include_router(knowledge.router, tags=["knowledge"])
+api_router.include_router(settings.router, tags=["settings"])

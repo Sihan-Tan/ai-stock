@@ -203,25 +203,59 @@ class RiskGate:
 
     armed: bool = False
     kill_switch: bool = False
+    max_order_position_pct: float = 10.0
     max_order_notional: float = 50_000.0
     max_daily_notional: float = 200_000.0
     whitelist: set[str] = field(default_factory=set)
     daily_used: float = 0.0
 
-    def check(self, intent: OrderIntent) -> str | None:
-        """返回拒绝原因，通过则 None。"""
+    def check_size_limits(
+        self, intent: OrderIntent, *, equity: float | None = None
+    ) -> str | None:
+        """
+        仓位/金额限额（模拟与实盘均适用）。
+
+        单笔上限取「权益×仓位百分比」与「单笔最大金额」的较小者；
+        另受单日累计金额限制。
+
+        @param equity: 账户总权益；缺失时仅按单笔最大金额校验
+        """
+        if not intent.price:
+            return None
+        notional = float(intent.price) * float(intent.qty)
+        caps: list[float] = [float(self.max_order_notional)]
+        if equity is not None and equity > 0:
+            caps.append(float(equity) * (float(self.max_order_position_pct) / 100.0))
+        single_cap = min(caps)
+        if notional > single_cap + 1e-6:
+            return "exceeds single order cap (min of position% and notional)"
+        if self.daily_used + notional > self.max_daily_notional:
+            return "exceeds daily limit"
+        return None
+
+    def check_live_gates(self, intent: OrderIntent) -> str | None:
+        """实盘闸门：Kill / ARM / 白名单（不含金额仓位限额）。"""
         if self.kill_switch:
             return "kill switch active"
         if not self.armed:
             return "live not armed"
         if self.whitelist and intent.symbol not in self.whitelist:
             return "symbol not in whitelist"
-        notional = (intent.price or 0) * intent.qty
-        if intent.price and notional > self.max_order_notional:
-            return "exceeds single order limit"
-        if intent.price and self.daily_used + notional > self.max_daily_notional:
-            return "exceeds daily limit"
         return None
+
+    def check(self, intent: OrderIntent, *, equity: float | None = None) -> str | None:
+        """实盘完整校验：闸门 + 设置页下单限额。"""
+        gate = self.check_live_gates(intent)
+        if gate:
+            return gate
+        return self.check_size_limits(intent, equity=equity)
+
+    def apply_from_settings(self) -> None:
+        """从 Settings（.env / 设置页）同步限额字段，作为唯一来源。"""
+        settings = get_settings()
+        self.max_order_position_pct = float(settings.risk_max_order_position_pct)
+        self.max_order_notional = float(settings.risk_max_order_notional)
+        self.max_daily_notional = float(settings.risk_max_daily_notional)
 
 
 class MockQmtBroker:
@@ -321,13 +355,60 @@ class BrokerGateway:
         self.paper = PaperBroker(db)
         self.live = QmtBroker(db)
         self.risk = RiskGate(whitelist=set())
+        self.risk.apply_from_settings()
+
+    def _paper_equity(self) -> float:
+        """模拟账户权益。"""
+        acc = self.paper._ensure_account()
+        return float(acc.equity or 0.0)
+
+    def _live_equity_estimate(self) -> float:
+        """实盘权益近似：持仓成本市值，至少不低于模拟初始资金。"""
+        positions = self.db.scalars(select(LivePosition)).all()
+        pos_val = sum(float(p.cost) * float(p.qty) for p in positions)
+        floor = float(get_settings().paper_initial_cash)
+        return max(pos_val, floor)
 
     def place_order(self, intent: OrderIntent) -> OrderResult:
-        """按 mode 路由。"""
+        """
+        按 mode 路由。
+
+        设置页「下单限额」每次下单前从 Settings 同步，对 **模拟与实盘** 均强制生效；
+        实盘额外要求 Kill/ARM/白名单。
+        """
+        # 限额以设置/.env 为准，避免被风控页内存值覆盖后长期偏离
+        self.risk.apply_from_settings()
+        equity = (
+            self._paper_equity()
+            if intent.mode == "paper"
+            else self._live_equity_estimate()
+        )
+        limit_reason = self.risk.check_size_limits(intent, equity=equity)
+        if limit_reason:
+            if intent.mode != "paper":
+                self.db.add(
+                    LiveOrder(
+                        client_order_id=intent.client_order_id,
+                        symbol=intent.symbol,
+                        side=intent.side.value,
+                        qty=intent.qty,
+                        price=intent.price,
+                        status="rejected",
+                        message=limit_reason,
+                    )
+                )
+                self.db.flush()
+            return OrderResult(
+                client_order_id=intent.client_order_id,
+                status="rejected",
+                message=limit_reason,
+            )
+
         if intent.mode == "paper":
             return self.paper.place_order(intent)
-        reason = self.risk.check(intent)
-        if reason:
+
+        gate_reason = self.risk.check_live_gates(intent)
+        if gate_reason:
             self.db.add(
                 LiveOrder(
                     client_order_id=intent.client_order_id,
@@ -336,14 +417,16 @@ class BrokerGateway:
                     qty=intent.qty,
                     price=intent.price,
                     status="rejected",
-                    message=reason,
+                    message=gate_reason,
                 )
             )
             self.db.flush()
             return OrderResult(
-                client_order_id=intent.client_order_id, status="rejected", message=reason
+                client_order_id=intent.client_order_id,
+                status="rejected",
+                message=gate_reason,
             )
         result = self.live.place_order(intent)
         if result.status == "filled" and intent.price:
-            self.risk.daily_used += intent.price * intent.qty
+            self.risk.daily_used += float(intent.price) * float(intent.qty)
         return result

@@ -15,6 +15,7 @@ import Research from "./pages/Research";
 import Review from "./pages/Review";
 import Risk from "./pages/Risk";
 import Sentiment from "./pages/Sentiment";
+import Settings from "./pages/Settings";
 import StockDetail from "./pages/StockDetail";
 import Backtest from "./pages/Backtest";
 import Strategies from "./pages/Strategies";
@@ -81,6 +82,7 @@ export default function App() {
         <Route path="/morning" element={<Morning setLog={setLog} />} />
         <Route path="/review" element={<Review setLog={setLog} />} />
         <Route path="/knowledge" element={<Knowledge setLog={setLog} />} />
+        <Route path="/settings" element={<Settings setLog={setLog} />} />
         <Route path="/stock/:symbol" element={<StockDetail />} />
         <Route path="*" element={<Navigate to="/monitor" replace />} />
       </Routes>
