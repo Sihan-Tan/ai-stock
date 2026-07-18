@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -21,8 +21,15 @@ class DraftIn(BaseModel):
 
 
 @router.get("")
-def list_strategies(source: str | None = None, db: Session = Depends(get_db)):
-    return [m.model_dump() for m in StrategyRegistry(db).list(source)]
+def list_strategies(
+    source: str | None = None,
+    include_archived: bool = Query(False, description="是否包含软删除策略"),
+    db: Session = Depends(get_db),
+):
+    return [
+        m.model_dump()
+        for m in StrategyRegistry(db).list(source, include_archived=include_archived)
+    ]
 
 
 @router.post("/sync-python")
@@ -60,3 +67,14 @@ def promote(strategy_id: str, db: Session = Depends(get_db)):
     if not meta:
         raise HTTPException(404, "not found")
     return meta.model_dump()
+
+
+@router.delete("/{strategy_id}")
+def delete_strategy(strategy_id: str, db: Session = Depends(get_db)):
+    """
+    删除策略：未软删 → 软删除（archived）；已软删 → 硬删除。
+    """
+    result = StrategyRegistry(db).delete(strategy_id)
+    if not result:
+        raise HTTPException(404, "not found")
+    return result

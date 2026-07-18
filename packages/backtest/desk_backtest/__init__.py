@@ -5,14 +5,21 @@ from __future__ import annotations
 from typing import Any
 
 import backtrader as bt
+import numpy as np
 import pandas as pd
 from sqlalchemy.orm import Session
 
 from desk_common.contracts import BacktestReport, BacktestRequest
+from desk_common.settings import get_settings
 from desk_db.models import BacktestRun
 from desk_indicators import compute
 from desk_market import MarketService
 from desk_strategy import StrategyRegistry
+from desk_backtest.commission import (
+    AShareCommission,
+    calc_buy_commission,
+    calc_sell_fees,
+)
 
 
 class _PandasData(bt.feeds.PandasData):
@@ -29,6 +36,32 @@ class _PandasData(bt.feeds.PandasData):
     )
 
 
+class _ASharePercentSizer(bt.Sizer):
+    """按可用资金比例下单，数量向下取整到 100 股。"""
+
+    params = (("percents", 95.0),)
+
+    def _getsizing(self, comminfo, cash, data, isbuy):
+        if not isbuy:
+            return self.broker.getposition(data).size
+        price = float(data.close[0])
+        if price <= 0:
+            return 0
+        raw = int((cash * (self.p.percents / 100.0)) / price)
+        return max((raw // 100) * 100, 0)
+
+
+def _bar_dt_str(strategy: bt.Strategy) -> str:
+    """当前 bar 时间字符串（与 feed 对齐，避免 UTC 偏移错日）。"""
+    dt = strategy.data.datetime.datetime(0)
+    if hasattr(dt, "strftime"):
+        # 日线 00:00:00 只保留日期，便于图表与明细阅读
+        if dt.hour == 0 and dt.minute == 0 and dt.second == 0:
+            return dt.strftime("%Y-%m-%d")
+        return dt.strftime("%Y-%m-%d %H:%M:%S")
+    return str(dt)
+
+
 class _SignalStrategy(bt.Strategy):
     """将 Desk 策略 on_bar 适配到 backtrader。"""
 
@@ -36,10 +69,20 @@ class _SignalStrategy(bt.Strategy):
 
     def __init__(self):
         self._order = None
+        self._entry: dict[str, Any] | None = None
+        self.equity_curve: list[dict[str, Any]] = []
+        self.trade_list: list[dict[str, Any]] = []
 
     def next(self):
-        if not self.p.desk_on_bar:
+        self.equity_curve.append(
+            {
+                "date": _bar_dt_str(self),
+                "value": float(self.broker.getvalue()),
+            }
+        )
+        if self._order or not self.p.desk_on_bar:
             return
+
         from desk_strategy.bar_context import build_bar_row
 
         idx = len(self.data) - 1
@@ -72,8 +115,154 @@ class _SignalStrategy(bt.Strategy):
         for sig in signals:
             if sig.side.value == "buy" and not self.position:
                 self._order = self.buy()
-            elif sig.side.value == "sell" and self.position:
+                break
+            if sig.side.value == "sell" and self.position:
                 self._order = self.close()
+                break
+
+    def notify_order(self, order):
+        """
+        用成交回报拼装明细。
+
+        backtrader 平仓后 ``trade.size=0`` 且 ``trade.price`` 只有开仓均价，
+        不能直接当明细用，故在此记录开/平仓价与数量。
+        """
+        if order.status in (order.Canceled, order.Margin, order.Rejected):
+            self._order = None
+            return
+        if order.status != order.Completed:
+            return
+
+        dt_str = _bar_dt_str(self)
+        qty = abs(float(order.executed.size))
+        price = float(order.executed.price)
+        fee = get_settings()
+
+        if order.isbuy():
+            entry_comm = calc_buy_commission(
+                qty * price,
+                buy_commission=fee.backtest_buy_commission,
+                min_commission=fee.backtest_min_commission,
+            )
+            # 策略仅做多；加仓时合并均价
+            if self._entry is None:
+                self._entry = {
+                    "qty": qty,
+                    "entry_price": price,
+                    "dt_open": dt_str,
+                    "entry_comm": entry_comm,
+                }
+            else:
+                old_q = float(self._entry["qty"])
+                old_p = float(self._entry["entry_price"])
+                new_q = old_q + qty
+                self._entry["entry_price"] = (
+                    (old_p * old_q + price * qty) / new_q if new_q else price
+                )
+                self._entry["qty"] = new_q
+                self._entry["entry_comm"] = float(self._entry["entry_comm"]) + entry_comm
+        elif order.issell() and self._entry is not None:
+            entry = self._entry
+            q = min(float(entry["qty"]), qty)
+            entry_price = float(entry["entry_price"])
+            exit_price = price
+            pnl = (exit_price - entry_price) * q
+            entry_comm = float(entry["entry_comm"])
+            entry_qty = float(entry["qty"]) or q
+            alloc_entry_comm = entry_comm * (q / entry_qty)
+            exit_comm, stamp = calc_sell_fees(
+                q * exit_price,
+                sell_commission=fee.backtest_sell_commission,
+                stamp_duty=fee.backtest_stamp_duty,
+                min_commission=fee.backtest_min_commission,
+            )
+            fee_total = alloc_entry_comm + exit_comm + stamp
+            pnlcomm = pnl - fee_total
+            ret = (exit_price / entry_price - 1.0) if entry_price else 0.0
+            self.trade_list.append(
+                {
+                    "side": "long",
+                    "qty": q,
+                    "entry_price": entry_price,
+                    "exit_price": exit_price,
+                    "dt_open": entry["dt_open"],
+                    "dt_close": dt_str,
+                    "pnl": pnl,
+                    "pnlcomm": pnlcomm,
+                    "return_pct": ret,
+                    "entry_commission": alloc_entry_comm,
+                    "exit_commission": exit_comm,
+                    "stamp_duty": stamp,
+                    "fee_total": fee_total,
+                    # 兼容旧字段：总费用
+                    "commission": fee_total,
+                }
+            )
+            remain = entry_qty - q
+            if remain > 1e-9:
+                self._entry = {
+                    "qty": remain,
+                    "entry_price": entry_price,
+                    "dt_open": entry["dt_open"],
+                    "entry_comm": entry_comm - alloc_entry_comm,
+                }
+            else:
+                self._entry = None
+
+        self._order = None
+
+
+def _max_drawdown_from_equity(values: list[float]) -> float:
+    """
+    由权益序列计算最大回撤（负小数，如 -0.12）。
+
+    @param values: 权益点
+    @returns: 最大回撤
+    """
+    if len(values) < 2:
+        return 0.0
+    arr = np.asarray(values, dtype=float)
+    peak = np.maximum.accumulate(arr)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        dd = np.where(peak > 0, arr / peak - 1.0, 0.0)
+    return float(np.min(dd)) if len(dd) else 0.0
+
+
+def _sharpe_from_equity(values: list[float], *, periods_per_year: float = 252.0) -> float | None:
+    """
+    由权益序列估算年化夏普（无风险利率=0）。
+
+    @param values: 权益点
+    @param periods_per_year: 年化因子（日线 252；5 分钟约 252*48）
+    """
+    if len(values) < 3:
+        return None
+    arr = np.asarray(values, dtype=float)
+    rets = np.diff(arr) / arr[:-1]
+    rets = rets[np.isfinite(rets)]
+    if len(rets) < 2:
+        return None
+    std = float(np.std(rets, ddof=1))
+    if std <= 1e-12:
+        return None
+    return float(np.mean(rets) / std * np.sqrt(periods_per_year))
+
+
+def _downsample_curve(curve: list[dict[str, Any]], max_points: int = 1500) -> list[dict[str, Any]]:
+    """过长权益曲线均匀抽样，首尾保留（供前端图表）。"""
+    n = len(curve)
+    if n <= max_points:
+        return curve
+    idx = np.linspace(0, n - 1, max_points, dtype=int)
+    seen: set[int] = set()
+    out: list[dict[str, Any]] = []
+    for i in idx:
+        ii = int(i)
+        if ii in seen:
+            continue
+        seen.add(ii)
+        out.append(curve[ii])
+    return out
 
 
 class BacktraderRunner:
@@ -103,6 +292,15 @@ class BacktraderRunner:
                 req.symbol, req.start, req.end, resample="5min"
             )
         return self.market.load_minute_df(req.symbol, req.start, req.end)
+
+    @staticmethod
+    def _periods_per_year(period: str) -> float:
+        """夏普年化因子。"""
+        if period == "5m":
+            return 252.0 * 48.0
+        if period == "1m":
+            return 252.0 * 240.0
+        return 252.0
 
     def run(self, req: BacktestRequest) -> BacktestReport:
         """
@@ -137,25 +335,48 @@ class BacktraderRunner:
             symbol=req.symbol,
             history_df=history_df,
         )
+        cerebro.addsizer(_ASharePercentSizer, percents=95.0)
         cerebro.broker.setcash(req.initial_cash)
-        cerebro.broker.setcommission(commission=req.commission)
-        start_value = cerebro.broker.getvalue()
-        result = cerebro.run()
-        end_value = cerebro.broker.getvalue()
-        strat = result[0]
-        trades = len(getattr(strat, "_orderspending", []) or [])
-        trade_count = int(getattr(strat.broker, "get_trading_volume", lambda: 0)() or 0)
+        fee = get_settings()
+        cerebro.broker.addcommissioninfo(
+            AShareCommission(
+                buy_commission=fee.backtest_buy_commission,
+                sell_commission=fee.backtest_sell_commission,
+                stamp_duty=fee.backtest_stamp_duty,
+                min_commission=fee.backtest_min_commission,
+            )
+        )
+        if fee.backtest_slippage and fee.backtest_slippage > 0:
+            cerebro.broker.set_slippage_perc(fee.backtest_slippage)
 
-        total_return = (end_value / start_value) - 1.0
+        start_value = float(cerebro.broker.getvalue())
+        result = cerebro.run()
+        end_value = float(cerebro.broker.getvalue())
+        strat = result[0]
+
+        equity_curve = list(getattr(strat, "equity_curve", []) or [])
+        if not equity_curve:
+            equity_curve = [
+                {"date": str(req.start), "value": start_value},
+                {"date": str(req.end), "value": end_value},
+            ]
+        values = [float(p["value"]) for p in equity_curve]
+        trade_list = list(getattr(strat, "trade_list", []) or [])
+        total_return = (end_value / start_value) - 1.0 if start_value else 0.0
+        max_drawdown = _max_drawdown_from_equity(values)
+        sharpe = _sharpe_from_equity(
+            values, periods_per_year=self._periods_per_year(period)
+        )
+
         report = BacktestReport(
             strategy_id=req.strategy_id,
             symbol=req.symbol,
             total_return=total_return,
-            max_drawdown=min(0.0, total_return * 0.5),
-            sharpe=None,
-            trades=trade_count or trades,
-            equity_curve=[{"value": start_value}, {"value": end_value}],
-            trade_list=[],
+            max_drawdown=max_drawdown,
+            sharpe=sharpe,
+            trades=len(trade_list),
+            equity_curve=_downsample_curve(equity_curve),
+            trade_list=trade_list,
         )
         self.db.add(
             BacktestRun(

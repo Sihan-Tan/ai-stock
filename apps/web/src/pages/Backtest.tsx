@@ -2,6 +2,9 @@ import { Button, Card, CardContent, CardHeader, CardTitle, Chip } from "@heroui/
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../api";
+import { parseSearchSymbol } from "../stock/parseSearchSymbol";
+import { SymbolSearchField } from "../stock/SymbolSearchField";
+import { EquityCurveChart } from "./EquityCurveChart";
 import type { PageLogProps } from "./types";
 
 type Strategy = {
@@ -11,6 +14,23 @@ type Strategy = {
   source: string;
 };
 
+type TradeRow = {
+  side?: string;
+  qty?: number;
+  entry_price?: number;
+  exit_price?: number;
+  pnl?: number;
+  pnlcomm?: number;
+  return_pct?: number;
+  entry_commission?: number;
+  exit_commission?: number;
+  stamp_duty?: number;
+  fee_total?: number;
+  commission?: number;
+  dt_open?: string;
+  dt_close?: string;
+};
+
 type BacktestReport = {
   strategy_id: string;
   symbol: string;
@@ -18,8 +38,8 @@ type BacktestReport = {
   max_drawdown: number;
   sharpe: number | null;
   trades: number;
-  equity_curve?: Array<{ value?: number }>;
-  trade_list?: unknown[];
+  equity_curve?: Array<{ date?: string; value?: number }>;
+  trade_list?: TradeRow[];
 };
 
 /**
@@ -70,13 +90,19 @@ export default function Backtest({ setLog }: PageLogProps) {
       setError("请选择策略");
       return;
     }
+    const resolvedSymbol = parseSearchSymbol(symbol) ?? symbol.trim().toUpperCase();
+    if (!/^\d{6}\.(SH|SZ)$/.test(resolvedSymbol)) {
+      setError("请搜索并选择有效标的（代码 / 名称 / 拼音）");
+      return;
+    }
+    setSymbol(resolvedSymbol);
     setBusy(true);
     setError(null);
     setReport(null);
     try {
       const body = {
         strategy_id: strategyId.trim(),
-        symbol: symbol.trim().toUpperCase(),
+        symbol: resolvedSymbol,
         start,
         end,
         initial_cash: Number(cash) || 1_000_000,
@@ -135,11 +161,12 @@ export default function Backtest({ setLog }: PageLogProps) {
               </select>
             </Field>
             <Field label="标的">
-              <input
+              <SymbolSearchField
                 value={symbol}
-                onChange={(event) => setSymbol(event.target.value)}
+                onChange={setSymbol}
                 className={inputClass}
-                placeholder="600519.SH"
+                placeholder="代码 / 名称 / 拼音"
+                aria-label="搜索回测标的"
               />
             </Field>
             <Field label="初始资金">
@@ -216,7 +243,7 @@ export default function Backtest({ setLog }: PageLogProps) {
                   tone={report.max_drawdown}
                 />
                 <Metric label="夏普" value={report.sharpe == null ? "—" : report.sharpe.toFixed(2)} />
-                <Metric label="成交/信号" value={String(report.trades)} />
+                <Metric label="成交笔数" value={String(report.trades)} />
               </div>
               <div className="text-sm text-[var(--desk-mist)]">
                 策略 <span className="font-mono text-[var(--desk-text)]">{report.strategy_id}</span>
@@ -225,24 +252,91 @@ export default function Backtest({ setLog }: PageLogProps) {
               </div>
               {!!report.equity_curve?.length && (
                 <div>
-                  <div className="mb-2 text-sm font-medium text-[var(--desk-text)]">权益摘要</div>
-                  <div className="overflow-x-auto">
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                    <div className="text-sm font-medium text-[var(--desk-text)]">收益曲线</div>
+                    <div className="text-xs text-[var(--desk-mist)]">
+                      <span className="mr-3 text-[var(--danger)]">▲ 买</span>
+                      <span className="text-[var(--success)]">▼ 卖</span>
+                      <span className="ml-3">纵轴为累计收益率</span>
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-[var(--desk-line)] bg-[var(--desk-ink)] px-2 py-2">
+                    <EquityCurveChart
+                      points={report.equity_curve}
+                      trades={report.trade_list}
+                      height={320}
+                    />
+                  </div>
+                </div>
+              )}
+              {!!report.trade_list?.length && (
+                <div>
+                  <div className="mb-2 text-sm font-medium text-[var(--desk-text)]">成交明细</div>
+                  <div className="overflow-x-auto max-h-72">
                     <table className="w-full border-collapse text-left text-sm">
-                      <thead className="border-b border-[var(--desk-line)] text-[var(--desk-mist)]">
+                      <thead className="sticky top-0 border-b border-[var(--desk-line)] bg-[var(--desk-panel)] text-[var(--desk-mist)]">
                         <tr>
-                          <th className="px-3 py-2 font-medium">#</th>
-                          <th className="px-3 py-2 font-medium">权益</th>
+                          <th className="px-3 py-2 font-medium">开仓</th>
+                          <th className="px-3 py-2 font-medium">平仓</th>
+                          <th className="px-3 py-2 font-medium">数量</th>
+                          <th className="px-3 py-2 font-medium">开仓价</th>
+                          <th className="px-3 py-2 font-medium">平仓价</th>
+                          <th className="px-3 py-2 font-medium">开仓佣金</th>
+                          <th className="px-3 py-2 font-medium">平仓佣金</th>
+                          <th className="px-3 py-2 font-medium">印花税</th>
+                          <th className="px-3 py-2 font-medium">费用合计</th>
+                          <th className="px-3 py-2 font-medium">收益率</th>
+                          <th className="px-3 py-2 font-medium">盈亏(扣费)</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {report.equity_curve.map((point, index) => (
+                        {report.trade_list.map((t, index) => (
                           <tr
                             key={index}
                             className="border-b border-[var(--desk-line)] last:border-0"
                           >
-                            <td className="px-3 py-3 font-mono">{index + 1}</td>
-                            <td className="px-3 py-3 font-mono">
-                              {point.value != null ? point.value.toFixed(2) : "—"}
+                            <td className="px-3 py-2 font-mono text-xs">{t.dt_open ?? "—"}</td>
+                            <td className="px-3 py-2 font-mono text-xs">{t.dt_close ?? "—"}</td>
+                            <td className="px-3 py-2 font-mono">
+                              {t.qty != null ? t.qty.toFixed(0) : "—"}
+                            </td>
+                            <td className="px-3 py-2 font-mono">
+                              {t.entry_price != null ? t.entry_price.toFixed(3) : "—"}
+                            </td>
+                            <td className="px-3 py-2 font-mono">
+                              {t.exit_price != null ? t.exit_price.toFixed(3) : "—"}
+                            </td>
+                            <td className="px-3 py-2 font-mono">
+                              {formatMoney(t.entry_commission)}
+                            </td>
+                            <td className="px-3 py-2 font-mono">
+                              {formatMoney(t.exit_commission)}
+                            </td>
+                            <td className="px-3 py-2 font-mono">{formatMoney(t.stamp_duty)}</td>
+                            <td className="px-3 py-2 font-mono">
+                              {formatMoney(t.fee_total ?? t.commission)}
+                            </td>
+                            <td
+                              className={`px-3 py-2 font-mono ${
+                                (t.return_pct ?? 0) > 0
+                                  ? "text-[var(--danger)]"
+                                  : (t.return_pct ?? 0) < 0
+                                    ? "text-[var(--success)]"
+                                    : ""
+                              }`}
+                            >
+                              {t.return_pct != null ? formatPct(t.return_pct) : "—"}
+                            </td>
+                            <td
+                              className={`px-3 py-2 font-mono ${
+                                (t.pnlcomm ?? 0) > 0
+                                  ? "text-[var(--danger)]"
+                                  : (t.pnlcomm ?? 0) < 0
+                                    ? "text-[var(--success)]"
+                                    : ""
+                              }`}
+                            >
+                              {t.pnlcomm != null ? t.pnlcomm.toFixed(2) : "—"}
                             </td>
                           </tr>
                         ))}
@@ -311,6 +405,15 @@ function formatPct(value: number): string {
   const pct = value * 100;
   const sign = pct > 0 ? "+" : "";
   return `${sign}${pct.toFixed(2)}%`;
+}
+
+/**
+ * 费用金额格式化。
+ * @param value 元
+ */
+function formatMoney(value?: number): string {
+  if (value == null || !Number.isFinite(value)) return "—";
+  return value.toFixed(2);
 }
 
 /**

@@ -29,7 +29,7 @@ params:
 `;
 
 /**
- * 策略管理：清单、YAML 编辑、草稿晋级。
+ * 策略管理：清单、YAML 编辑、草稿晋级、软/硬删除。
  * @param props 页面日志写入方法
  */
 export default function Strategies({ setLog }: PageLogProps) {
@@ -38,14 +38,17 @@ export default function Strategies({ setLog }: PageLogProps) {
   const [busy, setBusy] = useState(false);
   const [yamlBody, setYamlBody] = useState(DEFAULT_YAML);
   const [asDraft, setAsDraft] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
 
   /**
    * 拉取策略列表。
    */
-  const load = () =>
-    api<Strategy[]>("/api/strategies")
+  const load = () => {
+    const qs = showArchived ? "?include_archived=true" : "";
+    return api<Strategy[]>(`/api/strategies${qs}`)
       .then(setRows)
       .catch((error) => setLog(String(error)));
+  };
 
   /**
    * 同步 Python 策略并加载仓库内 YAML 示例。
@@ -111,6 +114,37 @@ export default function Strategies({ setLog }: PageLogProps) {
   };
 
   /**
+   * 删除策略：首次软删，已软删则硬删。
+   * @param row 策略行
+   */
+  const remove = async (row: Strategy) => {
+    const hard = row.status === "archived";
+    const ok = window.confirm(
+      hard
+        ? `确定彻底删除「${row.id}」？此操作不可恢复。`
+        : `确定软删除「${row.id}」？可在勾选「显示已软删除」后再次删除以彻底移除。`
+    );
+    if (!ok) return;
+    setBusy(true);
+    try {
+      const result = await api<{ action: string; strategy_id: string }>(
+        `/api/strategies/${encodeURIComponent(row.id)}`,
+        { method: "DELETE" }
+      );
+      setLog(
+        result.action === "hard"
+          ? `已彻底删除：${result.strategy_id}`
+          : `已软删除：${result.strategy_id}`
+      );
+      await load();
+    } catch (error) {
+      setLog(String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
    * 将行内 YAML 载入编辑器。
    * @param row 策略行
    */
@@ -125,7 +159,7 @@ export default function Strategies({ setLog }: PageLogProps) {
 
   useEffect(() => {
     void load();
-  }, []);
+  }, [showArchived]);
 
   return (
     <div className="space-y-4">
@@ -137,7 +171,15 @@ export default function Strategies({ setLog }: PageLogProps) {
               {rows.length} 个
             </Chip>
           </div>
-          <div className="flex shrink-0 gap-2">
+          <div className="flex shrink-0 flex-wrap items-center justify-end gap-3">
+            <label className="flex items-center gap-2 text-sm text-[var(--desk-mist)]">
+              <input
+                type="checkbox"
+                checked={showArchived}
+                onChange={(event) => setShowArchived(event.target.checked)}
+              />
+              显示已软删除
+            </label>
             <Button size="sm" variant="secondary" isDisabled={busy} onPress={() => void load()}>
               刷新
             </Button>
@@ -166,7 +208,10 @@ export default function Strategies({ setLog }: PageLogProps) {
                 {rows.map((row) => (
                   <tr
                     key={`${row.id}-${row.version}`}
-                    className="border-b border-[var(--desk-line)] last:border-0 hover:bg-[var(--desk-ink)]"
+                    className={[
+                      "border-b border-[var(--desk-line)] last:border-0 hover:bg-[var(--desk-ink)]",
+                      row.status === "archived" ? "opacity-60" : "",
+                    ].join(" ")}
                   >
                     <td className="px-3 py-3 font-mono">{row.id}</td>
                     <td className="px-3 py-3">{row.name}</td>
@@ -192,14 +237,24 @@ export default function Strategies({ setLog }: PageLogProps) {
                             晋级
                           </Button>
                         ) : null}
+                        {row.status !== "archived" ? (
+                          <Button
+                            size="sm"
+                            variant="primary"
+                            onPress={() =>
+                              navigate(`/backtest?strategy_id=${encodeURIComponent(row.id)}`)
+                            }
+                          >
+                            回测
+                          </Button>
+                        ) : null}
                         <Button
                           size="sm"
-                          variant="primary"
-                          onPress={() =>
-                            navigate(`/backtest?strategy_id=${encodeURIComponent(row.id)}`)
-                          }
+                          variant={row.status === "archived" ? "danger" : "ghost"}
+                          isDisabled={busy}
+                          onPress={() => void remove(row)}
                         >
-                          回测
+                          {row.status === "archived" ? "彻底删除" : "删除"}
                         </Button>
                       </div>
                     </td>
@@ -244,7 +299,7 @@ export default function Strategies({ setLog }: PageLogProps) {
           />
           <p className="mt-2 text-xs text-[var(--desk-mist)]">
             保存走 <code>POST /api/strategies/from-yaml</code>；勾选草稿则走{" "}
-            <code>/draft</code>（需晋级后才适合模拟/实盘）。
+            <code>/draft</code>（需晋级后才适合模拟/实盘）。删除：首次软删，勾选「显示已软删除」后可彻底删除。
           </p>
         </CardContent>
       </Card>
@@ -260,7 +315,7 @@ function StatusChip({ status }: { status: string }) {
   const color =
     status === "live"
       ? "danger"
-      : status === "paper"
+      : status === "paper" || status === "archived"
         ? "warning"
         : status === "draft"
           ? "accent"

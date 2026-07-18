@@ -56,8 +56,9 @@ class BacktestRequest(BaseModel):
     start: date
     end: date
     initial_cash: float = 1_000_000.0
-    commission: float = 0.00025
-    slippage: float = 0.001
+    # 佣金/印花税/滑点以 Settings(.env) 为准，下列字段仅兼容旧客户端，回测引擎忽略
+    commission: float | None = None
+    slippage: float | None = None
     adj: Literal["qfq", "hfq"] = "qfq"
     # 1d=日线；1m/5m=分钟（策略 params.bar_period 可覆盖）
     bar_period: Literal["1d", "1m", "5m"] | None = None

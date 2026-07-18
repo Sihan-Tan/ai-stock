@@ -31,6 +31,18 @@ class Settings(BaseSettings):
     paper_initial_cash: float = 1_000_000.0
     skills_dir: str = "skills"
 
+    # 回测费用（A 股近似；均在 .env 配置）
+    backtest_buy_commission: float = 0.00025
+    """买入佣金率（成交额比例）。"""
+    backtest_sell_commission: float = 0.00025
+    """卖出佣金率（成交额比例，不含印花税）。"""
+    backtest_stamp_duty: float = 0.001
+    """印花税税率（仅卖出）。"""
+    backtest_min_commission: float = 5.0
+    """单笔佣金最低收费（元）；印花税不参与保底。"""
+    backtest_slippage: float = 0.001
+    """回测滑点（成交价比例）。"""
+
     market_daily_start: str = "2018-01-01"
     market_incremental_days: int = 3
     market_batch_size: int = 100

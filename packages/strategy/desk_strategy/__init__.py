@@ -153,6 +153,8 @@ class StrategyRegistry:
             return None
         row.status = to_status
         self.db.flush()
+        if strategy_id in _REGISTRY:
+            _REGISTRY[strategy_id].meta.status = to_status  # type: ignore[assignment]
         return StrategyMeta(
             id=row.strategy_id,
             name=row.name,
@@ -164,12 +166,50 @@ class StrategyRegistry:
             params=json.loads(row.params_json or "{}"),
         )
 
-    def list(self, source: str | None = None) -> list[StrategyMeta]:
-        """列出策略。"""
+    def delete(self, strategy_id: str) -> dict[str, Any] | None:
+        """
+        删除策略：首次软删除（status=archived），已软删则硬删除行。
+
+        @param strategy_id: 策略 ID
+        @returns: ``{"action": "soft"|"hard", "strategy_id": ...}``；不存在则 None
+        """
+        rows = list(
+            self.db.scalars(
+                select(StrategyRow).where(StrategyRow.strategy_id == strategy_id)
+            ).all()
+        )
+        if not rows:
+            return None
+        latest = max(rows, key=lambda r: r.id)
+        if latest.status != "archived":
+            for row in rows:
+                row.status = "archived"
+            self.db.flush()
+            if strategy_id in _REGISTRY:
+                _REGISTRY[strategy_id].meta.status = "archived"
+            return {"action": "soft", "strategy_id": strategy_id}
+
+        for row in rows:
+            self.db.delete(row)
+        self.db.flush()
+        _REGISTRY.pop(strategy_id, None)
+        return {"action": "hard", "strategy_id": strategy_id}
+
+    def list(
+        self, source: str | None = None, *, include_archived: bool = False
+    ) -> list[StrategyMeta]:
+        """
+        列出策略。
+
+        @param source: 可选来源过滤
+        @param include_archived: 是否包含软删除（archived）
+        """
         self.sync_python_to_db()
         q = select(StrategyRow).order_by(StrategyRow.id.desc())
         if source:
             q = q.where(StrategyRow.source == source)
+        if not include_archived:
+            q = q.where(StrategyRow.status != "archived")
         rows = self.db.scalars(q).all()
         return [
             StrategyMeta(
