@@ -42,25 +42,28 @@ class _SignalStrategy(bt.Strategy):
     def next(self):
         if not self.p.desk_on_bar:
             return
+        from desk_strategy.bar_context import build_bar_row
+
         idx = len(self.data) - 1
-        row = {
-            "symbol": self.p.symbol,
-            "close": float(self.data.close[0]),
-            "sma_5": float(self.data.close.get(ago=0)) if False else None,
-        }
-        # 使用 line 上附加的指标列不可用时，用简单均线近似
-        closes = [float(self.data.close[-i]) for i in range(min(20, idx + 1))]
-        closes = list(reversed(closes))
-        s = pd.Series(closes)
-        row["sma_5"] = float(s.tail(5).mean()) if len(s) >= 5 else None
-        row["sma_20"] = float(s.tail(20).mean()) if len(s) >= 20 else None
-        if len(s) >= 6:
-            prev = s.iloc[:-1]
-            row["prev_sma_5"] = float(prev.tail(5).mean()) if len(prev) >= 5 else row["sma_5"]
-            row["prev_sma_20"] = float(prev.tail(20).mean()) if len(prev) >= 20 else row["sma_20"]
-        else:
-            row["prev_sma_5"] = row["sma_5"]
-            row["prev_sma_20"] = row["sma_20"]
+        lookback = min(120, idx + 1)
+        closes = [float(self.data.close[-i]) for i in range(lookback)]
+        highs = [float(self.data.high[-i]) for i in range(lookback)]
+        lows = [float(self.data.low[-i]) for i in range(lookback)]
+        opens = [float(self.data.open[-i]) for i in range(lookback)]
+        volumes = [float(self.data.volume[-i]) for i in range(lookback)]
+        closes.reverse()
+        highs.reverse()
+        lows.reverse()
+        opens.reverse()
+        volumes.reverse()
+        row = build_bar_row(
+            self.p.symbol,
+            closes=closes,
+            highs=highs,
+            lows=lows,
+            opens=opens,
+            volumes=volumes,
+        )
 
         signals = self.p.desk_on_bar({"row": row}) or []
         for sig in signals:

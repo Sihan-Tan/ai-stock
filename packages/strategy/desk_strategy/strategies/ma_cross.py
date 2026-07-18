@@ -6,9 +6,9 @@ from desk_common.contracts import Side, Signal
 from desk_strategy import register_strategy
 
 
-@register_strategy(id="ma_cross", name="双均线-日线", version="v1.0")
+@register_strategy(id="ma_cross", name="双均线-日线(5/20)", version="v1.0")
 class MaCross:
-    """简单双均线：sma5 上穿 sma20 买入。"""
+    """双均线趋势跟踪：sma5 上穿 sma20 买、下穿卖（对齐 CASE double_ma）。"""
 
     def on_bar(self, ctx) -> list[Signal]:
         """生成信号。"""

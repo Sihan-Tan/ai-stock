@@ -68,8 +68,8 @@ class StrategyRegistry:
 
     def sync_python_to_db(self) -> int:
         """将装饰器注册写入 DB。"""
-        # 触发示例策略导入
-        import desk_strategy.strategies.ma_cross  # noqa: F401
+        # 触发子包策略导入（含 CASE-AI 迁移策略）
+        import desk_strategy.strategies  # noqa: F401
 
         n = 0
         for sid, reg in _REGISTRY.items():
