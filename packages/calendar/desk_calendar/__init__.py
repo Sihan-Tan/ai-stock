@@ -1,4 +1,4 @@
-"""交易日历与停牌。"""
+"""交易日历、停牌与财经事件。"""
 
 from __future__ import annotations
 
@@ -9,9 +9,25 @@ from typing import Any, Protocol
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from desk_calendar.events import (
+    AkshareCalendarEventsClient,
+    CalendarEventService,
+    CalendarEventSync,
+    SeedCalendarEventsClient,
+)
 from desk_db.models import SuspensionEvent, TradeCalendar
 
 logger = logging.getLogger(__name__)
+
+__all__ = [
+    "AkshareCalendarEventsClient",
+    "CalendarEventService",
+    "CalendarEventSync",
+    "CalendarService",
+    "CalendarSync",
+    "SeedCalendarEventsClient",
+    "TradeCalendarClient",
+]
 
 
 class TradeCalendarClient(Protocol):

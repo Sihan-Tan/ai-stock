@@ -165,6 +165,32 @@ class SuspensionEvent(Base):
     scope: Mapped[str] = mapped_column(String(32), default="watchlist")
 
 
+class CalendarEvent(Base):
+    """财经日历 / 重大新闻 / 相关催化剂。"""
+
+    __tablename__ = "calendar_events"
+    __table_args__ = (
+        UniqueConstraint("source", "external_id", name="uq_calendar_events_source_ext"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    event_date: Mapped[date] = mapped_column(Date, index=True)
+    event_time: Mapped[str] = mapped_column(String(16), default="")
+    category: Mapped[str] = mapped_column(String(32), default="macro", index=True)
+    """news|macro|earnings|lockup|ipo|catalyst"""
+    importance: Mapped[int] = mapped_column(Integer, default=3)
+    """1–5，越高越重大。"""
+    title: Mapped[str] = mapped_column(String(256), default="")
+    summary: Mapped[str] = mapped_column(Text, default="")
+    symbol: Mapped[str] = mapped_column(String(16), default="")
+    name: Mapped[str] = mapped_column(String(64), default="")
+    region: Mapped[str] = mapped_column(String(16), default="CN")
+    source: Mapped[str] = mapped_column(String(32), default="seed")
+    external_id: Mapped[str] = mapped_column(String(128), default="")
+    payload_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class LimitUpStat(Base):
     __tablename__ = "limit_up_stats"
     __table_args__ = (UniqueConstraint("asof", name="uq_limit_up_stats_asof"),)

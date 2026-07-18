@@ -12,7 +12,7 @@ export const NAV: NavigationItem[] = [
   { path: "/watchlist", label: "行情自选" },
   { path: "/sentiment", label: "打板情绪" },
   { path: "/lhb", label: "龙虎榜" },
-  { path: "/calendar", label: "日历/停牌" },
+  { path: "/calendar", label: "交易日历" },
   { path: "/strategies", label: "策略" },
   { path: "/backtest", label: "回测" },
   { path: "/factors", label: "因子/ML" },
