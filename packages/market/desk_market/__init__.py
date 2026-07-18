@@ -195,23 +195,89 @@ class MarketService:
         self.db.flush()
         return n
 
-    def list_watchlist(self) -> list[dict[str, Any]]:
-        """自选列表。"""
+    def list_watchlist(self, md: Any | None = None) -> list[dict[str, Any]]:
+        """
+        自选列表；可选合并实时快照与库内板块。
+
+        @param md: 行情源；提供时用 ``get_snapshots`` 覆盖价量字段
+        """
+        from desk_market.em_boards import annotate_primary_boards
+
         items = self.db.scalars(select(WatchlistItem).order_by(WatchlistItem.id)).all()
         quotes = {
             q.symbol: q
             for q in self.db.scalars(select(QuoteSnapshot)).all()
         }
+        symbols = [it.symbol for it in items]
+        snaps: dict[str, dict[str, Any]] = {}
+        if md is not None and symbols:
+            try:
+                snaps = md.get_snapshots(symbols) or {}
+            except Exception:  # noqa: BLE001
+                snaps = {}
+
+        board_rows = []
+        if symbols:
+            board_rows = self.db.scalars(
+                select(BoardMember).where(
+                    BoardMember.symbol.in_(symbols),
+                    BoardMember.effective_to.is_(None),
+                )
+            ).all()
+        boards_by_symbol: dict[str, list[dict[str, Any]]] = {}
+        for row in board_rows:
+            boards_by_symbol.setdefault(row.symbol, []).append(
+                {
+                    "board_code": row.board_code,
+                    "board_name": row.board_name,
+                    "board_type": row.board_type,
+                }
+            )
+        for symbol, raw in list(boards_by_symbol.items()):
+            boards_by_symbol[symbol] = annotate_primary_boards(raw)
+
         out = []
         for it in items:
             q = quotes.get(it.symbol)
+            snap = snaps.get(it.symbol) if isinstance(snaps, dict) else None
+            if not isinstance(snap, dict):
+                snap = {}
+            name = (
+                str(snap.get("name") or "").strip()
+                or it.name
+                or (q.name if q else "")
+            )
+            last = snap.get("last")
+            if last is None and q is not None:
+                last = q.last
+            pre_close = snap.get("pre_close")
+            pct_chg = snap.get("pct_chg")
+            if pct_chg is None and q is not None:
+                pct_chg = q.pct_chg
+            volume = snap.get("volume")
+            turnover_rate = snap.get("turnover_rate")
+            change = None
+            if last is not None and pre_close is not None:
+                try:
+                    change = float(last) - float(pre_close)
+                except (TypeError, ValueError):
+                    change = None
+            primary_boards = [
+                b
+                for b in boards_by_symbol.get(it.symbol, [])
+                if b.get("is_primary")
+            ]
             out.append(
                 {
                     "symbol": it.symbol,
-                    "name": it.name or (q.name if q else ""),
-                    "last": q.last if q else None,
-                    "pct_chg": q.pct_chg if q else None,
-                    "amount": q.amount if q else None,
+                    "name": name,
+                    "last": last,
+                    "pre_close": pre_close,
+                    "pct_chg": pct_chg,
+                    "change": change,
+                    "volume": volume,
+                    "turnover_rate": turnover_rate,
+                    "boards": primary_boards,
                 }
             )
         return out
@@ -226,6 +292,21 @@ class MarketService:
         self.db.add(item)
         self.db.flush()
         return {"symbol": symbol, "name": name}
+
+    def remove_watchlist(self, symbol: str) -> dict[str, Any]:
+        """
+        移除自选。
+
+        @param symbol: 标的代码
+        @returns: ``{\"symbol\": ..., \"removed\": bool}``
+        """
+        symbol = normalize_symbol(symbol)
+        existing = self.db.scalar(select(WatchlistItem).where(WatchlistItem.symbol == symbol))
+        if not existing:
+            return {"symbol": symbol, "removed": False}
+        self.db.delete(existing)
+        self.db.flush()
+        return {"symbol": symbol, "removed": True}
 
     def upsert_quote(self, symbol: str, name: str, last: float, pct_chg: float, amount: float) -> None:
         """更新快照。"""

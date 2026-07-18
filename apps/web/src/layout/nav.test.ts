@@ -10,6 +10,7 @@ describe("NAV", () => {
       { path: "/lhb", label: "龙虎榜" },
       { path: "/calendar", label: "日历/停牌" },
       { path: "/strategies", label: "策略" },
+      { path: "/backtest", label: "回测" },
       { path: "/factors", label: "因子/ML" },
       { path: "/risk", label: "实盘风控" },
       { path: "/alerts", label: "告警" },

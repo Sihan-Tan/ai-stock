@@ -127,4 +127,7 @@ def build_market_scheduler(
     _add("ingest_minute_watch", "ingest_minute_watch")
     _add("sync_sentiment_daily", "sync_sentiment_daily")
     _add("sync_lhb_daily", "sync_lhb_daily")
+    _add("run_morning_preopen", "run_morning_preopen")
+    _add("ingest_auction_snapshots", "ingest_auction_snapshots")
+    _add("run_morning_post_auction", "run_morning_post_auction")
     return sched, job_ids

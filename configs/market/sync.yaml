@@ -10,4 +10,8 @@ jobs:
   ingest_minute_watch: { minutes: 3, session_only: true }
   sync_sentiment_daily: { cron: "35 15 * * 1-5" }
   sync_lhb_daily: { cron: "0 18 * * 1-5" }
+  # 晨会：开盘前综述 + 竞价快照/选拔（北京时间）
+  run_morning_preopen: { cron: "20 8 * * 1-5" }
+  ingest_auction_snapshots: { cron: "26 9 * * 1-5" }
+  run_morning_post_auction: { cron: "28 9 * * 1-5" }
   purge_with_minute: true

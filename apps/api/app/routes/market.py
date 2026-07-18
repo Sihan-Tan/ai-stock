@@ -87,12 +87,23 @@ def _enqueue(job_id: str, db: Session, background_tasks: BackgroundTasks) -> dic
 
 @router.get("/watchlist")
 def watchlist(db: Session = Depends(get_db)):
-    return MarketService(db).list_watchlist()
+    """自选列表：合并实时快照价量与库内主板块。"""
+    return MarketService(db).list_watchlist(md=get_market_data())
 
 
 @router.post("/watchlist")
 def add_watch(body: WatchIn, db: Session = Depends(get_db)):
     return MarketService(db).add_watchlist(body.symbol, body.name)
+
+
+@router.delete("/watchlist/{symbol}")
+def remove_watch(symbol: str, db: Session = Depends(get_db)):
+    """
+    从自选中移除标的。
+
+    @param symbol: 标的代码
+    """
+    return MarketService(db).remove_watchlist(symbol)
 
 
 @router.get("/boards")
@@ -293,13 +304,21 @@ def bars_minute(
     md = get_market_data()
     df = md.get_minute_bars(sym, start, end)
     if df is None or df.empty:
-        # 非交易日 / 今日尚未同步：回看近 7 日，取有数据的最后一天
+        # 非交易日 / 今日尚未同步：回看近 7 日，取有数据的最后一天。
+        # 跨日查询不会触发竞价 tick→1m 补洞（_auction_window 要求同日），
+        # 因此定位到 last_day 后必须按该交易日 09:15–15:00 重拉。
         wide_start = end - timedelta(days=7)
-        df = md.get_minute_bars(sym, wide_start, end)
-        if df is not None and not df.empty:
-            ts_s = pd.to_datetime(df["ts"])
+        wide_df = md.get_minute_bars(sym, wide_start, end)
+        if wide_df is not None and not wide_df.empty:
+            ts_s = pd.to_datetime(wide_df["ts"])
             last_day = ts_s.dt.date.max()
-            df = df.loc[ts_s.dt.date == last_day].copy()
+            day_from = datetime.combine(last_day, time(9, 15))
+            day_to = datetime.combine(last_day, time(15, 0))
+            day_df = md.get_minute_bars(sym, day_from, day_to)
+            if day_df is not None and not day_df.empty:
+                df = day_df
+            else:
+                df = wide_df.loc[ts_s.dt.date == last_day].copy()
 
     if df is None or df.empty:
         return []

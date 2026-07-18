@@ -109,6 +109,8 @@ export function StockDetailView({
   const [capitalFlow, setCapitalFlow] = useState<LoadState<CapitalFlow>>(loadingState());
   const [technicals, setTechnicals] = useState<LoadState<Technicals>>(loadingState());
   const [bars, setBars] = useState<LoadState<OhlcvBar[]>>(loadingState());
+  const [watched, setWatched] = useState(false);
+  const [watchBusy, setWatchBusy] = useState(false);
 
   const intradaySummary = useMemo(() => {
     if (period !== "intraday" || !bars.data?.length) return null;
@@ -191,6 +193,94 @@ export function StockDetailView({
     };
   }, [normalizedSymbol, period, reloadKey]);
 
+  useEffect(() => {
+    if (period !== "intraday") return;
+    let cancelled = false;
+
+    /**
+     * 分时静默刷新报价与分钟线，避免整页 loading 闪烁。
+     */
+    const quietRefresh = async () => {
+      try {
+        const [quoteData, barsData] = await Promise.all([
+          api<Record<string, Quote>>(
+            `/api/market/intraday/quote?symbols=${encodeURIComponent(normalizedSymbol)}`
+          ),
+          loadBars(normalizedSymbol, "intraday"),
+        ]);
+        if (cancelled) return;
+        setQuote({
+          data: quoteData[normalizedSymbol] ?? Object.values(quoteData)[0] ?? {},
+          loading: false,
+          error: null,
+        });
+        setBars({ data: barsData, loading: false, error: null });
+      } catch {
+        // 轮询失败时保留旧数据
+      }
+    };
+
+    const timer = window.setInterval(() => {
+      void quietRefresh();
+    }, 15_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [normalizedSymbol, period]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    /**
+     * 拉取自选列表，判断当前标的是否已收藏。
+     */
+    const loadWatch = async () => {
+      try {
+        const rows = await api<Array<{ symbol: string }>>("/api/market/watchlist");
+        if (!cancelled) {
+          setWatched(rows.some((row) => row.symbol.toUpperCase() === normalizedSymbol));
+        }
+      } catch {
+        if (!cancelled) setWatched(false);
+      }
+    };
+
+    void loadWatch();
+    return () => {
+      cancelled = true;
+    };
+  }, [normalizedSymbol, reloadKey]);
+
+  /**
+   * 切换当前标的的自选收藏状态。
+   */
+  const toggleWatch = async () => {
+    if (watchBusy) return;
+    setWatchBusy(true);
+    const next = !watched;
+    setWatched(next);
+    try {
+      if (next) {
+        await api("/api/market/watchlist", {
+          method: "POST",
+          body: JSON.stringify({
+            symbol: normalizedSymbol,
+            name: meta.data?.name ?? quote.data?.name ?? "",
+          }),
+        });
+      } else {
+        await api(`/api/market/watchlist/${encodeURIComponent(normalizedSymbol)}`, {
+          method: "DELETE",
+        });
+      }
+    } catch {
+      setWatched(!next);
+    } finally {
+      setWatchBusy(false);
+    }
+  };
+
   const displayName = meta.data?.name ?? quote.data?.name ?? normalizedSymbol;
   const lastPrice = quote.data?.last;
   const preClose = quote.data?.pre_close;
@@ -216,7 +306,16 @@ export function StockDetailView({
             <div className="flex min-w-0 flex-wrap items-center gap-2">
               <h1 className="text-xl font-semibold text-[var(--desk-text)]">{displayName}</h1>
               <span className="font-mono text-sm text-[var(--desk-mist)]">{normalizedSymbol}</span>
-              {meta.data?.status && <Chip size="sm" variant="soft">{meta.data.status}</Chip>}
+              <button
+                type="button"
+                aria-label={watched ? "移出自选" : "加入自选"}
+                aria-pressed={watched}
+                disabled={watchBusy}
+                onClick={() => void toggleWatch()}
+                className="inline-flex h-7 w-7 items-center justify-center rounded-md text-[var(--desk-mist)] transition-colors hover:bg-[var(--desk-ink)] hover:text-[var(--desk-text)] disabled:opacity-50"
+              >
+                <WatchStarIcon active={watched} />
+              </button>
               {limitTag === "up" && (
                 <Chip size="sm" color="danger" variant="soft">
                   涨停
@@ -509,6 +608,28 @@ async function loadBars(symbol: string, period: ChartPeriod): Promise<OhlcvBar[]
     ...(period === "day" ? {} : { period }),
   });
   return api<OhlcvBar[]>(`/api/market/bars/daily?${params}`);
+}
+
+/**
+ * 自选收藏星标图标。
+ * @param props.active 是否已加入自选
+ */
+function WatchStarIcon({ active }: { active: boolean }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="16"
+      height="16"
+      aria-hidden="true"
+      className={active ? "text-amber-400" : "text-current"}
+      fill={active ? "currentColor" : "none"}
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinejoin="round"
+    >
+      <path d="M12 3.6l2.4 4.86 5.36.78-3.88 3.78.92 5.34L12 15.9l-4.8 2.52.92-5.34-3.88-3.78 5.36-.78L12 3.6z" />
+    </svg>
+  );
 }
 
 /**

@@ -112,6 +112,70 @@ def test_market_watchlist(client):
         assert client.post("/api/market/watchlist", json={"symbol": sym, "name": name}).status_code == 200
     wl = client.get("/api/market/watchlist").json()
     assert len(wl) >= 3
+    assert client.delete("/api/market/watchlist/300750.SZ").status_code == 200
+    symbols = {row["symbol"] for row in client.get("/api/market/watchlist").json()}
+    assert "300750.SZ" not in symbols
+    assert "600519.SH" in symbols
+
+
+def test_market_watchlist_enriches_quote_and_boards(client, monkeypatch):
+    """自选列表应合并实时快照价量与主板块。"""
+    from desk_db import get_session_factory
+    from desk_db.models import BoardMember
+    from desk_market.qmt_md import InstrumentInfo, MockQmtMarketData
+    import app.routes.market as market_routes
+
+    assert client.post(
+        "/api/market/watchlist", json={"symbol": "600519.SH", "name": "贵州茅台"}
+    ).status_code == 200
+
+    md = MockQmtMarketData(instruments=[InstrumentInfo("600519.SH", name="贵州茅台")])
+    md._snapshots["600519.SH"] = {
+        "symbol": "600519.SH",
+        "name": "贵州茅台",
+        "last": 110.0,
+        "pre_close": 100.0,
+        "volume": 12_000,
+        "turnover_rate": 1.25,
+    }
+    monkeypatch.setattr(market_routes, "get_market_data", lambda: md)
+
+    db = get_session_factory()()
+    try:
+        db.add(
+            BoardMember(
+                board_code="BK0001",
+                board_name="白酒",
+                board_type="sector",
+                symbol="600519.SH",
+                effective_from=date(2024, 1, 1),
+            )
+        )
+        db.add(
+            BoardMember(
+                board_code="BK0002",
+                board_name="消费",
+                board_type="concept",
+                symbol="600519.SH",
+                effective_from=date(2024, 1, 1),
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    row = next(
+        item
+        for item in client.get("/api/market/watchlist").json()
+        if item["symbol"] == "600519.SH"
+    )
+    assert row["last"] == 110.0
+    assert row["pre_close"] == 100.0
+    assert row["pct_chg"] == pytest.approx(10.0)
+    assert row["change"] == pytest.approx(10.0)
+    assert row["volume"] == 12_000
+    assert row["turnover_rate"] == pytest.approx(1.25)
+    assert {b["board_name"] for b in row["boards"]} == {"白酒", "消费"}
 
 
 def test_calendar_and_suspension(client):
@@ -271,12 +335,13 @@ def test_ml_both_engines(client):
 
 
 def test_morning_and_ai_skills(client):
-    today = date.today()
+    # 固定周五，避免周末 is_trade_day 门闸导致竞价选拔为空
+    asof = date(2024, 7, 5)
     db = _session()
     try:
         db.add(
             LimitUpStat(
-                asof=today,
+                asof=asof,
                 limit_up_count=10,
                 limit_down_count=2,
                 max_board=3,
@@ -286,7 +351,7 @@ def test_morning_and_ai_skills(client):
         )
         db.add(
             AuctionSnapshot(
-                asof=today,
+                asof=asof,
                 symbol="688001.SH",
                 name="示例半导体",
                 auction_pct=0.098,
@@ -297,7 +362,7 @@ def test_morning_and_ai_skills(client):
         )
         db.add(
             AuctionSnapshot(
-                asof=today,
+                asof=asof,
                 symbol="300001.SZ",
                 name="示例AI",
                 auction_pct=0.072,
@@ -309,8 +374,8 @@ def test_morning_and_ai_skills(client):
         db.commit()
     finally:
         db.close()
-    pre = client.post("/api/morning/preopen")
-    post = client.post("/api/morning/post-auction")
+    pre = client.post("/api/morning/preopen", params={"asof": asof.isoformat()})
+    post = client.post("/api/morning/post-auction", params={"asof": asof.isoformat()})
     assert pre.status_code == 200
     assert len(post.json()["stocks"]) >= 1
     skills = client.get("/api/ai/skills").json()

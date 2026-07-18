@@ -396,6 +396,58 @@ def test_bars_minute_live_fallback_when_db_empty(client, _db, monkeypatch):
     assert body[0]["close"] == 10.2
 
 
+def test_bars_minute_weekend_fallback_includes_auction(client, _db, monkeypatch):
+    """非交易日回看最近有数据日时，仍应补齐集合竞价分钟。"""
+    from desk_market.qmt_md import InstrumentInfo, MockQmtMarketData
+    import app.routes.market as market_routes
+
+    md = MockQmtMarketData(instruments=[InstrumentInfo("600519.SH", status="listed")])
+    md.seed_minute(
+        "600519.SH",
+        datetime(2024, 1, 5, 9, 30),
+        open=10.0,
+        high=10.5,
+        low=9.8,
+        close=10.2,
+        volume=1000,
+        amount=10200,
+    )
+    md.seed_ticks(
+        "600519.SH",
+        [
+            {
+                "ts": datetime(2024, 1, 5, 9, 15, 10),
+                "last": 9.8,
+                "volume": 20,
+                "amount": 196,
+            },
+            {
+                "ts": datetime(2024, 1, 5, 9, 20, 5),
+                "last": 9.9,
+                "volume": 30,
+                "amount": 297,
+            },
+        ],
+    )
+    monkeypatch.setattr(market_routes, "get_market_data", lambda: md)
+
+    # 2024-01-06 周六：库无当日数据，应回退到 01-05 且含竞价
+    r = client.get(
+        "/api/market/bars/minute",
+        params={
+            "symbol": "600519.SH",
+            "from": "2024-01-06T09:15:00+08:00",
+            "to": "2024-01-06T15:00:00+08:00",
+        },
+    )
+
+    assert r.status_code == 200
+    stamps = {row["ts"][:16] for row in r.json()}
+    assert "2024-01-05T09:15" in stamps
+    assert "2024-01-05T09:20" in stamps
+    assert "2024-01-05T09:30" in stamps
+
+
 def test_bars_minute_backfills_missing_auction_when_db_has_regular_minutes(
     client, _db, monkeypatch
 ):

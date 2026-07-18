@@ -20,6 +20,11 @@ const JOB_LABELS: Record<string, string> = {
   ingest_daily_incremental: "日终日线",
   backfill_daily_chunks: "历史回填",
   ingest_minute_watch: "分钟同步",
+  sync_sentiment_daily: "打板情绪",
+  sync_lhb_daily: "龙虎榜",
+  run_morning_preopen: "晨会开盘前",
+  ingest_auction_snapshots: "竞价快照",
+  run_morning_post_auction: "晨会竞价选拔",
 };
 
 /**
@@ -57,6 +62,28 @@ export default function MarketSync({ setLog }: PageLogProps) {
     try {
       const res = await api<{ run_id: number; status: string }>(path, { method: "POST" });
       setLog(`${label} 已入队 #${res.run_id}`);
+      await loadJobs();
+    } catch (e) {
+      setLog(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
+   * 同步执行（情绪/龙虎榜等非 BackgroundTasks 接口）。
+   * @param path API 路径
+   * @param label 日志展示名
+   */
+  const runInline = async (path: string, label: string) => {
+    setBusy(true);
+    try {
+      const res = await api<{ status?: string; skipped?: boolean; error?: string }>(path, {
+        method: "POST",
+      });
+      if (res.skipped) setLog(`${label}：非交易日已跳过`);
+      else if (res.status === "failed") setLog(`${label}失败：${res.error || "unknown"}`);
+      else setLog(`${label}完成`);
       await loadJobs();
     } catch (e) {
       setLog(String(e));
@@ -115,6 +142,20 @@ export default function MarketSync({ setLog }: PageLogProps) {
             onPress={() => enqueue("/api/market/jobs/minute-sync", "分钟同步")}
           >
             分钟同步
+          </Button>
+          <Button
+            variant="secondary"
+            isDisabled={busy}
+            onPress={() => void runInline("/api/sentiment/jobs/sync", "打板情绪")}
+          >
+            同步情绪
+          </Button>
+          <Button
+            variant="secondary"
+            isDisabled={busy}
+            onPress={() => void runInline("/api/lhb/jobs/sync", "龙虎榜")}
+          >
+            同步龙虎榜
           </Button>
           <Button variant="secondary" onPress={loadJobs}>
             刷新状态

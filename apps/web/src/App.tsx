@@ -16,6 +16,7 @@ import Review from "./pages/Review";
 import Risk from "./pages/Risk";
 import Sentiment from "./pages/Sentiment";
 import StockDetail from "./pages/StockDetail";
+import Backtest from "./pages/Backtest";
 import Strategies from "./pages/Strategies";
 import Watchlist from "./pages/Watchlist";
 import { readStoredTheme } from "./theme/theme";
@@ -72,6 +73,7 @@ export default function App() {
         <Route path="/lhb" element={<Lhb setLog={setLog} />} />
         <Route path="/calendar" element={<Calendar setLog={setLog} />} />
         <Route path="/strategies" element={<Strategies setLog={setLog} />} />
+        <Route path="/backtest" element={<Backtest setLog={setLog} />} />
         <Route path="/factors" element={<Factors setLog={setLog} />} />
         <Route path="/risk" element={<Risk setLog={setLog} />} />
         <Route path="/alerts" element={<Alerts setLog={setLog} />} />

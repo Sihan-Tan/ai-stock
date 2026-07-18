@@ -271,3 +271,73 @@ class MarketJobs:
         except Exception as exc:  # noqa: BLE001
             self.store.finish(row, status="failed", error_summary=str(exc))
             return {"status": "failed", "error": str(exc)}
+
+    def ingest_auction_snapshots(
+        self, asof: date | None = None, *, run_id: int | None = None
+    ) -> dict[str, Any]:
+        """集合竞价快照落库（自选宇宙）。"""
+        from desk_market.auction_ingest import AuctionSnapshotIngestor
+
+        row = self._begin("ingest_auction_snapshots", run_id)
+        asof = asof or date.today()
+        try:
+            if not CalendarService(self.db).require_trade_day(asof):
+                self.store.finish(row, status="ok", message="skipped_non_trade_day")
+                return {"status": "ok", "skipped": True, "run_id": row.id}
+            result = AuctionSnapshotIngestor(self.db, self.md, asof=asof).run()
+            self.store.finish(
+                row,
+                status="ok",
+                symbols_done=int(result.get("written", 0)),
+                message=f"skipped={result.get('skipped', 0)}",
+            )
+            return {"status": "ok", **result, "run_id": row.id}
+        except Exception as exc:  # noqa: BLE001
+            self.store.finish(row, status="failed", error_summary=str(exc))
+            return {"status": "failed", "error": str(exc), "run_id": row.id}
+
+    def run_morning_preopen(
+        self, asof: date | None = None, *, run_id: int | None = None
+    ) -> dict[str, Any]:
+        """调度：晨会开盘前篇。"""
+        from desk_morning_brief import MorningBriefService
+
+        row = self._begin("run_morning_preopen", run_id)
+        try:
+            brief = MorningBriefService(self.db).run_preopen(asof)
+            self.store.finish(row, status="ok", message=brief.stage)
+            return {"status": "ok", "brief": brief.model_dump(), "run_id": row.id}
+        except Exception as exc:  # noqa: BLE001
+            self.store.finish(row, status="failed", error_summary=str(exc))
+            return {"status": "failed", "error": str(exc), "run_id": row.id}
+
+    def run_morning_post_auction(
+        self, asof: date | None = None, *, run_id: int | None = None
+    ) -> dict[str, Any]:
+        """调度：竞价快照 + 强势选拔。"""
+        from desk_market.auction_ingest import AuctionSnapshotIngestor
+        from desk_morning_brief import MorningBriefService
+
+        row = self._begin("run_morning_post_auction", run_id)
+        asof = asof or date.today()
+        try:
+            if not CalendarService(self.db).require_trade_day(asof):
+                self.store.finish(row, status="ok", message="skipped_non_trade_day")
+                return {"status": "ok", "skipped": True, "run_id": row.id}
+            ingest = AuctionSnapshotIngestor(self.db, self.md, asof=asof).run()
+            report = MorningBriefService(self.db).run_post_auction(asof)
+            self.store.finish(
+                row,
+                status="ok",
+                symbols_done=len(report.stocks),
+                message=f"written={ingest.get('written', 0)};boards={len(report.boards)}",
+            )
+            return {
+                "status": "ok",
+                "ingest": ingest,
+                "report": report.model_dump(),
+                "run_id": row.id,
+            }
+        except Exception as exc:  # noqa: BLE001
+            self.store.finish(row, status="failed", error_summary=str(exc))
+            return {"status": "failed", "error": str(exc), "run_id": row.id}
