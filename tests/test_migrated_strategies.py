@@ -40,6 +40,10 @@ EXPECTED_IDS = {
     "turtle_donchian",
     "grid_classic",
     "multi_factor_lite",
+    "macd_5min",
+    "dual_ma_5min",
+    "dragon_picker",
+    "ml_prob",
 }
 
 
@@ -97,3 +101,72 @@ def test_boll_lower_touch_buy():
     assert row["close"] < row["boll_lower"]
     signals = _REGISTRY["boll_revert"].on_bar({"row": row})  # type: ignore[misc]
     assert any(s.side == Side.BUY for s in signals)
+
+
+def test_dual_ma_5min_meta_bar_period():
+    """分钟策略应声明 bar_period=5m。"""
+    meta = _REGISTRY["dual_ma_5min"].meta
+    assert meta.params.get("bar_period") == "5m"
+    meta2 = _REGISTRY["macd_5min"].meta
+    assert meta2.params.get("bar_period") == "5m"
+
+
+def test_dragon_picker_buy_on_strong_day():
+    """日涨>5%、量比>2、价<30 且打分达标应买入。"""
+    import pandas as pd
+
+    # 前 5 日低量，末日放量大涨
+    n = 8
+    closes = [10.0] * (n - 1) + [11.0]
+    highs = [10.2] * (n - 1) + [11.2]
+    lows = [9.8] * (n - 1) + [10.5]
+    vols = [1000.0] * (n - 1) + [5000.0]
+    row = build_bar_row(
+        "000001.SZ",
+        closes=closes,
+        highs=highs,
+        lows=lows,
+        volumes=vols,
+    )
+    history = pd.DataFrame(
+        {
+            "date": pd.date_range("2024-01-01", periods=n, freq="D"),
+            "open": closes,
+            "high": highs,
+            "low": lows,
+            "close": closes,
+            "volume": vols,
+        }
+    )
+    signals = _REGISTRY["dragon_picker"].on_bar({"row": row, "history": history})  # type: ignore[misc]
+    assert any(s.side == Side.BUY for s in signals)
+
+
+def test_ml_prob_callable_with_history():
+    """ml_prob 在足够历史下可调用并返回 list。"""
+    import numpy as np
+    import pandas as pd
+
+    rng = np.random.default_rng(42)
+    n = 220
+    rets = rng.normal(0, 0.01, n)
+    closes = 100 * np.cumprod(1 + rets)
+    history = pd.DataFrame(
+        {
+            "date": pd.date_range("2023-01-01", periods=n, freq="B"),
+            "open": closes,
+            "high": closes * 1.01,
+            "low": closes * 0.99,
+            "close": closes,
+            "volume": rng.integers(1_000_000, 5_000_000, n).astype(float),
+        }
+    )
+    row = build_bar_row(
+        "600519.SH",
+        closes=list(closes[-60:]),
+        highs=list(closes[-60:] * 1.01),
+        lows=list(closes[-60:] * 0.99),
+        volumes=list(history["volume"].iloc[-60:]),
+    )
+    out = _REGISTRY["ml_prob"].on_bar({"row": row, "history": history})  # type: ignore[misc]
+    assert isinstance(out, list)

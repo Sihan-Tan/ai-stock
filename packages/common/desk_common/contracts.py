@@ -59,6 +59,8 @@ class BacktestRequest(BaseModel):
     commission: float = 0.00025
     slippage: float = 0.001
     adj: Literal["qfq", "hfq"] = "qfq"
+    # 1d=日线；1m/5m=分钟（策略 params.bar_period 可覆盖）
+    bar_period: Literal["1d", "1m", "5m"] | None = None
 
 
 class BacktestReport(BaseModel):

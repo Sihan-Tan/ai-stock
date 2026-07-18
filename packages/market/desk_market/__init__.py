@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, time
 from typing import Any
 
 import pandas as pd
@@ -135,6 +135,78 @@ class MarketService:
                 for r in rows
             ]
         )
+
+    def load_minute_df(
+        self,
+        symbol: str,
+        start: date | datetime,
+        end: date | datetime,
+        *,
+        resample: str | None = None,
+    ) -> pd.DataFrame:
+        """
+        从库加载分钟线；可选重采样为 5min 等。
+
+        @param symbol: 标的
+        @param start: 起始日/时
+        @param end: 结束日/时
+        @param resample: 如 ``5min``；None 表示原始 1 分钟
+        @returns: 列 date/open/high/low/close/volume/amount（date 为时间戳）
+        """
+        symbol = normalize_symbol(symbol)
+        if isinstance(start, date) and not isinstance(start, datetime):
+            start_ts = datetime.combine(start, time(9, 15))
+        else:
+            start_ts = start
+        if isinstance(end, date) and not isinstance(end, datetime):
+            end_ts = datetime.combine(end, time(15, 0))
+        else:
+            end_ts = end
+        rows = self.db.scalars(
+            select(BarMinute)
+            .where(
+                BarMinute.symbol == symbol,
+                BarMinute.ts >= start_ts,
+                BarMinute.ts <= end_ts,
+            )
+            .order_by(BarMinute.ts)
+        ).all()
+        if not rows:
+            return pd.DataFrame()
+        df = pd.DataFrame(
+            [
+                {
+                    "date": r.ts,
+                    "open": float(r.open),
+                    "high": float(r.high),
+                    "low": float(r.low),
+                    "close": float(r.close),
+                    "volume": float(r.volume),
+                    "amount": float(r.amount),
+                }
+                for r in rows
+            ]
+        )
+        if not resample:
+            return df
+        indexed = df.set_index(pd.to_datetime(df["date"]))
+        indexed.index.name = "date"
+        out = (
+            indexed.resample(resample)
+            .agg(
+                {
+                    "open": "first",
+                    "high": "max",
+                    "low": "min",
+                    "close": "last",
+                    "volume": "sum",
+                    "amount": "sum",
+                }
+            )
+            .dropna(subset=["open", "close"])
+            .reset_index()
+        )
+        return out
 
     def upsert_minute_bars(self, symbol: str, df: pd.DataFrame) -> int:
         """

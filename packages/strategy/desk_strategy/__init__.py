@@ -39,10 +39,16 @@ def register_strategy(
     """
 
     def deco(cls_or_fn):
+        # 类策略单例缓存：ml_prob 等有状态策略需跨 bar 复用实例
+        holder: dict[str, Any] = {"inst": None}
+
         def _on_bar(ctx):
             if hasattr(cls_or_fn, "on_bar"):
-                inst = cls_or_fn() if isinstance(cls_or_fn, type) else cls_or_fn
-                return inst.on_bar(ctx) if hasattr(inst, "on_bar") else cls_or_fn(ctx)
+                if holder["inst"] is None:
+                    holder["inst"] = (
+                        cls_or_fn() if isinstance(cls_or_fn, type) else cls_or_fn
+                    )
+                return holder["inst"].on_bar(ctx)
             return cls_or_fn(ctx)
 
         meta = StrategyMeta(
