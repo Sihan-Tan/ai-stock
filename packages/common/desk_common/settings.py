@@ -64,6 +64,8 @@ class Settings(BaseSettings):
     """单笔最大金额（元）。"""
     risk_max_daily_notional: float = 200_000.0
     """单日累计最大金额（元）。"""
+    risk_max_positions: int = 4
+    """最多持仓股票只数；0 表示不限制。买入新标的时校验。"""
     risk_armed: bool = False
     """实盘 ARM：未开启时拒绝 live 下单。"""
     risk_kill_switch: bool = False

@@ -36,6 +36,7 @@ EDITABLE_ENV: dict[str, str] = {
     "risk_max_order_position_pct": "RISK_MAX_ORDER_POSITION_PCT",
     "risk_max_order_notional": "RISK_MAX_ORDER_NOTIONAL",
     "risk_max_daily_notional": "RISK_MAX_DAILY_NOTIONAL",
+    "risk_max_positions": "RISK_MAX_POSITIONS",
     "risk_armed": "RISK_ARMED",
     "risk_kill_switch": "RISK_KILL_SWITCH",
     "risk_whitelist": "RISK_WHITELIST",
@@ -101,6 +102,7 @@ def public_settings() -> dict[str, Any]:
         "risk_max_order_position_pct": s.risk_max_order_position_pct,
         "risk_max_order_notional": s.risk_max_order_notional,
         "risk_max_daily_notional": s.risk_max_daily_notional,
+        "risk_max_positions": int(s.risk_max_positions),
         "risk_armed": s.risk_armed,
         "risk_kill_switch": s.risk_kill_switch,
         "risk_whitelist": s.risk_whitelist,
@@ -216,6 +218,8 @@ def apply_settings_patch(patch: dict[str, Any]) -> dict[str, Any]:
             cleaned[field] = float(raw)
         elif field == "paper_runner_interval_minutes":
             cleaned[field] = max(5, int(float(raw)))
+        elif field == "risk_max_positions":
+            cleaned[field] = max(0, int(float(raw)))
         elif field in (
             "auto_execute_live",
             "i_understand_auto_live",
@@ -254,6 +258,8 @@ def apply_settings_patch(patch: dict[str, Any]) -> dict[str, Any]:
     ):
         if key in cleaned and cleaned[key] < 0:
             raise ValueError(f"{key} 不能为负")
+    if "risk_max_positions" in cleaned and cleaned["risk_max_positions"] < 0:
+        raise ValueError("risk_max_positions 不能为负（0=不限制）")
 
     trial = current.model_dump()
     trial.update(cleaned)

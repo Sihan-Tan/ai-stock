@@ -1,5 +1,5 @@
 import { Button, Card, CardContent, CardHeader, CardTitle, Chip } from "@heroui/react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { api } from "../api";
 import type { PageLogProps } from "./types";
 
@@ -37,6 +37,15 @@ const CATEGORY_LABEL: Record<string, string> = {
   catalyst: "催化",
 };
 
+/** 交易日历模块 Tab */
+const CALENDAR_TABS = [
+  { id: "today", label: "今日重大" },
+  { id: "suspension", label: "停牌提醒" },
+  { id: "horizon", label: "财经日历" },
+] as const;
+
+type CalendarTabId = (typeof CALENDAR_TABS)[number]["id"];
+
 /**
  * 交易日历：当日重大新闻 + 停牌提醒 + 按月加载的财经日历/催化剂。
  * @param props 页面日志写入方法
@@ -55,6 +64,7 @@ export default function Calendar({ setLog }: PageLogProps) {
   const [horizonBusy, setHorizonBusy] = useState(false);
   const [category, setCategory] = useState<CategoryFilter>("all");
   const [query, setQuery] = useState("");
+  const [tab, setTab] = useState<CalendarTabId>("today");
 
   /**
    * 按月份拉取财经日历与催化剂。
@@ -153,8 +163,15 @@ export default function Calendar({ setLog }: PageLogProps) {
       horizon: horizonEvents.length,
       macro,
       catalyst,
+      suspensions: suspensions.length,
     };
-  }, [todayEvents, horizonEvents]);
+  }, [todayEvents, horizonEvents, suspensions]);
+
+  const tabCounts: Record<CalendarTabId, number> = {
+    today: stats.todayMajor,
+    suspension: stats.suspensions,
+    horizon: filteredHorizon.length,
+  };
 
   return (
     <div className="space-y-4">
@@ -175,7 +192,7 @@ export default function Calendar({ setLog }: PageLogProps) {
             </Button>
           </div>
         </CardHeader>
-        <CardContent className="space-y-3 p-5 pt-2">
+        <CardContent className="space-y-4 p-5 pt-2">
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <Stat label="今日重大" value={String(stats.todayMajor)} tone="accent" />
             <Stat label="当月事件" value={String(stats.horizon)} />
@@ -188,217 +205,263 @@ export default function Calendar({ setLog }: PageLogProps) {
             {nextTradeDay ? ` 下一交易日 ${nextTradeDay}。` : ""}
             外部源不可用时自动使用演示数据。
           </p>
-        </CardContent>
-      </Card>
 
-      <Card className="border border-[var(--desk-line)] bg-[var(--desk-panel)]">
-        <CardHeader className="flex w-full flex-row flex-nowrap items-center justify-between gap-3 p-5 pb-3">
-          <div className="flex min-w-0 items-center gap-3">
-            <CardTitle className="text-base text-[var(--desk-text)]">停牌提醒</CardTitle>
-            <Chip size="sm" variant="soft">
-              {suspensions.length} 条
-            </Chip>
-          </div>
-        </CardHeader>
-        <CardContent className="p-5 pt-2">
-          {!suspensions.length ? (
-            <Empty title="暂无停牌记录" hint="可在行情同步任务中补充停牌数据源。" />
-          ) : (
-            <div className="overflow-x-auto rounded-lg border border-[var(--desk-line)]">
-              <table className="w-full min-w-[560px] border-collapse text-left text-sm">
-                <thead className="bg-[var(--desk-ink)] text-xs text-[var(--desk-mist)]">
-                  <tr>
-                    <th className="px-3 py-2.5 font-medium">生效日</th>
-                    <th className="px-3 py-2.5 font-medium">标的</th>
-                    <th className="px-3 py-2.5 font-medium">类型</th>
-                    <th className="px-3 py-2.5 font-medium">原因</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[var(--desk-line)]">
-                  {suspensions.map((row, index) => (
-                    <tr key={`${row.symbol}-${row.effective_date}-${index}`}>
-                      <td className="px-3 py-2.5 font-mono text-xs text-[var(--desk-mist)]">
-                        {row.effective_date}
-                      </td>
-                      <td className="px-3 py-2.5">
-                        <div className="font-mono text-xs text-[var(--desk-mist)]">{row.symbol}</div>
-                        <div>{row.name || "—"}</div>
-                      </td>
-                      <td className="px-3 py-2.5 text-[var(--desk-mist)]">{row.event_type}</td>
-                      <td className="px-3 py-2.5 text-[var(--desk-mist)]">{row.reason || "—"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card className="border border-[var(--desk-line)] bg-[var(--desk-panel)]">
-        <CardHeader className="flex w-full flex-row flex-nowrap items-center justify-between gap-3 p-5 pb-3">
-          <div className="flex min-w-0 items-center gap-3">
-            <CardTitle className="text-base text-[var(--desk-text)]">今日重大新闻 / 事件</CardTitle>
-            <Chip size="sm" variant="soft">
-              {todayKey}
-            </Chip>
-          </div>
-        </CardHeader>
-        <CardContent className="p-5 pt-2">
-          {!todayEvents.length ? (
-            <Empty
-              title="今日暂无重大事件"
-              hint="点击「同步事件」拉取财经源，或确认演示种子已写入。"
-            />
-          ) : (
-            <ul className="space-y-0 divide-y divide-[var(--desk-line)]">
-              {todayEvents.map((item, index) => (
-                <li
+          <div
+            role="tablist"
+            aria-label="交易日历模块"
+            className="flex gap-1 overflow-x-auto border-b border-[var(--desk-line)] pb-px"
+          >
+            {CALENDAR_TABS.map((item) => {
+              const active = tab === item.id;
+              return (
+                <button
                   key={item.id}
-                  className="grid gap-2 py-4 first:pt-1 last:pb-1 md:grid-cols-[5.5rem_1fr_auto] md:items-start"
-                  style={{
-                    animation: "desk-cal-in 260ms ease both",
-                    animationDelay: `${Math.min(index, 8) * 28}ms`,
-                  }}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  id={`calendar-tab-${item.id}`}
+                  aria-controls={`calendar-panel-${item.id}`}
+                  className={[
+                    "shrink-0 rounded-t-md px-3 py-2 text-sm transition-colors",
+                    active
+                      ? "border-b-2 border-[var(--desk-accent)] font-medium text-[var(--desk-text)]"
+                      : "border-b-2 border-transparent text-[var(--desk-mist)] hover:text-[var(--desk-text)]",
+                  ].join(" ")}
+                  onClick={() => setTab(item.id)}
                 >
-                  <div className="space-y-1">
-                    <div className="font-mono text-xs text-[var(--desk-mist)]">
-                      {item.event_time || "全天"}
-                    </div>
-                    <ImportanceDots value={item.importance} />
-                  </div>
-                  <div className="min-w-0 space-y-1.5">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-sm font-medium text-[var(--desk-text)]">{item.title}</span>
-                      <CategoryChip category={item.category} />
-                      {item.region ? (
-                        <Chip size="sm" variant="soft">
-                          {item.region}
-                        </Chip>
-                      ) : null}
-                    </div>
-                    <p className="text-sm leading-relaxed text-[var(--desk-mist)]">
-                      {item.summary || "—"}
-                    </p>
-                  </div>
-                  <div className="font-mono text-[11px] text-[var(--desk-mist)]/80">{item.source}</div>
-                </li>
-              ))}
-            </ul>
-          )}
-        </CardContent>
-      </Card>
+                  {item.label}
+                  <span className="ml-1.5 font-mono text-xs opacity-70">{tabCounts[item.id]}</span>
+                </button>
+              );
+            })}
+          </div>
 
-      <Card className="border border-[var(--desk-line)] bg-[var(--desk-panel)]">
-        <CardHeader className="flex w-full flex-col items-stretch gap-3 p-5 pb-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex min-w-0 flex-wrap items-center gap-3">
-            <CardTitle className="text-base text-[var(--desk-text)]">财经日历与催化剂</CardTitle>
-            <Chip size="sm" variant="soft">
-              {selectedMonthLabel}
-            </Chip>
-            <Chip size="sm" variant="soft">
-              {horizonBusy ? "加载中…" : `${filteredHorizon.length} 条`}
-            </Chip>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <label className="flex items-center gap-1.5">
-              <span className="text-xs text-[var(--desk-mist)]">月份</span>
-              <select
-                value={selectedMonth}
-                onChange={(event) => onMonthChange(event.target.value)}
-                disabled={busy || horizonBusy}
-                className={selectClass}
-                aria-label="选择财经日历月份"
+          <div
+            role="tabpanel"
+            id={`calendar-panel-${tab}`}
+            aria-labelledby={`calendar-tab-${tab}`}
+            className="min-h-[280px]"
+          >
+            {tab === "today" && (
+              <TabPanel
+                title="今日重大新闻 / 事件"
+                badge={
+                  <Chip size="sm" variant="soft">
+                    {todayKey}
+                  </Chip>
+                }
               >
-                {monthOptions.map((option) => (
-                  <option key={option.key} value={option.key}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <FilterGroup
-              label="类型"
-              value={category}
-              options={[
-                { value: "all", label: "全部" },
-                { value: "macro", label: "宏观" },
-                { value: "news", label: "新闻" },
-                { value: "earnings", label: "财报" },
-                { value: "lockup", label: "解禁" },
-                { value: "ipo", label: "IPO" },
-                { value: "catalyst", label: "催化" },
-              ]}
-              onChange={(value) => setCategory(value as CategoryFilter)}
-            />
-            <input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              className={inputClass}
-              placeholder="搜索标题 / 标的 / 摘要"
-              aria-label="搜索财经事件"
-            />
-          </div>
-        </CardHeader>
-        <CardContent className="p-5 pt-2">
-          {horizonBusy ? (
-            <Empty title="正在加载该月事件…" hint="切换月份将按需请求对应区间数据。" />
-          ) : !filteredHorizon.length ? (
-            <Empty title="该月暂无事件" hint="可切换月份或类型筛选，或点击「同步事件」。" />
-          ) : (
-            <div className="overflow-x-auto rounded-lg border border-[var(--desk-line)]">
-              <table className="w-full min-w-[720px] border-collapse text-left text-sm">
-                <thead className="bg-[var(--desk-ink)] text-xs text-[var(--desk-mist)]">
-                  <tr>
-                    <th className="px-3 py-2.5 font-medium">日期</th>
-                    <th className="px-3 py-2.5 font-medium">类型</th>
-                    <th className="px-3 py-2.5 font-medium">事件</th>
-                    <th className="px-3 py-2.5 font-medium">标的</th>
-                    <th className="px-3 py-2.5 font-medium">重要</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[var(--desk-line)]">
-                  {filteredHorizon.map((item, index) => (
-                    <tr
-                      key={item.id}
-                      className="bg-[var(--desk-panel)] transition-colors hover:bg-[var(--desk-ink)]"
-                      style={{
-                        animation: "desk-cal-in 240ms ease both",
-                        animationDelay: `${Math.min(index, 12) * 18}ms`,
-                      }}
-                    >
-                      <td className="whitespace-nowrap px-3 py-2.5 font-mono text-xs text-[var(--desk-mist)]">
-                        <div>{item.event_date.slice(5)}</div>
-                        <div className="text-[10px] opacity-80">{item.event_time || "—"}</div>
-                      </td>
-                      <td className="px-3 py-2.5">
-                        <CategoryChip category={item.category} />
-                      </td>
-                      <td className="max-w-[28rem] px-3 py-2.5">
-                        <div className="text-[var(--desk-text)]">{item.title}</div>
-                        <div className="mt-0.5 line-clamp-2 text-xs text-[var(--desk-mist)]">
-                          {item.summary || "—"}
+                {!todayEvents.length ? (
+                  <Empty
+                    title="今日暂无重大事件"
+                    hint="点击「同步事件」拉取财经源，或确认演示种子已写入。"
+                  />
+                ) : (
+                  <ul className="space-y-0 divide-y divide-[var(--desk-line)]">
+                    {todayEvents.map((item, index) => (
+                      <li
+                        key={item.id}
+                        className="grid gap-2 py-4 first:pt-1 last:pb-1 md:grid-cols-[5.5rem_1fr_auto] md:items-start"
+                        style={{
+                          animation: "desk-cal-in 260ms ease both",
+                          animationDelay: `${Math.min(index, 8) * 28}ms`,
+                        }}
+                      >
+                        <div className="space-y-1">
+                          <div className="font-mono text-xs text-[var(--desk-mist)]">
+                            {item.event_time || "全天"}
+                          </div>
+                          <ImportanceDots value={item.importance} />
                         </div>
-                      </td>
-                      <td className="px-3 py-2.5 text-xs text-[var(--desk-mist)]">
-                        {item.symbol || item.name ? (
-                          <>
-                            <div className="font-mono">{item.symbol || "—"}</div>
-                            <div>{item.name || ""}</div>
-                          </>
-                        ) : (
-                          item.region || "—"
-                        )}
-                      </td>
-                      <td className="px-3 py-2.5">
-                        <ImportanceDots value={item.importance} />
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+                        <div className="min-w-0 space-y-1.5">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-sm font-medium text-[var(--desk-text)]">
+                              {item.title}
+                            </span>
+                            <CategoryChip category={item.category} />
+                            {item.region ? (
+                              <Chip size="sm" variant="soft">
+                                {item.region}
+                              </Chip>
+                            ) : null}
+                          </div>
+                          <p className="text-sm leading-relaxed text-[var(--desk-mist)]">
+                            {item.summary || "—"}
+                          </p>
+                        </div>
+                        <div className="font-mono text-[11px] text-[var(--desk-mist)]/80">
+                          {item.source}
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </TabPanel>
+            )}
+
+            {tab === "suspension" && (
+              <TabPanel
+                title="停牌提醒"
+                badge={
+                  <Chip size="sm" variant="soft">
+                    {suspensions.length} 条
+                  </Chip>
+                }
+              >
+                {!suspensions.length ? (
+                  <Empty title="暂无停牌记录" hint="可在行情同步任务中补充停牌数据源。" />
+                ) : (
+                  <div className="overflow-x-auto rounded-lg border border-[var(--desk-line)]">
+                    <table className="w-full min-w-[560px] border-collapse text-left text-sm">
+                      <thead className="bg-[var(--desk-ink)] text-xs text-[var(--desk-mist)]">
+                        <tr>
+                          <th className="px-3 py-2.5 font-medium">生效日</th>
+                          <th className="px-3 py-2.5 font-medium">标的</th>
+                          <th className="px-3 py-2.5 font-medium">类型</th>
+                          <th className="px-3 py-2.5 font-medium">原因</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[var(--desk-line)]">
+                        {suspensions.map((row, index) => (
+                          <tr key={`${row.symbol}-${row.effective_date}-${index}`}>
+                            <td className="px-3 py-2.5 font-mono text-xs text-[var(--desk-mist)]">
+                              {row.effective_date}
+                            </td>
+                            <td className="px-3 py-2.5">
+                              <div className="font-mono text-xs text-[var(--desk-mist)]">
+                                {row.symbol}
+                              </div>
+                              <div>{row.name || "—"}</div>
+                            </td>
+                            <td className="px-3 py-2.5 text-[var(--desk-mist)]">{row.event_type}</td>
+                            <td className="px-3 py-2.5 text-[var(--desk-mist)]">
+                              {row.reason || "—"}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </TabPanel>
+            )}
+
+            {tab === "horizon" && (
+              <TabPanel
+                title="财经日历与催化剂"
+                badge={
+                  <>
+                    <Chip size="sm" variant="soft">
+                      {selectedMonthLabel}
+                    </Chip>
+                    <Chip size="sm" variant="soft">
+                      {horizonBusy ? "加载中…" : `${filteredHorizon.length} 条`}
+                    </Chip>
+                  </>
+                }
+                toolbar={
+                  <div className="flex flex-wrap items-center gap-2">
+                    <label className="flex items-center gap-1.5">
+                      <span className="text-xs text-[var(--desk-mist)]">月份</span>
+                      <select
+                        value={selectedMonth}
+                        onChange={(event) => onMonthChange(event.target.value)}
+                        disabled={busy || horizonBusy}
+                        className={selectClass}
+                        aria-label="选择财经日历月份"
+                      >
+                        {monthOptions.map((option) => (
+                          <option key={option.key} value={option.key}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <FilterGroup
+                      label="类型"
+                      value={category}
+                      options={[
+                        { value: "all", label: "全部" },
+                        { value: "macro", label: "宏观" },
+                        { value: "news", label: "新闻" },
+                        { value: "earnings", label: "财报" },
+                        { value: "lockup", label: "解禁" },
+                        { value: "ipo", label: "IPO" },
+                        { value: "catalyst", label: "催化" },
+                      ]}
+                      onChange={(value) => setCategory(value as CategoryFilter)}
+                    />
+                    <input
+                      value={query}
+                      onChange={(event) => setQuery(event.target.value)}
+                      className={inputClass}
+                      placeholder="搜索标题 / 标的 / 摘要"
+                      aria-label="搜索财经事件"
+                    />
+                  </div>
+                }
+              >
+                {horizonBusy ? (
+                  <Empty title="正在加载该月事件…" hint="切换月份将按需请求对应区间数据。" />
+                ) : !filteredHorizon.length ? (
+                  <Empty title="该月暂无事件" hint="可切换月份或类型筛选，或点击「同步事件」。" />
+                ) : (
+                  <div className="overflow-x-auto rounded-lg border border-[var(--desk-line)]">
+                    <table className="w-full min-w-[720px] border-collapse text-left text-sm">
+                      <thead className="bg-[var(--desk-ink)] text-xs text-[var(--desk-mist)]">
+                        <tr>
+                          <th className="px-3 py-2.5 font-medium">日期</th>
+                          <th className="px-3 py-2.5 font-medium">类型</th>
+                          <th className="px-3 py-2.5 font-medium">事件</th>
+                          <th className="px-3 py-2.5 font-medium">标的</th>
+                          <th className="px-3 py-2.5 font-medium">重要</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[var(--desk-line)]">
+                        {filteredHorizon.map((item, index) => (
+                          <tr
+                            key={item.id}
+                            className="bg-[var(--desk-panel)] transition-colors hover:bg-[var(--desk-ink)]"
+                            style={{
+                              animation: "desk-cal-in 240ms ease both",
+                              animationDelay: `${Math.min(index, 12) * 18}ms`,
+                            }}
+                          >
+                            <td className="whitespace-nowrap px-3 py-2.5 font-mono text-xs text-[var(--desk-mist)]">
+                              <div>{item.event_date.slice(5)}</div>
+                              <div className="text-[10px] opacity-80">{item.event_time || "—"}</div>
+                            </td>
+                            <td className="px-3 py-2.5">
+                              <CategoryChip category={item.category} />
+                            </td>
+                            <td className="max-w-[28rem] px-3 py-2.5">
+                              <div className="text-[var(--desk-text)]">{item.title}</div>
+                              <div className="mt-0.5 line-clamp-2 text-xs text-[var(--desk-mist)]">
+                                {item.summary || "—"}
+                              </div>
+                            </td>
+                            <td className="px-3 py-2.5 text-xs text-[var(--desk-mist)]">
+                              {item.symbol || item.name ? (
+                                <>
+                                  <div className="font-mono">{item.symbol || "—"}</div>
+                                  <div>{item.name || ""}</div>
+                                </>
+                              ) : (
+                                item.region || "—"
+                              )}
+                            </td>
+                            <td className="px-3 py-2.5">
+                              <ImportanceDots value={item.importance} />
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </TabPanel>
+            )}
+          </div>
         </CardContent>
       </Card>
 
@@ -411,6 +474,34 @@ export default function Calendar({ setLog }: PageLogProps) {
           tr[style], li[style] { animation: none !important; }
         }
       `}</style>
+    </div>
+  );
+}
+
+/**
+ * Tab 内容区：标题、可选徽章/工具栏与正文。
+ */
+function TabPanel({
+  title,
+  badge,
+  toolbar,
+  children,
+}: {
+  title: string;
+  badge?: ReactNode;
+  toolbar?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <h3 className="text-sm font-medium text-[var(--desk-text)]">{title}</h3>
+          {badge}
+        </div>
+        {toolbar}
+      </div>
+      {children}
     </div>
   );
 }

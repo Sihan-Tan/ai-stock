@@ -238,37 +238,32 @@ export default function Paper({ setLog }: PageLogProps) {
   const signalAlerts = alerts.filter((a) => (a.category || "").includes("signal") || true).slice(0, 30);
 
   /**
-   * 添加标的：写入自选并尝试小额示例买入建仓。
+   * 添加标的：走专用 seed 接口（自选 + 纸买建仓，豁免限额/生命周期）。
    */
   const addStock = async () => {
-    const symbol = addSymbol.trim().toUpperCase();
+    const symbol = addSymbol.trim();
     if (!symbol) return;
     setBusy(true);
     try {
-      await api("/api/market/watchlist", {
+      const result = await api<{
+        status: string;
+        symbol?: string;
+        qty?: number;
+        price?: number;
+        message?: string;
+      }>("/api/broker/paper/seed", {
         method: "POST",
-        body: JSON.stringify({ symbol, name: symbol }),
-      });
-      const snap = await api<Record<string, { last?: number }>>(
-        `/api/market/intraday/quote?symbols=${encodeURIComponent(symbol)}`
-      ).catch(() => ({} as Record<string, { last?: number }>));
-      const price = Number(snap[symbol]?.last || 10);
-      const order = await api<{ status: string; message?: string }>("/api/broker/order", {
-        method: "POST",
-        body: JSON.stringify({
-          symbol,
-          side: "buy",
-          qty: 100,
-          price,
-          mode: "paper",
-          strategy_id: runStrategyId,
-        }),
+        body: JSON.stringify({ symbol, add_watchlist: true }),
       });
       setAddSymbol("");
-      if (order.status === "filled") {
-        setLog(`已添加并建仓 ${symbol}`);
+      if (result.status === "filled") {
+        setLog(
+          `已建仓 ${result.symbol || symbol} × ${result.qty ?? "—"} @ ${
+            result.price != null ? Number(result.price).toFixed(2) : "—"
+          }`
+        );
       } else {
-        setLog(`已加入自选 ${symbol}；建仓未成交: ${order.message || order.status}`);
+        setLog(`建仓失败: ${result.message || result.status}`);
       }
       await refresh();
     } catch (error) {
@@ -477,7 +472,8 @@ export default function Paper({ setLog }: PageLogProps) {
                 <div>
                   <CardTitle className="text-base text-[var(--desk-text)]">实时持仓</CardTitle>
                   <p className="mt-1 text-xs text-[var(--desk-mist)]">
-                    {heldCount} 只持仓 · {pendingCount} 只待入场 · 点策略名可切换
+                    {heldCount} 只持仓 · {pendingCount} 只待入场 ·「添加股票」按市价买 1
+                    手建仓（不受单笔限额/策略阶段限制）
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">

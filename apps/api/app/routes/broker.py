@@ -44,6 +44,16 @@ class PaperWatchRunIn(BaseModel):
     strategy_id: str
 
 
+class PaperSeedIn(BaseModel):
+    """模拟盘手动建仓。"""
+
+    symbol: str
+    qty: float | None = None
+    price: float | None = None
+    add_watchlist: bool = True
+    name: str | None = None
+
+
 class RiskIn(BaseModel):
     armed: bool | None = None
     kill_switch: bool | None = None
@@ -76,6 +86,35 @@ def paper_summary(db: Session = Depends(get_db)):
 def paper_reset(db: Session = Depends(get_db)):
     """重置模拟账户持仓与成交流水。"""
     return get_gate(db).paper.reset_account()
+
+
+@router.post("/paper/seed")
+def paper_seed(body: PaperSeedIn, db: Session = Depends(get_db)):
+    """
+    模拟盘手动添加股票到持仓（豁免策略生命周期与单笔限额）。
+
+    默认同时写入自选；价格优先用请求值，否则盘中快照 / 日线。
+    """
+    from desk_common.symbols import normalize_symbol
+    from desk_market import MarketService
+
+    sym = normalize_symbol(body.symbol)
+    if body.add_watchlist:
+        MarketService(db).add_watchlist(sym, body.name or sym)
+
+    price = body.price
+    if price is None or float(price) <= 0:
+        try:
+            from app.routes.market import get_market_data
+
+            snap = (get_market_data().get_snapshots([sym]) or {}).get(sym) or {}
+            last = snap.get("last")
+            if last is not None and float(last) > 0:
+                price = float(last)
+        except Exception:  # noqa: BLE001
+            price = None
+
+    return get_gate(db).seed_paper_position(sym, qty=body.qty, price=price)
 
 
 @router.post("/paper/run-once")
@@ -113,6 +152,7 @@ def risk_state(db: Session = Depends(get_db)):
         "max_order_position_pct": g.risk.max_order_position_pct,
         "max_order_notional": g.risk.max_order_notional,
         "max_daily_notional": g.risk.max_daily_notional,
+        "max_positions": g.risk.max_positions,
         "daily_used": g.risk.daily_used,
     }
 

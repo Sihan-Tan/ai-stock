@@ -26,6 +26,9 @@ from desk_db.models import (
     QuoteSnapshot,
 )
 
+# 监控页「添加股票」等手动建仓：不走策略生命周期闸门
+MANUAL_PAPER_STRATEGY_ID = "manual"
+
 
 class Broker(Protocol):
     def place_order(self, intent: OrderIntent) -> OrderResult: ...
@@ -265,6 +268,7 @@ class RiskGate:
     max_order_position_pct: float = 10.0
     max_order_notional: float = 50_000.0
     max_daily_notional: float = 200_000.0
+    max_positions: int = 4
     whitelist: set[str] = field(default_factory=set)
     daily_used: float = 0.0
 
@@ -292,6 +296,29 @@ class RiskGate:
             return "exceeds daily limit"
         return None
 
+    def check_max_positions(
+        self, intent: OrderIntent, *, held_symbols: set[str]
+    ) -> str | None:
+        """
+        最多持仓股票只数（买入新标的时校验；加仓已有标的不计入新增）。
+
+        @param held_symbols: 当前持仓代码集合（qty>0）
+        @returns: 拒绝原因；通过则 None。max_positions<=0 表示不限制
+        """
+        if intent.side != Side.BUY:
+            return None
+        max_n = int(self.max_positions)
+        if max_n <= 0:
+            return None
+        sym = (intent.symbol or "").strip().upper()
+        if not sym:
+            return None
+        if sym in held_symbols:
+            return None
+        if len(held_symbols) >= max_n:
+            return f"exceeds max positions ({max_n})"
+        return None
+
     def check_live_gates(self, intent: OrderIntent) -> str | None:
         """实盘闸门：Kill / ARM / 白名单（不含金额仓位限额）。"""
         if self.kill_switch:
@@ -315,6 +342,7 @@ class RiskGate:
         self.max_order_position_pct = float(settings.risk_max_order_position_pct)
         self.max_order_notional = float(settings.risk_max_order_notional)
         self.max_daily_notional = float(settings.risk_max_daily_notional)
+        self.max_positions = int(settings.risk_max_positions)
         self.armed = bool(settings.risk_armed)
         self.kill_switch = bool(settings.risk_kill_switch)
         raw = (settings.risk_whitelist or "").replace("，", ",")
@@ -559,22 +587,40 @@ class BrokerGateway:
         floor = float(get_settings().paper_initial_cash)
         return max(pos_val, floor)
 
+    def _held_symbols(self, mode: str) -> set[str]:
+        """
+        当前持仓标的集合（qty>0）。
+
+        @param mode: paper / live
+        """
+        if mode == "paper":
+            acc = self.paper._ensure_account()
+            rows = self.db.scalars(
+                select(PaperPosition).where(PaperPosition.account_id == acc.id)
+            ).all()
+            return {p.symbol.strip().upper() for p in rows if float(p.qty) > 0}
+        rows = self.db.scalars(select(LivePosition)).all()
+        return {p.symbol.strip().upper() for p in rows if float(p.qty) > 0}
+
     def place_order(self, intent: OrderIntent) -> OrderResult:
         """
         按 mode 路由。
 
         设置页「下单限额」每次下单前从 Settings 同步，对 **模拟与实盘** 均强制生效；
+        「最多持仓只数」对含手动建仓在内的买入新标的生效；
+        ``strategy_id=manual`` 的纸买豁免金额限额与生命周期闸门；
         实盘额外要求 Kill/ARM/白名单。
         """
         # 限额以设置/.env 为准，避免被风控页内存值覆盖后长期偏离
         self.risk.apply_from_settings()
-        equity = (
-            self._paper_equity()
-            if intent.mode == "paper"
-            else self._live_equity_estimate()
+        is_manual_paper = (
+            intent.mode == "paper"
+            and (intent.strategy_id or "").strip() == MANUAL_PAPER_STRATEGY_ID
         )
-        limit_reason = self.risk.check_size_limits(intent, equity=equity)
-        if limit_reason:
+        pos_reason = self.risk.check_max_positions(
+            intent, held_symbols=self._held_symbols(intent.mode)
+        )
+        if pos_reason:
             if intent.mode != "paper":
                 self.db.add(
                     LiveOrder(
@@ -584,15 +630,42 @@ class BrokerGateway:
                         qty=intent.qty,
                         price=intent.price,
                         status="rejected",
-                        message=limit_reason,
+                        message=pos_reason,
                     )
                 )
                 self.db.flush()
             return OrderResult(
                 client_order_id=intent.client_order_id,
                 status="rejected",
-                message=limit_reason,
+                message=pos_reason,
             )
+
+        if not is_manual_paper:
+            equity = (
+                self._paper_equity()
+                if intent.mode == "paper"
+                else self._live_equity_estimate()
+            )
+            limit_reason = self.risk.check_size_limits(intent, equity=equity)
+            if limit_reason:
+                if intent.mode != "paper":
+                    self.db.add(
+                        LiveOrder(
+                            client_order_id=intent.client_order_id,
+                            symbol=intent.symbol,
+                            side=intent.side.value,
+                            qty=intent.qty,
+                            price=intent.price,
+                            status="rejected",
+                            message=limit_reason,
+                        )
+                    )
+                    self.db.flush()
+                return OrderResult(
+                    client_order_id=intent.client_order_id,
+                    status="rejected",
+                    message=limit_reason,
+                )
 
         if intent.mode == "paper":
             paper_gate = self._check_paper_lifecycle_buy(intent)
@@ -670,11 +743,83 @@ class BrokerGateway:
             self.risk.daily_used += float(intent.price) * float(intent.qty)
         return result
 
+    def seed_paper_position(
+        self,
+        symbol: str,
+        *,
+        qty: float | None = None,
+        price: float | None = None,
+    ) -> dict:
+        """
+        监控页「添加股票」：规范化代码、解析价格并纸买建仓。
+
+        使用 ``strategy_id=manual``，豁免生命周期与单笔限额；仍受现金约束。
+        未指定数量时默认 100 股；现金不足则按整手下调。
+
+        @param symbol: 原始代码
+        @param qty: 股数；None 则自动
+        @param price: 成交价；None 则取快照/日线，再不行用 10
+        @returns: 含 order 结果与规范化 symbol 的字典
+        """
+        from desk_common.symbols import normalize_symbol
+
+        sym = normalize_symbol(symbol)
+        px = price if price is not None and float(price) > 0 else None
+        if px is None:
+            px = self.paper._last_price(sym, fallback=10.0) or 10.0
+        px = float(px)
+        if px <= 0:
+            return {
+                "status": "rejected",
+                "symbol": sym,
+                "message": "无法解析价格，请手动指定 price",
+            }
+
+        acc = self.paper._ensure_account()
+        cash = float(acc.cash)
+        # 预留约 0.3% 费用缓冲
+        affordable = int(cash / (px * 1.003) / 100) * 100
+        want = float(qty) if qty is not None and float(qty) > 0 else 100.0
+        want = float(int(want / 100) * 100)
+        if want < 100:
+            want = 100.0
+        final_qty = min(want, float(affordable))
+        if final_qty < 100:
+            return {
+                "status": "rejected",
+                "symbol": sym,
+                "price": px,
+                "message": f"现金不足：现价约 {px:.2f}，至少需约 {px * 100 * 1.003:.0f} 元买 1 手",
+            }
+
+        result = self.place_order(
+            OrderIntent(
+                symbol=sym,
+                side=Side.BUY,
+                qty=final_qty,
+                price=px,
+                client_order_id=f"seed|{sym}|{uuid4().hex[:10]}",
+                strategy_id=MANUAL_PAPER_STRATEGY_ID,
+                mode="paper",
+            )
+        )
+        return {
+            "status": result.status,
+            "symbol": sym,
+            "qty": final_qty,
+            "price": px,
+            "client_order_id": result.client_order_id,
+            "filled_qty": result.filled_qty,
+            "avg_price": result.avg_price,
+            "message": result.message,
+        }
+
     def _check_paper_lifecycle_buy(self, intent: OrderIntent) -> str | None:
         """
-        纸交易买入须通过生命周期闸门（试用/主力）。
+        策略纸买须通过生命周期闸门（试用/主力）。
 
-        未传 strategy_id 时用 ``PAPER_DEFAULT_STRATEGY_ID``。
+        ``strategy_id=manual``（监控页添加股票）豁免；未传时用
+        ``PAPER_DEFAULT_STRATEGY_ID``，仍受闸门约束。
         """
         if intent.side != Side.BUY:
             return None
@@ -685,6 +830,8 @@ class BrokerGateway:
         sid = (intent.strategy_id or settings.paper_default_strategy_id or "").strip()
         if not sid:
             return "lifecycle gate: strategy_id required for paper buy"
+        if sid == MANUAL_PAPER_STRATEGY_ID:
+            return None
         row = self.db.scalar(
             select(StrategyRow)
             .where(StrategyRow.strategy_id == sid)
@@ -772,4 +919,5 @@ __all__ = [
     "RiskGate",
     "BrokerGateway",
     "PaperStrategyRunner",
+    "MANUAL_PAPER_STRATEGY_ID",
 ]

@@ -33,6 +33,7 @@ def test_public_settings_has_core_fields(_db):
     data = public_settings()
     assert data["trade_mode"] in ("paper", "live")
     assert "risk_max_order_position_pct" in data
+    assert "risk_max_positions" in data
     assert "backtest_stamp_duty" in data
 
 

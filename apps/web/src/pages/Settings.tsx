@@ -37,6 +37,7 @@ type AppSettings = {
   risk_max_order_position_pct: number;
   risk_max_order_notional: number;
   risk_max_daily_notional: number;
+  risk_max_positions?: number;
   risk_armed?: boolean;
   risk_kill_switch?: boolean;
   risk_whitelist?: string;
@@ -69,6 +70,7 @@ const EMPTY: AppSettings = {
   risk_max_order_position_pct: 10,
   risk_max_order_notional: 50_000,
   risk_max_daily_notional: 200_000,
+  risk_max_positions: 4,
   risk_armed: false,
   risk_kill_switch: false,
   risk_whitelist: "",
@@ -178,6 +180,7 @@ export default function Settings({ setLog }: PageLogProps) {
         risk_max_order_position_pct: Number(form.risk_max_order_position_pct),
         risk_max_order_notional: Number(form.risk_max_order_notional),
         risk_max_daily_notional: Number(form.risk_max_daily_notional),
+        risk_max_positions: Math.max(0, Math.floor(Number(form.risk_max_positions) || 0)),
         risk_armed: Boolean(form.risk_armed),
         risk_kill_switch: Boolean(form.risk_kill_switch),
         risk_whitelist: form.risk_whitelist || "",
@@ -411,7 +414,7 @@ export default function Settings({ setLog }: PageLogProps) {
 
             {tab === "risk" && (
               <TabPanel title="风控与实盘闸门">
-                <div className="grid gap-3 md:grid-cols-3">
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                   <Field label="单笔最大仓位（占总权益 %）">
                     <input
                       className={inputClass}
@@ -438,9 +441,19 @@ export default function Settings({ setLog }: PageLogProps) {
                       onChange={(e) => patch("risk_max_daily_notional", Number(e.target.value))}
                     />
                   </Field>
+                  <Field label="最多持仓股票数（只）">
+                    <input
+                      className={inputClass}
+                      inputMode="numeric"
+                      value={String(form.risk_max_positions ?? 4)}
+                      onChange={(e) =>
+                        patch("risk_max_positions", Math.max(0, Number(e.target.value) || 0))
+                      }
+                    />
+                  </Field>
                 </div>
                 <p className="mt-2 text-xs text-[var(--desk-mist)]">
-                  单笔上限取「权益×仓位%」与「单笔最大金额」较小者；限额对模拟与实盘均生效。
+                  单笔上限取「权益×仓位%」与「单笔最大金额」较小者；买入新标的时受「最多持仓股票数」限制（0=不限制）；加仓已有标的不占新名额。限额对模拟与实盘均生效。
                 </p>
                 <div className="mt-4 space-y-3 rounded-lg border border-[var(--desk-line)] bg-[var(--desk-ink)] p-4">
                   <div className="text-sm font-medium text-[var(--desk-text)]">
