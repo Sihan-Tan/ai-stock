@@ -170,8 +170,8 @@ export default function MarketSync({ setLog }: PageLogProps) {
               <th className="px-3 py-2 font-medium">状态</th>
               <th className="px-3 py-2 font-medium">已完成</th>
               <th className="px-3 py-2 font-medium">消息</th>
-              <th className="px-3 py-2 font-medium">开始(北京)</th>
-              <th className="px-3 py-2 font-medium">结束(北京)</th>
+              <th className="px-3 py-2 font-medium">开始</th>
+              <th className="px-3 py-2 font-medium">结束</th>
             </tr>
           </thead>
           <tbody>

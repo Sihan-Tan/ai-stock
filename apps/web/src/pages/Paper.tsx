@@ -7,7 +7,7 @@ import {
   Chip,
 } from "@heroui/react";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { api } from "../api";
+import { api, beijingNowClock, formatBeijingTime, formatBeijingTimeShort } from "../api";
 import { StockDetailDrawer } from "../stock/StockDetailDrawer";
 import { getStrategyProfile } from "../stock/strategyProfiles";
 import { SymbolSearchField } from "../stock/SymbolSearchField";
@@ -642,7 +642,7 @@ export default function Paper({ setLog }: PageLogProps) {
     }
   };
 
-  const nowLabel = new Date().toLocaleTimeString("zh-CN", { hour12: false });
+  const nowLabel = beijingNowClock();
 
   return (
     <div className="space-y-4">
@@ -1079,7 +1079,7 @@ export default function Paper({ setLog }: PageLogProps) {
                             className="border-b border-[var(--desk-line)] last:border-0"
                           >
                             <td className="px-2 py-2 font-mono text-xs text-[var(--desk-mist)]">
-                              {a.created_at ? formatTime(a.created_at) : "—"}
+                              {formatBeijingTimeShort(a.created_at)}
                             </td>
                             <td className="px-2 py-2 font-mono text-xs">—</td>
                             <td className="px-2 py-2">{a.title || "—"}</td>
@@ -1196,7 +1196,7 @@ export default function Paper({ setLog }: PageLogProps) {
                     </Button>
                   </div>
                   <p>
-                    上次：{runnerStatus?.last_run?.at?.slice(0, 19) || "—"} ·{" "}
+                    上次：{formatBeijingTime(runnerStatus?.last_run?.at)} ·{" "}
                     {runnerStatus?.last_run?.status || "idle"} · 扫描{" "}
                     {runnerStatus?.last_run?.count ?? 0} · 成交{" "}
                     {runnerStatus?.last_run?.filled ?? 0}
@@ -1270,7 +1270,7 @@ export default function Paper({ setLog }: PageLogProps) {
                     清空历史
                   </button>
                   <span className="ml-auto text-[var(--desk-mist)]">
-                    更新 {summary?.updated_at ? formatTime(summary.updated_at) : "—"}
+                    更新 {formatBeijingTimeShort(summary?.updated_at)}
                   </span>
                 </div>
               </CardContent>
@@ -1308,7 +1308,7 @@ export default function Paper({ setLog }: PageLogProps) {
                     {trades.map((t) => (
                       <tr key={t.id} className="border-b border-[var(--desk-line)] last:border-0">
                         <td className="px-1 py-2 font-mono text-[var(--desk-mist)]">
-                          {t.created_at ? formatTime(t.created_at) : "—"}
+                          {formatBeijingTimeShort(t.created_at)}
                         </td>
                         <td className="px-1 py-2 font-mono">{t.symbol}</td>
                         <td className="px-1 py-2">
@@ -1760,15 +1760,3 @@ function pnlClass(n: number): string {
   return "text-[var(--desk-mist)]";
 }
 
-function formatTime(iso: string): string {
-  const d = new Date(iso.endsWith("Z") || /[+-]\d{2}:?\d{2}$/.test(iso) ? iso : `${iso}Z`);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString("zh-CN", {
-    hour12: false,
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
-}

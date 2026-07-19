@@ -1,6 +1,6 @@
 import { Button, Card, CardContent, CardHeader, CardTitle, Chip } from "@heroui/react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { api } from "../api";
+import { api, beijingToday } from "../api";
 import type { PageLogProps } from "./types";
 
 type CalendarEventItem = {
@@ -51,8 +51,11 @@ type CalendarTabId = (typeof CALENDAR_TABS)[number]["id"];
  * @param props 页面日志写入方法
  */
 export default function Calendar({ setLog }: PageLogProps) {
-  const today = useMemo(() => new Date(), []);
-  const todayKey = useMemo(() => formatDateKey(today), [today]);
+  const todayKey = useMemo(() => beijingToday(), []);
+  const today = useMemo(() => {
+    const [y, m, d] = todayKey.split("-").map(Number);
+    return new Date(y, m - 1, d);
+  }, [todayKey]);
   const monthOptions = useMemo(() => buildMonthOptions(today, 3), [today]);
   const [selectedMonth, setSelectedMonth] = useState(monthOptions[0]?.key ?? "");
   const [todayEvents, setTodayEvents] = useState<CalendarEventItem[]>([]);

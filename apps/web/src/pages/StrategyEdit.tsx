@@ -1,7 +1,7 @@
 import { Button, Card, CardContent, CardHeader, CardTitle, Chip } from "@heroui/react";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { api } from "../api";
+import { api, formatBeijingTime } from "../api";
 import { StrategyCodeEditor } from "./StrategyCodeEditor";
 import type { PageLogProps } from "./types";
 
@@ -424,7 +424,7 @@ export default function StrategyEdit({ setLog }: PageLogProps) {
                     key={`${h.ts}-${i}`}
                     className="rounded-lg border border-[var(--desk-line)] bg-[var(--desk-ink)] px-3 py-2"
                   >
-                    <div className="font-mono text-xs">{h.ts || "—"}</div>
+                    <div className="font-mono text-xs">{formatBeijingTime(h.ts)}</div>
                     <div className="mt-1 text-[var(--desk-text)]">
                       {STAGE_LABEL[h.from || ""] || h.from || "—"} →{" "}
                       {STAGE_LABEL[h.to || ""] || h.to || "—"}

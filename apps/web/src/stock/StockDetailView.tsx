@@ -1,6 +1,6 @@
 import { Alert, Button, Card, CardContent, CardHeader, CardTitle, Chip, Spinner } from "@heroui/react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { api } from "../api";
+import { api, beijingToday, formatBeijingTime } from "../api";
 import { summarizeIntradayBars, buildMacdSeries, buildSmaSeries, DAILY_MA_LINES, MACD_LINE_COLORS, toChartBars } from "./format";
 import { calcPctChg, detectLimitTag } from "./limitStatus";
 import { StockChart } from "./StockChart";
@@ -584,12 +584,7 @@ export function StockDetailView({
  */
 async function loadBars(symbol: string, period: ChartPeriod): Promise<OhlcvBar[]> {
   if (period === "intraday") {
-    const date = new Intl.DateTimeFormat("en-CA", {
-      timeZone: "Asia/Shanghai",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    }).format(new Date());
+    const date = beijingToday();
     const params = new URLSearchParams({
       symbol,
       from: `${date}T09:15:00+08:00`,
@@ -598,13 +593,13 @@ async function loadBars(symbol: string, period: ChartPeriod): Promise<OhlcvBar[]
     return api<OhlcvBar[]>(`/api/market/bars/minute?${params}`);
   }
 
-  const today = new Date();
-  const from = new Date(today);
-  from.setFullYear(today.getFullYear() - 1);
+  const end = beijingToday();
+  const [y, m, d] = end.split("-");
+  const from = `${Number(y) - 1}-${m}-${d}`;
   const params = new URLSearchParams({
     symbol,
-    from: toDateString(from),
-    to: toDateString(today),
+    from,
+    to: end,
     ...(period === "day" ? {} : { period }),
   });
   return api<OhlcvBar[]>(`/api/market/bars/daily?${params}`);
@@ -668,14 +663,6 @@ function isNotFoundError(error: unknown): boolean {
  */
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-/**
- * 转换为 API 所需的本地日期字符串。
- * @param value 日期对象
- */
-function toDateString(value: Date): string {
-  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
 }
 
 /**
@@ -902,13 +889,9 @@ function valueClass(value: number): string {
 }
 
 /**
- * 格式化接口返回的更新时间。
+ * 格式化接口返回的更新时间（北京时间）。
  * @param value ISO 时间
  */
 function formatDateTime(value: string | null | undefined): string {
-  if (!value) return "—";
-  const date = new Date(value);
-  return Number.isNaN(date.getTime())
-    ? value
-    : date.toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false });
+  return formatBeijingTime(value);
 }

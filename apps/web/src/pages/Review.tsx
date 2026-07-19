@@ -1,6 +1,6 @@
 import { Button, Card, CardContent, CardHeader, CardTitle, Chip } from "@heroui/react";
 import { useEffect, useState } from "react";
-import { api } from "../api";
+import { api, beijingToday, formatBeijingTime } from "../api";
 import type { PageLogProps } from "./types";
 
 type ReviewRow = {
@@ -110,7 +110,7 @@ export default function Review({ setLog }: PageLogProps) {
   const save = async () => {
     setBusy(true);
     try {
-      const asof = new Date().toISOString().slice(0, 10);
+      const asof = beijingToday();
       await api("/api/review", {
         method: "POST",
         body: JSON.stringify({
@@ -222,7 +222,9 @@ export default function Review({ setLog }: PageLogProps) {
               <tbody>
                 {(exec?.items || []).slice(0, 40).map((t) => (
                   <tr key={t.id} className="border-b border-[var(--desk-line)] last:border-0">
-                    <td className="px-2 py-1.5 font-mono text-xs">{t.created_at?.slice(0, 19) || "—"}</td>
+                    <td className="px-2 py-1.5 font-mono text-xs">
+                      {formatBeijingTime(t.created_at)}
+                    </td>
                     <td className="px-2 py-1.5 font-mono text-xs">{t.symbol}</td>
                     <td className="px-2 py-1.5">{t.side}</td>
                     <td className="px-2 py-1.5 font-mono">{t.price?.toFixed(3) ?? "—"}</td>

@@ -1,7 +1,7 @@
 import { Button, Card, CardContent, CardHeader, CardTitle, Chip } from "@heroui/react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { api } from "../api";
+import { api, beijingToday } from "../api";
 import { parseSearchSymbol } from "../stock/parseSearchSymbol";
 import { SymbolSearchField } from "../stock/SymbolSearchField";
 import { EquityCurveChart } from "./EquityCurveChart";
@@ -466,28 +466,16 @@ function formatMoney(value?: number): string {
 }
 
 /**
- * 默认回测起始日（约一年前）。
+ * 默认回测起始日（约一年前，北京日期）。
  */
 function defaultStart(): string {
-  const d = new Date();
-  d.setFullYear(d.getFullYear() - 1);
-  return toDateInput(d);
+  const [y, m, d] = beijingToday().split("-");
+  return `${Number(y) - 1}-${m}-${d}`;
 }
 
 /**
- * 默认回测结束日（今天）。
+ * 默认回测结束日（北京「今天」）。
  */
 function defaultEnd(): string {
-  return toDateInput(new Date());
-}
-
-/**
- * Date → yyyy-mm-dd。
- * @param value 日期
- */
-function toDateInput(value: Date): string {
-  const y = value.getFullYear();
-  const m = String(value.getMonth() + 1).padStart(2, "0");
-  const d = String(value.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
+  return beijingToday();
 }
