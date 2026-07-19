@@ -30,6 +30,25 @@ from desk_db.models import (
 MANUAL_PAPER_STRATEGY_ID = "manual"
 
 
+def _strategy_from_client_order_id(client_order_id: str) -> str | None:
+    """
+    从 client_order_id 解析策略 ID。
+
+    新格式 ``seed|{strategy_id}|{symbol}|…`` / ``paper|{strategy_id}|{symbol}|…``；
+    旧格式 ``seed|{symbol}|…`` 视为 manual。
+    """
+    parts = (client_order_id or "").split("|")
+    if not parts:
+        return None
+    if parts[0] == "seed":
+        if len(parts) >= 4:
+            return parts[1] or MANUAL_PAPER_STRATEGY_ID
+        return MANUAL_PAPER_STRATEGY_ID
+    if parts[0] == "paper" and len(parts) >= 3:
+        return parts[1] or None
+    return None
+
+
 class Broker(Protocol):
     def place_order(self, intent: OrderIntent) -> OrderResult: ...
 
@@ -97,6 +116,19 @@ class PaperBroker:
             .order_by(PaperTrade.id.desc())
             .limit(50)
         ).all()
+        # 持仓 strategy_id 优先；旧数据回退从最近订单解析
+        orders = self.db.scalars(
+            select(PaperOrder)
+            .where(PaperOrder.account_id == acc.id)
+            .order_by(PaperOrder.id.desc())
+        ).all()
+        strategy_by_symbol: dict[str, str] = {}
+        for order in orders:
+            if order.symbol in strategy_by_symbol:
+                continue
+            sid = _strategy_from_client_order_id(order.client_order_id)
+            if sid:
+                strategy_by_symbol[order.symbol] = sid
         settings = get_settings()
         self.db.flush()
         return {
@@ -106,7 +138,14 @@ class PaperBroker:
             "account": acc.name,
             "updated_at": acc.updated_at.isoformat() if acc.updated_at else None,
             "positions": [
-                {"symbol": p.symbol, "qty": p.qty, "cost": p.cost} for p in positions
+                {
+                    "symbol": p.symbol,
+                    "qty": p.qty,
+                    "cost": p.cost,
+                    "strategy_id": getattr(p, "strategy_id", None)
+                    or strategy_by_symbol.get(p.symbol),
+                }
+                for p in positions
             ],
             "trades": [
                 {
@@ -223,16 +262,23 @@ class PaperBroker:
         )
         if intent.side == Side.BUY:
             acc.cash += cash_delta
+            sid = (intent.strategy_id or "").strip() or None
             if not pos:
                 self.db.add(
                     PaperPosition(
-                        account_id=acc.id, symbol=intent.symbol, qty=intent.qty, cost=price
+                        account_id=acc.id,
+                        symbol=intent.symbol,
+                        qty=intent.qty,
+                        cost=price,
+                        strategy_id=sid,
                     )
                 )
             else:
                 new_qty = pos.qty + intent.qty
                 pos.cost = (pos.cost * pos.qty + price * intent.qty) / new_qty
                 pos.qty = new_qty
+                if sid:
+                    pos.strategy_id = sid
         else:
             acc.cash += cash_delta
             pos.qty -= intent.qty
@@ -613,9 +659,11 @@ class BrokerGateway:
         """
         # 限额以设置/.env 为准，避免被风控页内存值覆盖后长期偏离
         self.risk.apply_from_settings()
-        is_manual_paper = (
-            intent.mode == "paper"
-            and (intent.strategy_id or "").strip() == MANUAL_PAPER_STRATEGY_ID
+        is_seed_paper = intent.mode == "paper" and (intent.client_order_id or "").startswith(
+            "seed|"
+        )
+        is_manual_paper = intent.mode == "paper" and (
+            (intent.strategy_id or "").strip() == MANUAL_PAPER_STRATEGY_ID or is_seed_paper
         )
         pos_reason = self.risk.check_max_positions(
             intent, held_symbols=self._held_symbols(intent.mode)
@@ -668,13 +716,14 @@ class BrokerGateway:
                 )
 
         if intent.mode == "paper":
-            paper_gate = self._check_paper_lifecycle_buy(intent)
-            if paper_gate:
-                return OrderResult(
-                    client_order_id=intent.client_order_id,
-                    status="rejected",
-                    message=paper_gate,
-                )
+            if not is_manual_paper:
+                paper_gate = self._check_paper_lifecycle_buy(intent)
+                if paper_gate:
+                    return OrderResult(
+                        client_order_id=intent.client_order_id,
+                        status="rejected",
+                        message=paper_gate,
+                    )
             return self.paper.place_order(intent)
 
         gate_reason = self.risk.check_live_gates(intent)
@@ -749,21 +798,26 @@ class BrokerGateway:
         *,
         qty: float | None = None,
         price: float | None = None,
+        strategy_id: str | None = None,
+        capital_pct: float | None = None,
     ) -> dict:
         """
         监控页「添加股票」：规范化代码、解析价格并纸买建仓。
 
-        使用 ``strategy_id=manual``，豁免生命周期与单笔限额；仍受现金约束。
-        未指定数量时默认 100 股；现金不足则按整手下调。
+        ``client_order_id`` 以 ``seed|`` 开头，豁免生命周期与单笔限额；仍受现金与最多持仓数约束。
+        未指定数量时默认 100 股；可按 ``capital_pct``（占可用现金比例，0–1 或 1–100）估算股数。
 
         @param symbol: 原始代码
-        @param qty: 股数；None 则自动
+        @param qty: 股数；None 则自动或由仓位推算
         @param price: 成交价；None 则取快照/日线，再不行用 10
+        @param strategy_id: 关联策略；默认 manual
+        @param capital_pct: 仓位比例（优先于 qty）
         @returns: 含 order 结果与规范化 symbol 的字典
         """
         from desk_common.symbols import normalize_symbol
 
         sym = normalize_symbol(symbol)
+        sid = (strategy_id or MANUAL_PAPER_STRATEGY_ID).strip() or MANUAL_PAPER_STRATEGY_ID
         px = price if price is not None and float(price) > 0 else None
         if px is None:
             px = self.paper._last_price(sym, fallback=10.0) or 10.0
@@ -779,8 +833,16 @@ class BrokerGateway:
         cash = float(acc.cash)
         # 预留约 0.3% 费用缓冲
         affordable = int(cash / (px * 1.003) / 100) * 100
-        want = float(qty) if qty is not None and float(qty) > 0 else 100.0
-        want = float(int(want / 100) * 100)
+        want: float
+        if capital_pct is not None and float(capital_pct) > 0:
+            raw = float(capital_pct)
+            pct = raw / 100.0 if raw > 1.0 else raw
+            pct = min(max(pct, 0.01), 1.0)
+            want = float(int(cash * pct / (px * 1.003) / 100) * 100)
+        elif qty is not None and float(qty) > 0:
+            want = float(int(float(qty) / 100) * 100)
+        else:
+            want = 100.0
         if want < 100:
             want = 100.0
         final_qty = min(want, float(affordable))
@@ -798,8 +860,8 @@ class BrokerGateway:
                 side=Side.BUY,
                 qty=final_qty,
                 price=px,
-                client_order_id=f"seed|{sym}|{uuid4().hex[:10]}",
-                strategy_id=MANUAL_PAPER_STRATEGY_ID,
+                client_order_id=f"seed|{sid}|{sym}|{uuid4().hex[:10]}",
+                strategy_id=sid,
                 mode="paper",
             )
         )
@@ -808,11 +870,36 @@ class BrokerGateway:
             "symbol": sym,
             "qty": final_qty,
             "price": px,
+            "strategy_id": sid,
             "client_order_id": result.client_order_id,
             "filled_qty": result.filled_qty,
             "avg_price": result.avg_price,
             "message": result.message,
         }
+
+    def set_paper_position_strategy(self, symbol: str, strategy_id: str) -> dict:
+        """
+        更换模拟持仓的执行策略（不改持仓数量/成本）。
+
+        @param symbol: 标的
+        @param strategy_id: 新策略 ID（含 manual）
+        @returns: {ok, symbol, strategy_id} 或失败信息
+        """
+        from desk_common.symbols import normalize_symbol
+
+        sym = normalize_symbol(symbol)
+        sid = (strategy_id or MANUAL_PAPER_STRATEGY_ID).strip() or MANUAL_PAPER_STRATEGY_ID
+        acc = self.paper._ensure_account()
+        pos = self.db.scalar(
+            select(PaperPosition).where(
+                PaperPosition.account_id == acc.id, PaperPosition.symbol == sym
+            )
+        )
+        if not pos:
+            return {"ok": False, "symbol": sym, "message": "持仓不存在"}
+        pos.strategy_id = sid
+        self.db.flush()
+        return {"ok": True, "symbol": sym, "strategy_id": sid}
 
     def _check_paper_lifecycle_buy(self, intent: OrderIntent) -> str | None:
         """

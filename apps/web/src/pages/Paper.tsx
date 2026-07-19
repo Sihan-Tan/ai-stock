@@ -5,15 +5,21 @@ import {
   CardHeader,
   CardTitle,
   Chip,
-  Input,
 } from "@heroui/react";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { api } from "../api";
 import { StockDetailDrawer } from "../stock/StockDetailDrawer";
+import { getStrategyProfile } from "../stock/strategyProfiles";
+import { SymbolSearchField } from "../stock/SymbolSearchField";
 import type { PositionContext } from "../stock/types";
 import type { PageLogProps } from "./types";
 
-type PaperPosition = { symbol: string; qty: number; cost: number };
+type PaperPosition = {
+  symbol: string;
+  qty: number;
+  cost: number;
+  strategy_id?: string | null;
+};
 type PaperTrade = {
   id: number;
   symbol: string;
@@ -65,6 +71,9 @@ type TradingModeState = {
 const selectClass =
   "rounded-lg border border-[var(--desk-line)] bg-[var(--desk-ink)] px-2 py-1.5 text-xs text-[var(--desk-text)] outline-none focus:border-[var(--desk-mist)]";
 
+const symbolInputClass =
+  "w-full rounded-lg border border-[var(--desk-line)] bg-[var(--desk-ink)] px-2 py-1.5 text-xs text-[var(--desk-text)] outline-none focus:border-[var(--desk-mist)]";
+
 /**
  * 实盘监控仪表盘：持仓 / 信号 / 资金 / 成交 / 风控说明。
  * @param props 页面日志写入方法
@@ -76,7 +85,20 @@ export default function Paper({ setLog }: PageLogProps) {
   const [alerts, setAlerts] = useState<AlertRow[]>([]);
   const [risk, setRisk] = useState<RiskState | null>(null);
   const [running, setRunning] = useState(true);
-  const [addSymbol, setAddSymbol] = useState("");
+  const [seedOpen, setSeedOpen] = useState(false);
+  const [seedSymbol, setSeedSymbol] = useState("");
+  const [seedStrategyId, setSeedStrategyId] = useState("manual");
+  const [seedQtyMode, setSeedQtyMode] = useState<"shares" | "pct">("shares");
+  const [seedQty, setSeedQty] = useState("100");
+  const [seedPct, setSeedPct] = useState("10");
+  const [stratModal, setStratModal] = useState<{
+    symbol: string;
+    name: string;
+    currentId: string;
+  } | null>(null);
+  const [stratPreviewId, setStratPreviewId] = useState("manual");
+  const [stratExample, setStratExample] = useState("");
+  const [stratExampleLoading, setStratExampleLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [openPanel, setOpenPanel] = useState<string | null>(null);
   const [drawer, setDrawer] = useState<DrawerState | null>(null);
@@ -135,6 +157,45 @@ export default function Paper({ setLog }: PageLogProps) {
     // 仅挂载时拉取策略列表
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!seedOpen && !stratModal) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        if (seedOpen) setSeedOpen(false);
+        if (stratModal) setStratModal(null);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [seedOpen, stratModal]);
+
+  useEffect(() => {
+    if (!stratModal) return;
+    const id = stratPreviewId;
+    if (!id || id === "manual") {
+      setStratExample(getStrategyProfile("manual").exampleHint);
+      setStratExampleLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setStratExampleLoading(true);
+    void api<{ text?: string }>(`/api/strategies/${encodeURIComponent(id)}/source`)
+      .then((res) => {
+        if (cancelled) return;
+        const text = (res.text || "").trim();
+        setStratExample(text || getStrategyProfile(id).exampleHint);
+      })
+      .catch(() => {
+        if (!cancelled) setStratExample(getStrategyProfile(id).exampleHint);
+      })
+      .finally(() => {
+        if (!cancelled) setStratExampleLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [stratModal, stratPreviewId]);
 
   /**
    * 对指定标的跑一次纸交易策略。
@@ -210,10 +271,15 @@ export default function Paper({ setLog }: PageLogProps) {
       const mv = p.qty * last;
       const pnl = (last - p.cost) * p.qty;
       const pnlPct = p.cost > 0 ? ((last - p.cost) / p.cost) * 100 : 0;
+      const sid = p.strategy_id || "manual";
+      const stratName =
+        sid === "manual"
+          ? "手动建仓"
+          : strategies.find((s) => s.id === sid)?.name || sid;
       return {
         ...p,
         name: q?.name || p.symbol,
-        strategy: "默认策略",
+        strategy: stratName,
         last,
         mv,
         pnl,
@@ -222,10 +288,18 @@ export default function Paper({ setLog }: PageLogProps) {
       };
     });
     return rows;
-  }, [summary, quoteMap]);
+  }, [summary, quoteMap, strategies]);
 
   const heldCount = positions.filter((p) => p.qty > 0).length;
   const pendingCount = positions.filter((p) => p.qty <= 0).length;
+
+  const stratPreviewProfile = useMemo(() => {
+    const name = strategies.find((s) => s.id === stratPreviewId)?.name;
+    return getStrategyProfile(stratPreviewId, name);
+  }, [stratPreviewId, strategies]);
+
+  const stratDirty =
+    !!stratModal && (stratPreviewId || "manual") !== (stratModal.currentId || "manual");
 
   const initialCash = summary?.initial_cash ?? 1_000_000;
   const cash = summary?.cash ?? 0;
@@ -238,11 +312,84 @@ export default function Paper({ setLog }: PageLogProps) {
   const signalAlerts = alerts.filter((a) => (a.category || "").includes("signal") || true).slice(0, 30);
 
   /**
-   * 添加标的：走专用 seed 接口（自选 + 纸买建仓，豁免限额/生命周期）。
+   * 打开持仓执行策略说明 / 切换弹框。
+   * @param symbol 标的
+   * @param name 标的名称
+   * @param strategyId 当前策略
    */
-  const addStock = async () => {
-    const symbol = addSymbol.trim();
-    if (!symbol) return;
+  const openStrategyModal = (symbol: string, name: string, strategyId: string) => {
+    const sid = strategyId || "manual";
+    setStratPreviewId(sid);
+    setStratModal({ symbol, name, currentId: sid });
+  };
+
+  /**
+   * 确认将预览策略应用到持仓。
+   */
+  const confirmPositionStrategy = async () => {
+    if (!stratModal) return;
+    const { symbol } = stratModal;
+    const strategyId = stratPreviewId || "manual";
+    setBusy(true);
+    try {
+      const r = await api<{ ok: boolean; strategy_id?: string }>(
+        `/api/broker/paper/positions/${encodeURIComponent(symbol)}/strategy`,
+        {
+          method: "POST",
+          body: JSON.stringify({ strategy_id: strategyId }),
+        }
+      );
+      setStratModal(null);
+      setLog(`已将 ${symbol} 执行策略改为 ${r.strategy_id || strategyId}`);
+      await refresh();
+    } catch (error) {
+      setLog(String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
+   * 打开添加股票弹框并重置表单。
+   */
+  const openSeedModal = () => {
+    setSeedSymbol("");
+    setSeedStrategyId(runStrategyId || strategies[0]?.id || "manual");
+    setSeedQtyMode("shares");
+    setSeedQty("100");
+    setSeedPct("10");
+    setSeedOpen(true);
+  };
+
+  /**
+   * 弹框确认：走 seed 接口（自选 + 纸买建仓，豁免单笔限额/生命周期）。
+   */
+  const confirmSeed = async () => {
+    const symbol = seedSymbol.trim();
+    if (!symbol) {
+      setLog("请选择股票代码");
+      return;
+    }
+    const payload: Record<string, unknown> = {
+      symbol,
+      strategy_id: seedStrategyId || "manual",
+      add_watchlist: true,
+    };
+    if (seedQtyMode === "pct") {
+      const pct = Number(seedPct);
+      if (!Number.isFinite(pct) || pct <= 0) {
+        setLog("请填写有效仓位比例（%）");
+        return;
+      }
+      payload.capital_pct = pct;
+    } else {
+      const qty = Number(seedQty);
+      if (!Number.isFinite(qty) || qty < 100) {
+        setLog("股数至少 100（1 手）");
+        return;
+      }
+      payload.qty = qty;
+    }
     setBusy(true);
     try {
       const result = await api<{
@@ -250,17 +397,18 @@ export default function Paper({ setLog }: PageLogProps) {
         symbol?: string;
         qty?: number;
         price?: number;
+        strategy_id?: string;
         message?: string;
       }>("/api/broker/paper/seed", {
         method: "POST",
-        body: JSON.stringify({ symbol, add_watchlist: true }),
+        body: JSON.stringify(payload),
       });
-      setAddSymbol("");
       if (result.status === "filled") {
+        setSeedOpen(false);
         setLog(
           `已建仓 ${result.symbol || symbol} × ${result.qty ?? "—"} @ ${
             result.price != null ? Number(result.price).toFixed(2) : "—"
-          }`
+          }（${result.strategy_id || seedStrategyId}）`
         );
       } else {
         setLog(`建仓失败: ${result.message || result.status}`);
@@ -468,26 +616,22 @@ export default function Paper({ setLog }: PageLogProps) {
           {/* 左栏 */}
           <div className="space-y-4">
             <Card className="border border-[var(--desk-line)] bg-[var(--desk-panel)]">
-              <CardHeader className="flex flex-wrap items-start justify-between gap-3 p-5 pb-3">
-                <div>
+              <CardHeader className="flex flex-row flex-nowrap items-center justify-between gap-3 p-5 pb-3">
+                <div className="min-w-0">
                   <CardTitle className="text-base text-[var(--desk-text)]">实时持仓</CardTitle>
-                  <p className="mt-1 text-xs text-[var(--desk-mist)]">
-                    {heldCount} 只持仓 · {pendingCount} 只待入场 ·「添加股票」按市价买 1
-                    手建仓（不受单笔限额/策略阶段限制）
+                  <p className="mt-1 truncate text-xs text-[var(--desk-mist)]">
+                    {heldCount} 只持仓 · {pendingCount} 只待入场 · 可更换执行策略
                   </p>
                 </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <Input
-                    aria-label="添加股票代码"
-                    className="w-36"
-                    placeholder="600519.SH"
-                    value={addSymbol}
-                    onChange={(e) => setAddSymbol(e.target.value)}
-                  />
-                  <Button variant="primary" isDisabled={busy} onPress={addStock}>
-                    + 添加股票
-                  </Button>
-                </div>
+                <Button
+                  className="shrink-0"
+                  size="sm"
+                  variant="primary"
+                  isDisabled={busy}
+                  onPress={openSeedModal}
+                >
+                  + 添加股票
+                </Button>
               </CardHeader>
               <CardContent className="p-5 pt-0">
                 <div className="overflow-x-auto">
@@ -550,7 +694,15 @@ export default function Paper({ setLog }: PageLogProps) {
                           <td className="px-2 py-2.5">
                             <button
                               type="button"
-                              className="text-sm text-[var(--desk-accent)] underline-offset-2 hover:underline"
+                              className="max-w-[9.5rem] truncate text-left text-sm text-[var(--desk-accent)] underline-offset-2 hover:underline"
+                              aria-label={`${p.symbol} 执行策略`}
+                              onClick={() =>
+                                openStrategyModal(
+                                  p.symbol,
+                                  p.name,
+                                  p.strategy_id || "manual"
+                                )
+                              }
                             >
                               {p.strategy}
                             </button>
@@ -676,11 +828,12 @@ export default function Paper({ setLog }: PageLogProps) {
                 </label>
                 <label className="block space-y-1 text-xs text-[var(--desk-mist)]">
                   标的
-                  <Input
-                    aria-label="Runner 标的"
+                  <SymbolSearchField
                     value={runSymbol}
-                    onChange={(e) => setRunSymbol(e.target.value)}
-                    placeholder="600519.SH"
+                    onChange={setRunSymbol}
+                    className={symbolInputClass}
+                    placeholder="代码 / 名称 / 拼音"
+                    aria-label="搜索 Runner 标的"
                   />
                 </label>
                 <div className="flex flex-wrap gap-2">
@@ -945,6 +1098,221 @@ export default function Paper({ setLog }: PageLogProps) {
           </div>
         </div>
       )}
+      {stratModal ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <button
+            type="button"
+            className="absolute inset-0 cursor-default bg-black/50"
+            aria-label="关闭策略说明"
+            onClick={() => setStratModal(null)}
+          />
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="执行策略说明"
+            className="relative z-10 flex max-h-[85vh] w-full max-w-lg flex-col rounded-xl border border-[var(--desk-line)] bg-[var(--desk-panel)] shadow-2xl"
+          >
+            <div className="flex shrink-0 items-start justify-between gap-3 border-b border-[var(--desk-line)] px-5 py-4">
+              <div className="min-w-0">
+                <h2 className="text-base font-medium text-[var(--desk-text)]">执行策略</h2>
+                <p className="mt-1 truncate text-xs text-[var(--desk-mist)]">
+                  {stratModal.symbol}
+                  {stratModal.name ? ` · ${stratModal.name}` : ""} · 当前{" "}
+                  {getStrategyProfile(
+                    stratModal.currentId,
+                    strategies.find((s) => s.id === stratModal.currentId)?.name
+                  ).name}
+                </p>
+              </div>
+              <Button size="sm" variant="ghost" onPress={() => setStratModal(null)}>
+                关闭
+              </Button>
+            </div>
+            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4">
+              <label className="block space-y-1 text-xs text-[var(--desk-mist)]">
+                切换策略（预览说明）
+                <select
+                  className={`${selectClass} block w-full`}
+                  value={stratPreviewId}
+                  onChange={(e) => setStratPreviewId(e.target.value)}
+                >
+                  <option value="manual">手动建仓</option>
+                  {strategies.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name} ({s.id})
+                    </option>
+                  ))}
+                  {stratPreviewId &&
+                  stratPreviewId !== "manual" &&
+                  !strategies.some((s) => s.id === stratPreviewId) ? (
+                    <option value={stratPreviewId}>{stratPreviewId}</option>
+                  ) : null}
+                </select>
+              </label>
+              <div>
+                <div className="mb-1 text-xs font-medium text-[var(--desk-text)]">
+                  {stratPreviewProfile.name}
+                </div>
+                <p className="text-sm text-[var(--desk-mist)]">{stratPreviewProfile.summary}</p>
+              </div>
+              <section className="space-y-1">
+                <h3 className="text-xs font-medium text-[var(--desk-text)]">适用场景</h3>
+                <p className="text-sm leading-relaxed text-[var(--desk-mist)]">
+                  {stratPreviewProfile.scenario}
+                </p>
+              </section>
+              <section className="space-y-1">
+                <h3 className="text-xs font-medium text-[var(--desk-text)]">规则说明</h3>
+                <p className="text-sm leading-relaxed text-[var(--desk-mist)]">
+                  {stratPreviewProfile.rules}
+                </p>
+              </section>
+              <section className="space-y-1">
+                <h3 className="text-xs font-medium text-[var(--desk-text)]">示例</h3>
+                <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-[var(--desk-line)] bg-[var(--desk-ink)] p-3 font-mono text-[11px] leading-5 text-[var(--desk-text)]">
+                  {stratExampleLoading ? "加载源码…" : stratExample}
+                </pre>
+              </section>
+            </div>
+            <div className="flex shrink-0 justify-end gap-2 border-t border-[var(--desk-line)] px-5 py-4">
+              <Button size="sm" variant="secondary" onPress={() => setStratModal(null)}>
+                取消
+              </Button>
+              <Button
+                size="sm"
+                variant="primary"
+                isDisabled={busy || !stratDirty}
+                onPress={() => void confirmPositionStrategy()}
+              >
+                {busy ? "应用中…" : stratDirty ? "应用此策略" : "已是当前策略"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {seedOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <button
+            type="button"
+            className="absolute inset-0 cursor-default bg-black/50"
+            aria-label="关闭添加股票"
+            onClick={() => setSeedOpen(false)}
+          />
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="添加股票建仓"
+            className="relative z-10 w-full max-w-md rounded-xl border border-[var(--desk-line)] bg-[var(--desk-panel)] p-5 shadow-2xl"
+          >
+            <div className="mb-4 flex items-start justify-between gap-3">
+              <div>
+                <h2 className="text-base font-medium text-[var(--desk-text)]">添加股票</h2>
+                <p className="mt-1 text-xs text-[var(--desk-mist)]">
+                  按市价买入建仓；不受单笔限额与策略阶段限制，仍受现金与最多持仓数约束
+                </p>
+              </div>
+              <Button size="sm" variant="ghost" onPress={() => setSeedOpen(false)}>
+                关闭
+              </Button>
+            </div>
+            <div className="space-y-3">
+              <label className="block space-y-1 text-xs text-[var(--desk-mist)]">
+                策略
+                <select
+                  className={`${selectClass} block w-full`}
+                  value={seedStrategyId}
+                  onChange={(e) => setSeedStrategyId(e.target.value)}
+                >
+                  <option value="manual">手动建仓</option>
+                  {strategies.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name} ({s.id})
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="block space-y-1 text-xs text-[var(--desk-mist)]">
+                股票代码
+                <SymbolSearchField
+                  value={seedSymbol}
+                  onChange={setSeedSymbol}
+                  className={symbolInputClass}
+                  placeholder="代码 / 名称 / 拼音"
+                  aria-label="搜索建仓标的"
+                />
+              </label>
+              <div className="space-y-1 text-xs text-[var(--desk-mist)]">
+                <div>仓位 / 股数</div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className={[
+                      "rounded-lg border px-3 py-1.5 text-xs",
+                      seedQtyMode === "shares"
+                        ? "border-[var(--desk-accent)] bg-[var(--desk-ink)] text-[var(--desk-text)]"
+                        : "border-[var(--desk-line)] text-[var(--desk-mist)]",
+                    ].join(" ")}
+                    onClick={() => setSeedQtyMode("shares")}
+                  >
+                    按股数
+                  </button>
+                  <button
+                    type="button"
+                    className={[
+                      "rounded-lg border px-3 py-1.5 text-xs",
+                      seedQtyMode === "pct"
+                        ? "border-[var(--desk-accent)] bg-[var(--desk-ink)] text-[var(--desk-text)]"
+                        : "border-[var(--desk-line)] text-[var(--desk-mist)]",
+                    ].join(" ")}
+                    onClick={() => setSeedQtyMode("pct")}
+                  >
+                    按仓位%
+                  </button>
+                </div>
+                {seedQtyMode === "shares" ? (
+                  <input
+                    type="number"
+                    min={100}
+                    step={100}
+                    value={seedQty}
+                    onChange={(e) => setSeedQty(e.target.value)}
+                    className={`${symbolInputClass} mt-1`}
+                    aria-label="买入股数"
+                    placeholder="100"
+                  />
+                ) : (
+                  <input
+                    type="number"
+                    min={1}
+                    max={100}
+                    step={1}
+                    value={seedPct}
+                    onChange={(e) => setSeedPct(e.target.value)}
+                    className={`${symbolInputClass} mt-1`}
+                    aria-label="仓位百分比"
+                    placeholder="占可用现金 %"
+                  />
+                )}
+                <p className="text-[10px] opacity-80">
+                  {seedQtyMode === "shares"
+                    ? "须为 100 的整数倍；现金不足时自动下调手数"
+                    : "按可用现金比例估算股数并向下取整到手数"}
+                </p>
+              </div>
+            </div>
+            <div className="mt-5 flex justify-end gap-2">
+              <Button size="sm" variant="secondary" onPress={() => setSeedOpen(false)}>
+                取消
+              </Button>
+              <Button size="sm" variant="primary" isDisabled={busy} onPress={() => void confirmSeed()}>
+                {busy ? "提交中…" : "确认建仓"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       <StockDetailDrawer
         open={drawer !== null}
         symbol={drawer?.symbol ?? ""}

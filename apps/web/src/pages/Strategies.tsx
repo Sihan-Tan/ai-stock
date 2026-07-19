@@ -87,33 +87,8 @@ export default function Strategies({ setLog }: PageLogProps) {
     try {
       await api("/api/strategies/sync-python", { method: "POST" });
       await api("/api/strategies/load-yaml-file", { method: "POST" }).catch(() => null);
-      const restored = await api<{ restored: number }>("/api/strategies/lifecycle/restore", {
-        method: "POST",
-      }).catch(() => ({ restored: 0 }));
       await load();
-      setLog(
-        restored.restored
-          ? `已同步策略列表，并恢复 ${restored.restored} 个隐藏策略`
-          : "已同步策略列表",
-      );
-    } catch (error) {
-      setLog(String(error));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  /**
-   * 仅恢复被误隐藏的策略。
-   */
-  const restoreHidden = async () => {
-    setBusy(true);
-    try {
-      const result = await api<{ restored: number }>("/api/strategies/lifecycle/restore", {
-        method: "POST",
-      });
-      setLog(`已恢复 ${result.restored} 个策略到列表`);
-      await load();
+      setLog("已同步策略列表");
     } catch (error) {
       setLog(String(error));
     } finally {
@@ -308,9 +283,6 @@ export default function Strategies({ setLog }: PageLogProps) {
             </Button>
             <Button size="sm" variant="secondary" isDisabled={busy} onPress={() => void syncJobs()}>
               同步策略
-            </Button>
-            <Button size="sm" variant="secondary" isDisabled={busy} onPress={() => void restoreHidden()}>
-              恢复隐藏
             </Button>
             <Button size="sm" variant="primary" isDisabled={busy} onPress={() => void evaluate()}>
               {busy ? "评估中…" : "评估并迁移"}

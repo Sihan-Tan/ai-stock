@@ -2,7 +2,7 @@
 
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -50,8 +50,16 @@ class PaperSeedIn(BaseModel):
     symbol: str
     qty: float | None = None
     price: float | None = None
+    strategy_id: str | None = None
+    capital_pct: float | None = None
     add_watchlist: bool = True
     name: str | None = None
+
+
+class PaperPositionStrategyIn(BaseModel):
+    """更换模拟持仓执行策略。"""
+
+    strategy_id: str
 
 
 class RiskIn(BaseModel):
@@ -114,7 +122,24 @@ def paper_seed(body: PaperSeedIn, db: Session = Depends(get_db)):
         except Exception:  # noqa: BLE001
             price = None
 
-    return get_gate(db).seed_paper_position(sym, qty=body.qty, price=price)
+    return get_gate(db).seed_paper_position(
+        sym,
+        qty=body.qty,
+        price=price,
+        strategy_id=body.strategy_id,
+        capital_pct=body.capital_pct,
+    )
+
+
+@router.post("/paper/positions/{symbol}/strategy")
+def paper_position_strategy(
+    symbol: str, body: PaperPositionStrategyIn, db: Session = Depends(get_db)
+):
+    """更换模拟持仓的执行策略。"""
+    result = get_gate(db).set_paper_position_strategy(symbol, body.strategy_id)
+    if not result.get("ok"):
+        raise HTTPException(404, result.get("message") or "not found")
+    return result
 
 
 @router.post("/paper/run-once")

@@ -85,6 +85,27 @@ def ping_db() -> bool:
         return False
 
 
+def _ensure_paper_position_strategy_column() -> None:
+    """已有库补列：paper_positions.strategy_id（create_all 不会 ALTER）。"""
+    engine = get_engine()
+    dialect = engine.dialect.name
+    with engine.begin() as conn:
+        if dialect == "sqlite":
+            rows = conn.execute(text("PRAGMA table_info(paper_positions)")).fetchall()
+            names = {r[1] for r in rows}
+            if "strategy_id" not in names:
+                conn.execute(
+                    text("ALTER TABLE paper_positions ADD COLUMN strategy_id VARCHAR(64)")
+                )
+            return
+        # Postgres 等：存在则跳过
+        conn.execute(
+            text(
+                "ALTER TABLE paper_positions ADD COLUMN IF NOT EXISTS strategy_id VARCHAR(64)"
+            )
+        )
+
+
 def try_ensure_schema() -> bool:
     """
     尝试 create_all；失败只记日志，不抛出。
@@ -93,6 +114,10 @@ def try_ensure_schema() -> bool:
     """
     try:
         Base.metadata.create_all(bind=get_engine())
+        try:
+            _ensure_paper_position_strategy_column()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("补齐 paper_positions.strategy_id 失败：%s", exc)
         return True
     except Exception as exc:  # noqa: BLE001
         logger.warning("数据库不可达或建表失败，服务仍继续启动：%s", exc)
