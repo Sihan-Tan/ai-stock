@@ -29,3 +29,10 @@ async def chat(body: ChatIn, db: Session = Depends(get_db)):
             yield chunk
 
     return StreamingResponse(gen(), media_type="text/plain; charset=utf-8")
+
+
+@router.get("/financials/{symbol}")
+def financials(symbol: str, years: int = 5, db: Session = Depends(get_db)):
+    from desk_market.financials import FinancialService
+
+    return FinancialService(db).get_financials(symbol, years=years)

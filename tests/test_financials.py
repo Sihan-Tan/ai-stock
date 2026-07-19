@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
@@ -21,11 +22,47 @@ from desk_db.models import FinancialSnapshot
 def _db():
     get_settings.cache_clear()
     reset_engine()
+    try:
+        from app.routes import broker as broker_routes
+
+        broker_routes._GATE = None
+    except Exception:  # noqa: BLE001
+        pass
     Path("data").mkdir(exist_ok=True)
     Base.metadata.create_all(bind=get_engine())
     yield
     reset_engine()
     get_settings.cache_clear()
+
+
+@pytest.fixture()
+def client(_db):
+    from app.main import app
+
+    with TestClient(app) as c:
+        yield c
+
+
+def test_ai_financials_endpoint(client, monkeypatch):
+    """GET /api/ai/financials/{symbol} 返回 FinancialService 结果。"""
+    from desk_market.financials import FinancialService
+
+    def fake_get_financials(self, symbol, years=5):
+        assert symbol in ("600519", "600519.SH")
+        assert years == 3
+        return {
+            "symbol": "600519.SH",
+            "source": "test",
+            "metrics": [{"period": "20241231", "roe": 30.0}],
+        }
+
+    monkeypatch.setattr(FinancialService, "get_financials", fake_get_financials)
+    r = client.get("/api/ai/financials/600519", params={"years": 3})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["symbol"] == "600519.SH"
+    assert body["source"] == "test"
+    assert body["metrics"][0]["roe"] == 30.0
 
 
 def test_financial_snapshot_roundtrip(_db):
