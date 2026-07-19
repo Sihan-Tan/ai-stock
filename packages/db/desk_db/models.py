@@ -474,3 +474,20 @@ class MorningStrongPick(Base):
     name: Mapped[str] = mapped_column(String(64), default="")
     score: Mapped[float] = mapped_column(Float, default=0.0)
     meta_json: Mapped[str] = mapped_column(Text, default="{}")
+
+
+class FinancialSnapshot(Base):
+    """财务快照缓存（投研）。"""
+
+    __tablename__ = "financial_snapshots"
+    __table_args__ = (
+        UniqueConstraint("symbol", "table_name", "period", name="uq_financial_snap"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    symbol: Mapped[str] = mapped_column(String(16), index=True)
+    table_name: Mapped[str] = mapped_column(String(32))  # Balance|Income|CashFlow|Pershareindex|Capital|Abstract
+    period: Mapped[str] = mapped_column(String(16))  # YYYYMMDD 报告期
+    source: Mapped[str] = mapped_column(String(16))  # qmt|akshare
+    payload_json: Mapped[str] = mapped_column(Text, default="{}")
+    fetched_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
