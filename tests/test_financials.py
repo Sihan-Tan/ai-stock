@@ -111,3 +111,147 @@ def test_fetch_akshare_financials_monkeypatch(monkeypatch):
     assert out["source"] == "akshare"
     assert out["symbol"] == "600519.SH"
     assert out["tables"]["Income"][0]["net_profit"] == 5e10
+
+
+def test_financial_service_uses_cache(_db):
+    import json
+
+    from desk_market.financials import FinancialService
+    from desk_market.qmt_financials import MockQmtFinancials
+
+    db = Session(get_engine())
+    db.add(
+        FinancialSnapshot(
+            symbol="600519.SH",
+            table_name="Abstract",
+            period="20241231",
+            source="qmt",
+            payload_json=json.dumps({"roe": 31.0, "period": "20241231"}),
+            fetched_at=datetime.utcnow(),
+        )
+    )
+    db.flush()
+    called = {"n": 0}
+
+    class Boom(MockQmtFinancials):
+        def get_financials(self, *a, **k):
+            called["n"] += 1
+            raise AssertionError("should not call")
+
+    svc = FinancialService(
+        db,
+        qmt=Boom(),
+        akshare_fetch=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no")),
+    )
+    out = svc.get_financials("600519", years=5)
+    assert out["source"] == "qmt"
+    assert called["n"] == 0
+    assert any(r.get("roe") == 31.0 for r in out["metrics"])
+    db.close()
+
+
+def test_financial_service_fallback_akshare(_db):
+    from desk_market.financials import FinancialService
+    from desk_market.qmt_financials import MockQmtFinancials
+
+    def fake_ak(symbol, years=5):
+        return {
+            "source": "akshare",
+            "symbol": "600519.SH",
+            "tables": {"Abstract": [{"period": "20241231", "roe": 28.0}]},
+        }
+
+    db = Session(get_engine())
+    svc = FinancialService(
+        db,
+        qmt=MockQmtFinancials(fail=True),
+        akshare_fetch=fake_ak,
+        ttl_days=7,
+    )
+    out = svc.get_financials("600519.SH")
+    assert out["source"] == "akshare"
+    assert out["metrics"][0]["roe"] == 28.0
+    db.close()
+
+
+def test_financial_service_both_fail(_db):
+    from desk_market.financials import FinancialService
+    from desk_market.qmt_financials import MockQmtFinancials
+
+    db = Session(get_engine())
+    svc = FinancialService(
+        db,
+        qmt=MockQmtFinancials(fail=True),
+        akshare_fetch=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("x")),
+    )
+    out = svc.get_financials("600519.SH")
+    assert "error" in out
+    db.close()
+
+
+def test_financial_service_peer_compare(_db):
+    from desk_market.financials import FinancialService
+    from desk_market.qmt_financials import MockQmtFinancials
+
+    def fake_ak(symbol, years=5):
+        from desk_common.symbols import normalize_symbol
+
+        sym = normalize_symbol(symbol)
+        if sym == "999999.SH":
+            raise RuntimeError("missing")
+        roe = 30.0 if sym == "600519.SH" else 18.0
+        return {
+            "source": "akshare",
+            "symbol": sym,
+            "tables": {"Abstract": [{"period": "20241231", "roe": roe, "eps": 10.0}]},
+        }
+
+    db = Session(get_engine())
+    svc = FinancialService(
+        db,
+        qmt=MockQmtFinancials(fail=True),
+        akshare_fetch=fake_ak,
+    )
+    out = svc.peer_compare(["600519.SH", "000858.SZ", "999999.SH"])
+    assert "rows" in out or "metrics" in out or "table" in out
+    assert "999999.SH" in out.get("missing", [])
+    latest = out.get("rows") or out.get("table") or out.get("metrics") or []
+    symbols = {r.get("symbol") for r in latest}
+    assert "600519.SH" in symbols
+    assert "000858.SZ" in symbols
+    db.close()
+
+
+def test_financial_service_get_valuation(_db):
+    from desk_market import MarketService
+    from desk_market.financials import FinancialService
+    from desk_market.qmt_financials import MockQmtFinancials
+
+    db = Session(get_engine())
+    market = MarketService(db)
+    market.upsert_quote("600519.SH", "贵州茅台", 1500.0, 0.0, 0.0)
+
+    def fake_ak(symbol, years=5):
+        return {
+            "source": "akshare",
+            "symbol": "600519.SH",
+            "tables": {
+                "Abstract": [
+                    {"period": "20241231", "roe": 30.0, "eps": 50.0, "bps": 100.0},
+                ]
+            },
+        }
+
+    svc = FinancialService(
+        db,
+        qmt=MockQmtFinancials(fail=True),
+        akshare_fetch=fake_ak,
+        market=market,
+    )
+    out = svc.get_valuation("600519.SH")
+    assert out["price"] == 1500.0
+    assert out["pe"] == 30.0
+    assert out["pb"] == 15.0
+    assert out.get("pe_percentile") is None
+    assert "note" in out
+    db.close()
