@@ -22,7 +22,12 @@ EDITABLE_ENV: dict[str, str] = {
     "feishu_sign_secret": "FEISHU_SIGN_SECRET",
     "qmt_userdata_path": "QMT_USERDATA_PATH",
     "qmt_account_id": "QMT_ACCOUNT_ID",
+    "qmt_force_mock": "QMT_FORCE_MOCK",
     "paper_initial_cash": "PAPER_INITIAL_CASH",
+    "paper_default_strategy_id": "PAPER_DEFAULT_STRATEGY_ID",
+    "paper_runner_enabled": "PAPER_RUNNER_ENABLED",
+    "paper_runner_strategy_id": "PAPER_RUNNER_STRATEGY_ID",
+    "paper_runner_interval_minutes": "PAPER_RUNNER_INTERVAL_MINUTES",
     "backtest_buy_commission": "BACKTEST_BUY_COMMISSION",
     "backtest_sell_commission": "BACKTEST_SELL_COMMISSION",
     "backtest_stamp_duty": "BACKTEST_STAMP_DUTY",
@@ -79,7 +84,12 @@ def public_settings() -> dict[str, Any]:
         "feishu_sign_secret_set": bool(s.feishu_sign_secret),
         "qmt_userdata_path": s.qmt_userdata_path,
         "qmt_account_id": s.qmt_account_id,
+        "qmt_force_mock": s.qmt_force_mock,
         "paper_initial_cash": s.paper_initial_cash,
+        "paper_default_strategy_id": s.paper_default_strategy_id,
+        "paper_runner_enabled": s.paper_runner_enabled,
+        "paper_runner_strategy_id": s.paper_runner_strategy_id,
+        "paper_runner_interval_minutes": s.paper_runner_interval_minutes,
         "backtest_buy_commission": s.backtest_buy_commission,
         "backtest_sell_commission": s.backtest_sell_commission,
         "backtest_stamp_duty": s.backtest_stamp_duty,
@@ -198,7 +208,14 @@ def apply_settings_patch(patch: dict[str, Any]) -> dict[str, Any]:
             "risk_max_daily_notional",
         ):
             cleaned[field] = float(raw)
-        elif field in ("auto_execute_live", "i_understand_auto_live"):
+        elif field == "paper_runner_interval_minutes":
+            cleaned[field] = max(5, int(float(raw)))
+        elif field in (
+            "auto_execute_live",
+            "i_understand_auto_live",
+            "qmt_force_mock",
+            "paper_runner_enabled",
+        ):
             if isinstance(raw, bool):
                 cleaned[field] = raw
             else:

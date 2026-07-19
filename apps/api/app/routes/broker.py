@@ -20,6 +20,15 @@ class OrderIn(BaseModel):
     qty: float
     price: float | None = None
     mode: str | None = None
+    strategy_id: str | None = None
+
+
+class RunnerSettingsIn(BaseModel):
+    """Paper Runner 调度开关。"""
+
+    enabled: bool | None = None
+    strategy_id: str | None = None
+    interval_minutes: int | None = None
 
 
 class PaperRunIn(BaseModel):
@@ -155,6 +164,40 @@ def trading_mode_state():
     }
 
 
+@router.get("/paper/runner")
+def paper_runner_status():
+    """Paper Runner 定时状态。"""
+    from desk_broker.runner_scheduler import get_runner_status
+
+    return get_runner_status()
+
+
+@router.post("/paper/runner")
+def paper_runner_update(body: RunnerSettingsIn):
+    """
+    更新 Runner 调度配置（写 .env）。
+
+    注意：间隔/开关变更后需重启 API 进程才会重注册 APScheduler job。
+    """
+    from desk_common.settings_store import apply_settings_patch
+
+    patch: dict = {}
+    if body.enabled is not None:
+        patch["paper_runner_enabled"] = body.enabled
+    if body.strategy_id is not None:
+        patch["paper_runner_strategy_id"] = body.strategy_id
+    if body.interval_minutes is not None:
+        patch["paper_runner_interval_minutes"] = body.interval_minutes
+    if patch:
+        apply_settings_patch(patch)
+    from desk_broker.runner_scheduler import get_runner_status
+
+    return {
+        **get_runner_status(),
+        "note": "启用/改间隔后请重启 API 以使调度器重载",
+    }
+
+
 @router.post("/order")
 def place_order(body: OrderIn, db: Session = Depends(get_db)):
     settings = get_settings()
@@ -165,6 +208,7 @@ def place_order(body: OrderIn, db: Session = Depends(get_db)):
         qty=body.qty,
         price=body.price,
         client_order_id=uuid4().hex,
+        strategy_id=body.strategy_id or settings.paper_default_strategy_id,
         mode=mode,  # type: ignore[arg-type]
     )
     return get_gate(db).place_order(intent).model_dump()

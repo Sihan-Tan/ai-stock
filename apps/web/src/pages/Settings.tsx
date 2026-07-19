@@ -7,6 +7,11 @@ type AppSettings = {
   trade_mode: "paper" | "live" | string;
   auto_execute_live?: boolean;
   i_understand_auto_live?: boolean;
+  qmt_force_mock?: boolean;
+  paper_default_strategy_id?: string;
+  paper_runner_enabled?: boolean;
+  paper_runner_strategy_id?: string;
+  paper_runner_interval_minutes?: number;
   ml_engine: "lightgbm" | "xgboost" | string;
   llm_provider: string;
   llm_api_key: string;
@@ -33,6 +38,11 @@ const EMPTY: AppSettings = {
   trade_mode: "paper",
   auto_execute_live: false,
   i_understand_auto_live: false,
+  qmt_force_mock: true,
+  paper_default_strategy_id: "ma_cross",
+  paper_runner_enabled: false,
+  paper_runner_strategy_id: "ma_cross",
+  paper_runner_interval_minutes: 30,
   ml_engine: "lightgbm",
   llm_provider: "deepseek",
   llm_api_key: "",
@@ -101,6 +111,11 @@ export default function Settings({ setLog }: PageLogProps) {
         trade_mode: form.trade_mode,
         auto_execute_live: Boolean(form.auto_execute_live),
         i_understand_auto_live: Boolean(form.i_understand_auto_live),
+        qmt_force_mock: Boolean(form.qmt_force_mock),
+        paper_default_strategy_id: form.paper_default_strategy_id || "ma_cross",
+        paper_runner_enabled: Boolean(form.paper_runner_enabled),
+        paper_runner_strategy_id: form.paper_runner_strategy_id || "ma_cross",
+        paper_runner_interval_minutes: Number(form.paper_runner_interval_minutes) || 30,
         ml_engine: form.ml_engine,
         llm_provider: form.llm_provider,
         llm_base_url: form.llm_base_url,
@@ -236,6 +251,60 @@ export default function Settings({ setLog }: PageLogProps) {
                   : "blocked（缺确认）"}
             </span>
           </p>
+          <label className="flex items-start gap-2 text-sm text-[var(--desk-text)]">
+            <input
+              type="checkbox"
+              className="mt-1"
+              checked={Boolean(form.qmt_force_mock)}
+              onChange={(e) => patch("qmt_force_mock", e.target.checked)}
+            />
+            <span>
+              强制 Mock 不发真单（QMT_FORCE_MOCK）
+              <span className="mt-0.5 block text-xs text-[var(--desk-mist)]">
+                取消勾选且账号/路径齐全时，自动或审批通过后走 XtQuantTrader 真单
+              </span>
+            </span>
+          </label>
+          <Field label="纸交易默认策略（手动买入闸门）">
+            <input
+              className={inputClass}
+              value={form.paper_default_strategy_id || "ma_cross"}
+              onChange={(e) => patch("paper_default_strategy_id", e.target.value)}
+            />
+          </Field>
+        </div>
+        <div className="mt-4 space-y-3 rounded-lg border border-[var(--desk-line)] bg-[var(--desk-ink)] p-4">
+          <div className="text-sm font-medium text-[var(--desk-text)]">Paper Runner 定时</div>
+          <p className="text-xs text-[var(--desk-mist)]">
+            交易时段按间隔扫描自选，并在 15:35 补跑。改开关/间隔后需重启 API。
+          </p>
+          <label className="flex items-center gap-2 text-sm text-[var(--desk-text)]">
+            <input
+              type="checkbox"
+              checked={Boolean(form.paper_runner_enabled)}
+              onChange={(e) => patch("paper_runner_enabled", e.target.checked)}
+            />
+            启用定时 Runner
+          </label>
+          <div className="grid gap-3 md:grid-cols-2">
+            <Field label="Runner 策略 ID">
+              <input
+                className={inputClass}
+                value={form.paper_runner_strategy_id || "ma_cross"}
+                onChange={(e) => patch("paper_runner_strategy_id", e.target.value)}
+              />
+            </Field>
+            <Field label="间隔（分钟）">
+              <input
+                className={inputClass}
+                inputMode="numeric"
+                value={String(form.paper_runner_interval_minutes ?? 30)}
+                onChange={(e) =>
+                  patch("paper_runner_interval_minutes", Number(e.target.value) || 30)
+                }
+              />
+            </Field>
+          </div>
         </div>
       </Section>
 

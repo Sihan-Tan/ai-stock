@@ -25,16 +25,30 @@ async def lifespan(_: FastAPI):
     # 不 await：API 立刻 ready，建表失败只打日志
     schema_task = asyncio.create_task(asyncio.to_thread(try_ensure_schema))
 
-    scheduler = None
+    schedulers = []
     settings = get_settings()
     if settings.market_scheduler_enabled:
         from desk_market.scheduler import build_market_scheduler
 
-        scheduler, _ = build_market_scheduler(enabled=True)
-        scheduler.start()
+        market_sched, _ = build_market_scheduler(enabled=True)
+        market_sched.start()
+        schedulers.append(market_sched)
+    # Paper Runner 定时（受 PAPER_RUNNER_ENABLED 控制）
+    try:
+        from desk_broker.runner_scheduler import build_paper_runner_scheduler
+
+        runner_sched, _ = build_paper_runner_scheduler()
+        if runner_sched.get_jobs():
+            runner_sched.start()
+            schedulers.append(runner_sched)
+    except Exception:  # noqa: BLE001
+        logger.exception("paper runner scheduler failed to start")
     yield
-    if scheduler is not None:
-        scheduler.shutdown(wait=False)
+    for sched in schedulers:
+        try:
+            sched.shutdown(wait=False)
+        except Exception:  # noqa: BLE001
+            pass
     if not schema_task.done():
         schema_task.cancel()
         try:

@@ -85,16 +85,25 @@ export default function Paper({ setLog }: PageLogProps) {
   const [runSymbol, setRunSymbol] = useState("600519.SH");
   const [approvals, setApprovals] = useState<ApprovalItem[]>([]);
   const [tradingMode, setTradingMode] = useState<TradingModeState | null>(null);
+  const [runnerStatus, setRunnerStatus] = useState<{
+    enabled?: boolean;
+    strategy_id?: string;
+    interval_minutes?: number;
+    in_session?: boolean;
+    last_run?: { at?: string | null; status?: string; filled?: number; count?: number; message?: string };
+    note?: string;
+  } | null>(null);
 
   const refresh = useCallback(async () => {
     try {
-      const [paper, wl, al, rk, ap, tm] = await Promise.all([
+      const [paper, wl, al, rk, ap, tm, rs] = await Promise.all([
         api<PaperSummary>("/api/broker/paper"),
         api<WatchRow[]>("/api/market/watchlist").catch(() => [] as WatchRow[]),
         api<AlertRow[]>("/api/alerts").catch(() => [] as AlertRow[]),
         api<RiskState>("/api/broker/risk").catch(() => null),
         api<{ items: ApprovalItem[] }>("/api/broker/approvals").catch(() => ({ items: [] })),
         api<TradingModeState>("/api/broker/trading-mode").catch(() => null),
+        api<NonNullable<typeof runnerStatus>>("/api/broker/paper/runner").catch(() => null),
       ]);
       setSummary(paper);
       setWatch(wl);
@@ -102,6 +111,7 @@ export default function Paper({ setLog }: PageLogProps) {
       setRisk(rk);
       setApprovals(ap.items || []);
       setTradingMode(tm);
+      setRunnerStatus(rs);
     } catch (error) {
       setLog(String(error));
     }
@@ -243,7 +253,7 @@ export default function Paper({ setLog }: PageLogProps) {
         `/api/market/intraday/quote?symbols=${encodeURIComponent(symbol)}`
       ).catch(() => ({} as Record<string, { last?: number }>));
       const price = Number(snap[symbol]?.last || 10);
-      await api("/api/broker/order", {
+      const order = await api<{ status: string; message?: string }>("/api/broker/order", {
         method: "POST",
         body: JSON.stringify({
           symbol,
@@ -251,10 +261,15 @@ export default function Paper({ setLog }: PageLogProps) {
           qty: 100,
           price,
           mode: "paper",
+          strategy_id: runStrategyId,
         }),
       });
       setAddSymbol("");
-      setLog(`已添加并建仓 ${symbol}`);
+      if (order.status === "filled") {
+        setLog(`已添加并建仓 ${symbol}`);
+      } else {
+        setLog(`已加入自选 ${symbol}；建仓未成交: ${order.message || order.status}`);
+      }
       await refresh();
     } catch (error) {
       setLog(String(error));
@@ -685,6 +700,55 @@ export default function Paper({ setLog }: PageLogProps) {
                   >
                     跑自选
                   </Button>
+                </div>
+                <div className="border-t border-[var(--desk-line)] pt-3 text-xs text-[var(--desk-mist)]">
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                    <span>
+                      定时：{runnerStatus?.enabled ? "开" : "关"} · 间隔{" "}
+                      {runnerStatus?.interval_minutes ?? "—"}m ·{" "}
+                      {runnerStatus?.in_session ? "盘中" : "非盘中"}
+                    </span>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      isDisabled={busy}
+                      onPress={() =>
+                        void (async () => {
+                          setBusy(true);
+                          try {
+                            const next = !(runnerStatus?.enabled);
+                            const r = await api<NonNullable<typeof runnerStatus>>(
+                              "/api/broker/paper/runner",
+                              {
+                                method: "POST",
+                                body: JSON.stringify({
+                                  enabled: next,
+                                  strategy_id: runStrategyId,
+                                }),
+                              }
+                            );
+                            setRunnerStatus(r);
+                            setLog(
+                              `Runner 定时已${next ? "开启" : "关闭"}` +
+                                (r.note ? `（${r.note}）` : "")
+                            );
+                          } catch (e) {
+                            setLog(String(e));
+                          } finally {
+                            setBusy(false);
+                          }
+                        })()
+                      }
+                    >
+                      {runnerStatus?.enabled ? "关闭定时" : "开启定时"}
+                    </Button>
+                  </div>
+                  <p>
+                    上次：{runnerStatus?.last_run?.at?.slice(0, 19) || "—"} ·{" "}
+                    {runnerStatus?.last_run?.status || "idle"} · 扫描{" "}
+                    {runnerStatus?.last_run?.count ?? 0} · 成交{" "}
+                    {runnerStatus?.last_run?.filled ?? 0}
+                  </p>
                 </div>
               </CardContent>
             </Card>

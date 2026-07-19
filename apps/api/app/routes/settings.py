@@ -27,7 +27,12 @@ class SettingsPatch(BaseModel):
     feishu_sign_secret: str | None = None
     qmt_userdata_path: str | None = None
     qmt_account_id: str | None = None
+    qmt_force_mock: bool | None = None
     paper_initial_cash: float | None = None
+    paper_default_strategy_id: str | None = None
+    paper_runner_enabled: bool | None = None
+    paper_runner_strategy_id: str | None = None
+    paper_runner_interval_minutes: int | None = None
     backtest_buy_commission: float | None = None
     backtest_sell_commission: float | None = None
     backtest_stamp_duty: float | None = None

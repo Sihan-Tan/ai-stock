@@ -382,31 +382,50 @@ class MockQmtBroker:
 
 class QmtBroker(MockQmtBroker):
     """
-    miniQMT 适配：探测 xtquant；不可用时自动降级 Mock。
-
-    真实下单仅在安装 xtquant 且 ARM 通过后走通；本类保证演示路径可测。
+    miniQMT 适配：探测 xtquant；``QMT_FORCE_MOCK=0`` 且账号齐全时发真单。
     """
 
     def __init__(self, db: Session):
         super().__init__(db)
         self._xt = None
         try:
-            import xtquant.xttrader  # type: ignore  # noqa: F401
+            from desk_broker.qmt_trader import qmt_available
 
-            self._xt = True
-            self.mode = "qmt"
-            self.connected = True
+            if qmt_available():
+                self._xt = True
+                self.mode = "qmt"
+                self.connected = True
+            else:
+                self._xt = None
+                self.mode = "mock"
+                self.connected = True
         except Exception:  # noqa: BLE001
             self._xt = None
             self.mode = "mock"
             self.connected = True
 
+    def ping(self) -> dict:
+        """连通探测（含 force_mock / 账号配置）。"""
+        settings = get_settings()
+        base = super().ping()
+        base.update(
+            {
+                "xtquant": bool(self._xt),
+                "force_mock": bool(settings.qmt_force_mock),
+                "account_configured": bool(settings.qmt_account_id),
+                "real_ready": bool(
+                    self._xt
+                    and not settings.qmt_force_mock
+                    and settings.qmt_account_id
+                    and settings.qmt_userdata_path
+                ),
+            }
+        )
+        return base
+
     def place_order(self, intent: OrderIntent) -> OrderResult:
         """
-        自动实盘成交。
-
-        已装 xtquant 且 ``AUTO_EXECUTE_LIVE``+确认变量开启时仍默认 Mock 落库，
-        避免无柜台环境误发真单；message 标明 mode，后续可在此接 XtQuantTrader。
+        自动实盘成交：需双开关；真单另需 ``QMT_FORCE_MOCK=0`` + 账号。
         """
         from desk_broker.trading_mode import auto_live_allowed
 
@@ -416,9 +435,99 @@ class QmtBroker(MockQmtBroker):
                 status="rejected",
                 message="auto live blocked: set AUTO_EXECUTE_LIVE=1 and I_UNDERSTAND_AUTO_LIVE=1",
             )
+        return self.submit(intent)
+
+    def submit(self, intent: OrderIntent) -> OrderResult:
+        """
+        提交实盘单（审批通过后可直接调用，不再校验自动开关）。
+
+        真单条件：xtquant 可用、未 force_mock、路径与账号已配置；否则 Mock 落库。
+        """
+        settings = get_settings()
+        use_real = bool(
+            self._xt
+            and not settings.qmt_force_mock
+            and settings.qmt_account_id
+            and settings.qmt_userdata_path
+        )
+        if use_real:
+            try:
+                from desk_broker.qmt_trader import connect_qmt, place_stock_order
+
+                connect_qmt(
+                    userdata_path=settings.qmt_userdata_path,
+                    account_id=settings.qmt_account_id,
+                )
+                placed = place_stock_order(
+                    symbol=intent.symbol,
+                    side=intent.side.value,
+                    qty=float(intent.qty),
+                    price=float(intent.price) if intent.price else None,
+                    strategy_name=intent.strategy_id or "desk",
+                    remark=intent.client_order_id[:24],
+                )
+                if not placed.get("ok"):
+                    self.db.add(
+                        LiveOrder(
+                            client_order_id=intent.client_order_id,
+                            symbol=intent.symbol,
+                            side=intent.side.value,
+                            qty=intent.qty,
+                            price=intent.price,
+                            status="rejected",
+                            message=str(placed.get("message") or "qmt reject"),
+                        )
+                    )
+                    self.db.flush()
+                    return OrderResult(
+                        client_order_id=intent.client_order_id,
+                        status="rejected",
+                        message=str(placed.get("message") or "qmt reject"),
+                    )
+                oid = str(placed.get("order_id"))
+                self.db.add(
+                    LiveOrder(
+                        client_order_id=intent.client_order_id,
+                        broker_order_id=oid,
+                        symbol=intent.symbol,
+                        side=intent.side.value,
+                        qty=intent.qty,
+                        price=intent.price,
+                        status="accepted",
+                        message="qmt order submitted (await exchange fill)",
+                    )
+                )
+                self.db.flush()
+                return OrderResult(
+                    client_order_id=intent.client_order_id,
+                    status="accepted",
+                    filled_qty=0.0,
+                    avg_price=intent.price,
+                    broker_order_id=oid,
+                    message="qmt order submitted",
+                )
+            except Exception as exc:  # noqa: BLE001
+                self.db.add(
+                    LiveOrder(
+                        client_order_id=intent.client_order_id,
+                        symbol=intent.symbol,
+                        side=intent.side.value,
+                        qty=intent.qty,
+                        price=intent.price,
+                        status="rejected",
+                        message=f"qmt error: {exc}",
+                    )
+                )
+                self.db.flush()
+                return OrderResult(
+                    client_order_id=intent.client_order_id,
+                    status="rejected",
+                    message=f"qmt error: {exc}",
+                )
+
         result = super().place_order(intent)
-        if self._xt:
-            result.message = (result.message or "") + "; xtquant detected (mock fill; wire trader for real)"
+        tag = "force_mock" if settings.qmt_force_mock else "no xtquant/account"
+        result.message = f"{result.message or 'mock'}; ({tag})"
         return result
 
 
@@ -480,6 +589,13 @@ class BrokerGateway:
             )
 
         if intent.mode == "paper":
+            paper_gate = self._check_paper_lifecycle_buy(intent)
+            if paper_gate:
+                return OrderResult(
+                    client_order_id=intent.client_order_id,
+                    status="rejected",
+                    message=paper_gate,
+                )
             return self.paper.place_order(intent)
 
         gate_reason = self.risk.check_live_gates(intent)
@@ -544,9 +660,35 @@ class BrokerGateway:
             )
 
         result = self.live.place_order(intent)
-        if result.status == "filled" and intent.price:
+        if result.status in ("filled", "accepted") and intent.price:
             self.risk.daily_used += float(intent.price) * float(intent.qty)
         return result
+
+    def _check_paper_lifecycle_buy(self, intent: OrderIntent) -> str | None:
+        """
+        纸交易买入须通过生命周期闸门（试用/主力）。
+
+        未传 strategy_id 时用 ``PAPER_DEFAULT_STRATEGY_ID``。
+        """
+        if intent.side != Side.BUY:
+            return None
+        from desk_broker.promotion_gate import buy_block_reason
+        from desk_db.models import StrategyRow
+
+        settings = get_settings()
+        sid = (intent.strategy_id or settings.paper_default_strategy_id or "").strip()
+        if not sid:
+            return "lifecycle gate: strategy_id required for paper buy"
+        row = self.db.scalar(
+            select(StrategyRow)
+            .where(StrategyRow.strategy_id == sid)
+            .order_by(StrategyRow.id.desc())
+        )
+        stage = str(getattr(row, "lifecycle_stage", None) or "incubating")
+        reason = buy_block_reason(stage)
+        if reason:
+            return f"{reason}; strategy={sid}"
+        return None
 
     def list_approvals(self) -> list[dict]:
         """待审批实盘订单。"""
@@ -595,8 +737,8 @@ class BrokerGateway:
             client_order_id=f"{row.client_order_id}|approved",
             mode="live",
         )
-        # 直接交 Mock/QmtBroker，跳过再次审批
-        result = MockQmtBroker(self.db).place_order(intent)
+        # 人工审批后提交（可走真 QMT；跳过自动开关）
+        result = self.live.submit(intent)
         row.status = result.status
         row.message = f"approved: {result.message}"
         row.broker_order_id = result.broker_order_id

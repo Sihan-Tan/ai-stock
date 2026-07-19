@@ -31,8 +31,18 @@ class Settings(BaseSettings):
 
     qmt_userdata_path: str = r"C:\QMT\userdata_mini"
     qmt_account_id: str = ""
+    """为 True 时即使双开关打开也不发真单，强制 Mock（CI/无柜台默认）。"""
+    qmt_force_mock: bool = True
 
     paper_initial_cash: float = 1_000_000.0
+    """纸交易买入手动单缺省策略（生命周期闸门用）。"""
+    paper_default_strategy_id: str = "ma_cross"
+    """是否启用 Paper Runner 定时扫描自选。"""
+    paper_runner_enabled: bool = False
+    """定时 Runner 使用的策略 ID。"""
+    paper_runner_strategy_id: str = "ma_cross"
+    """连续竞价时段扫描间隔（分钟，≥5）。"""
+    paper_runner_interval_minutes: int = 30
     skills_dir: str = "skills"
 
     # 回测费用（A 股近似；均在 .env 配置）
