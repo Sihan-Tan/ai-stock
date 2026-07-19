@@ -11,6 +11,8 @@ from desk_common.settings import Settings, get_settings
 # UI 可编辑字段 → 环境变量名
 EDITABLE_ENV: dict[str, str] = {
     "trade_mode": "TRADE_MODE",
+    "auto_execute_live": "AUTO_EXECUTE_LIVE",
+    "i_understand_auto_live": "I_UNDERSTAND_AUTO_LIVE",
     "ml_engine": "ML_ENGINE",
     "llm_provider": "LLM_PROVIDER",
     "llm_api_key": "LLM_API_KEY",
@@ -64,6 +66,8 @@ def public_settings() -> dict[str, Any]:
     s = get_settings()
     return {
         "trade_mode": s.trade_mode,
+        "auto_execute_live": s.auto_execute_live,
+        "i_understand_auto_live": s.i_understand_auto_live,
         "ml_engine": s.ml_engine,
         "llm_provider": s.llm_provider,
         "llm_api_key": _mask_secret(s.llm_api_key),
@@ -194,6 +198,11 @@ def apply_settings_patch(patch: dict[str, Any]) -> dict[str, Any]:
             "risk_max_daily_notional",
         ):
             cleaned[field] = float(raw)
+        elif field in ("auto_execute_live", "i_understand_auto_live"):
+            if isinstance(raw, bool):
+                cleaned[field] = raw
+            else:
+                cleaned[field] = str(raw).strip().lower() in ("1", "true", "yes", "on")
         elif field in ("trade_mode", "ml_engine", "llm_provider"):
             cleaned[field] = str(raw).strip().lower()
         else:

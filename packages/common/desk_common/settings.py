@@ -15,6 +15,10 @@ class Settings(BaseSettings):
     """Postgres/MySQL 连接超时（秒），避免启动与探测长时间卡住。"""
     db_connect_timeout: int = 3
     trade_mode: Literal["paper", "live"] = "paper"
+    """实盘是否自动成交；False 时进入审批队列。"""
+    auto_execute_live: bool = False
+    """确认理解自动实盘风险；与 auto_execute_live 同时为 True 才可自动真单/模拟实盘成交。"""
+    i_understand_auto_live: bool = False
     ml_engine: Literal["lightgbm", "xgboost"] = "lightgbm"
 
     llm_provider: Literal["openai", "deepseek", "chatgpt"] = "deepseek"

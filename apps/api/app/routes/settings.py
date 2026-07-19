@@ -16,6 +16,8 @@ class SettingsPatch(BaseModel):
     """设置补丁；未传或密钥留空表示不修改。"""
 
     trade_mode: str | None = None
+    auto_execute_live: bool | None = None
+    i_understand_auto_live: bool | None = None
     ml_engine: str | None = None
     llm_provider: str | None = None
     llm_api_key: str | None = None

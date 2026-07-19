@@ -41,7 +41,7 @@ class OrderResult(BaseModel):
     """下单结果。"""
 
     client_order_id: str
-    status: Literal["accepted", "filled", "rejected", "partial"]
+    status: Literal["accepted", "filled", "rejected", "partial", "awaiting_approval"]
     filled_qty: float = 0.0
     avg_price: float | None = None
     message: str = ""

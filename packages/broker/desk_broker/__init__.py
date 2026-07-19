@@ -402,8 +402,24 @@ class QmtBroker(MockQmtBroker):
             self.connected = True
 
     def place_order(self, intent: OrderIntent) -> OrderResult:
-        """有 xtquant 时仍先走 Mock 落库（避免 CI/无柜台误下单）；真实柜台需人工接线。"""
-        return super().place_order(intent)
+        """
+        自动实盘成交。
+
+        已装 xtquant 且 ``AUTO_EXECUTE_LIVE``+确认变量开启时仍默认 Mock 落库，
+        避免无柜台环境误发真单；message 标明 mode，后续可在此接 XtQuantTrader。
+        """
+        from desk_broker.trading_mode import auto_live_allowed
+
+        if not auto_live_allowed():
+            return OrderResult(
+                client_order_id=intent.client_order_id,
+                status="rejected",
+                message="auto live blocked: set AUTO_EXECUTE_LIVE=1 and I_UNDERSTAND_AUTO_LIVE=1",
+            )
+        result = super().place_order(intent)
+        if self._xt:
+            result.message = (result.message or "") + "; xtquant detected (mock fill; wire trader for real)"
+        return result
 
 
 class BrokerGateway:
@@ -485,10 +501,119 @@ class BrokerGateway:
                 status="rejected",
                 message=gate_reason,
             )
+
+        from desk_broker.trading_mode import live_execution_mode
+
+        mode = live_execution_mode()
+        if mode == "blocked":
+            msg = "auto live blocked: I_UNDERSTAND_AUTO_LIVE required"
+            self.db.add(
+                LiveOrder(
+                    client_order_id=intent.client_order_id,
+                    symbol=intent.symbol,
+                    side=intent.side.value,
+                    qty=intent.qty,
+                    price=intent.price,
+                    status="rejected",
+                    message=msg,
+                )
+            )
+            self.db.flush()
+            return OrderResult(
+                client_order_id=intent.client_order_id,
+                status="rejected",
+                message=msg,
+            )
+        if mode == "approval":
+            self.db.add(
+                LiveOrder(
+                    client_order_id=intent.client_order_id,
+                    symbol=intent.symbol,
+                    side=intent.side.value,
+                    qty=intent.qty,
+                    price=intent.price,
+                    status="awaiting_approval",
+                    message="awaiting manual approval",
+                )
+            )
+            self.db.flush()
+            return OrderResult(
+                client_order_id=intent.client_order_id,
+                status="awaiting_approval",
+                message="awaiting manual approval",
+            )
+
         result = self.live.place_order(intent)
         if result.status == "filled" and intent.price:
             self.risk.daily_used += float(intent.price) * float(intent.qty)
         return result
+
+    def list_approvals(self) -> list[dict]:
+        """待审批实盘订单。"""
+        rows = self.db.scalars(
+            select(LiveOrder)
+            .where(LiveOrder.status == "awaiting_approval")
+            .order_by(LiveOrder.id.desc())
+        ).all()
+        return [
+            {
+                "id": r.id,
+                "client_order_id": r.client_order_id,
+                "symbol": r.symbol,
+                "side": r.side,
+                "qty": r.qty,
+                "price": r.price,
+                "status": r.status,
+                "message": r.message,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in rows
+        ]
+
+    def approve_order(self, client_order_id: str) -> OrderResult:
+        """
+        审批通过后按自动实盘路径成交（仍受 auto 开关约束）。
+
+        审批本身表示人工确认；成交仍要求 ``AUTO_EXECUTE_LIVE``+确认变量，
+        否则保持 awaiting 并提示打开自动开关（或在此强制走 Mock 一次）。
+        为便于运营：审批通过即允许本次 Mock/柜台成交，不二次要求 auto 开关。
+        """
+        row = self.db.scalar(
+            select(LiveOrder).where(LiveOrder.client_order_id == client_order_id)
+        )
+        if not row or row.status != "awaiting_approval":
+            return OrderResult(
+                client_order_id=client_order_id,
+                status="rejected",
+                message="approval not found",
+            )
+        intent = OrderIntent(
+            symbol=row.symbol,
+            side=Side(row.side),
+            qty=float(row.qty),
+            price=float(row.price) if row.price is not None else None,
+            client_order_id=f"{row.client_order_id}|approved",
+            mode="live",
+        )
+        # 直接交 Mock/QmtBroker，跳过再次审批
+        result = MockQmtBroker(self.db).place_order(intent)
+        row.status = result.status
+        row.message = f"approved: {result.message}"
+        row.broker_order_id = result.broker_order_id
+        self.db.flush()
+        return result
+
+    def reject_order(self, client_order_id: str) -> dict:
+        """拒绝待审批订单。"""
+        row = self.db.scalar(
+            select(LiveOrder).where(LiveOrder.client_order_id == client_order_id)
+        )
+        if not row or row.status != "awaiting_approval":
+            return {"ok": False, "message": "approval not found"}
+        row.status = "rejected"
+        row.message = "rejected by operator"
+        self.db.flush()
+        return {"ok": True, "client_order_id": client_order_id, "status": "rejected"}
 
 
 from desk_broker.paper_runner import PaperStrategyRunner  # noqa: E402

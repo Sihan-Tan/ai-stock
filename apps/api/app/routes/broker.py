@@ -123,6 +123,38 @@ def risk_update(body: RiskIn, db: Session = Depends(get_db)):
     return risk_state(db)
 
 
+@router.get("/approvals")
+def list_approvals(db: Session = Depends(get_db)):
+    """待审批实盘订单列表。"""
+    return {"items": get_gate(db).list_approvals()}
+
+
+@router.post("/approvals/{client_order_id}/approve")
+def approve_order(client_order_id: str, db: Session = Depends(get_db)):
+    """批准并成交待审批订单。"""
+    return get_gate(db).approve_order(client_order_id).model_dump()
+
+
+@router.post("/approvals/{client_order_id}/reject")
+def reject_order(client_order_id: str, db: Session = Depends(get_db)):
+    """拒绝待审批订单。"""
+    return get_gate(db).reject_order(client_order_id)
+
+
+@router.get("/trading-mode")
+def trading_mode_state():
+    """纸/审批/自动模式状态。"""
+    from desk_broker.trading_mode import live_execution_mode
+
+    settings = get_settings()
+    return {
+        "trade_mode": settings.trade_mode,
+        "auto_execute_live": settings.auto_execute_live,
+        "i_understand_auto_live": settings.i_understand_auto_live,
+        "live_execution": live_execution_mode(settings),
+    }
+
+
 @router.post("/order")
 def place_order(body: OrderIn, db: Session = Depends(get_db)):
     settings = get_settings()
