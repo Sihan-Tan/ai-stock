@@ -1,5 +1,5 @@
-import { Button, Card, CardContent, CardHeader, CardTitle, Chip } from "@heroui/react";
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Button, Card, CardContent, CardHeader, CardTitle, Chip, Dropdown } from "@heroui/react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api";
 import type { PageLogProps } from "./types";
@@ -46,23 +46,8 @@ const STAGE_OPTIONS = [
   { value: "retired", label: "退役" },
 ] as const;
 
-const DEFAULT_YAML = `id: my_breakout
-name: 均线突破-自定义
-version: v0.1
-symbol: 600519.SH
-when:
-  sma_fast:
-    period: 5
-  sma_slow:
-    period: 20
-then:
-  action: signal
-params:
-  note: 从策略页保存的 YAML
-`;
-
 /**
- * 策略管理：列表、生命周期阶段 / KPI 评估、YAML 编辑。
+ * 策略管理：列表、生命周期阶段 / KPI 评估；新增与编辑见独立页。
  * @param props 页面日志写入方法
  */
 export default function Strategies({ setLog }: PageLogProps) {
@@ -70,13 +55,10 @@ export default function Strategies({ setLog }: PageLogProps) {
   const [rows, setRows] = useState<Strategy[]>([]);
   const [summary, setSummary] = useState<LifecycleSummary | null>(null);
   const [busy, setBusy] = useState(false);
-  const [yamlBody, setYamlBody] = useState(DEFAULT_YAML);
-  const [asDraft, setAsDraft] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
   const [stageFilter, setStageFilter] = useState<string>("all");
   const [abA, setAbA] = useState("");
   const [abB, setAbB] = useState("");
-  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   /**
    * 拉取策略列表与生命周期汇总。
@@ -245,33 +227,6 @@ export default function Strategies({ setLog }: PageLogProps) {
   };
 
   /**
-   * 保存 YAML 策略。
-   */
-  const saveYaml = async () => {
-    setBusy(true);
-    try {
-      if (asDraft) {
-        await api("/api/strategies/draft", {
-          method: "POST",
-          body: JSON.stringify({ payload: { yaml_body: yamlBody } }),
-        });
-        setLog("已保存为 Agent 草稿（draft）");
-      } else {
-        await api("/api/strategies/from-yaml", {
-          method: "POST",
-          body: JSON.stringify({ yaml_body: yamlBody }),
-        });
-        setLog("YAML 策略已保存");
-      }
-      await load();
-    } catch (error) {
-      setLog(String(error));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  /**
    * 草稿晋级为 research / 孵化。
    */
   const promote = async (strategyId: string) => {
@@ -319,18 +274,6 @@ export default function Strategies({ setLog }: PageLogProps) {
     }
   };
 
-  /**
-   * 将行内 YAML 载入编辑器。
-   */
-  const loadIntoEditor = (row: Strategy) => {
-    if (row.yaml_body) {
-      setYamlBody(row.yaml_body);
-      setLog(`已载入 ${row.id} 的 YAML`);
-    } else {
-      setLog(`${row.id} 无 YAML 正文（Python 策略请直接去回测）`);
-    }
-  };
-
   useEffect(() => {
     void load();
   }, [showArchived]);
@@ -372,8 +315,8 @@ export default function Strategies({ setLog }: PageLogProps) {
             <Button size="sm" variant="primary" isDisabled={busy} onPress={() => void evaluate()}>
               {busy ? "评估中…" : "评估并迁移"}
             </Button>
-            <Button size="sm" variant="secondary" onPress={() => navigate("/backtest")}>
-              去回测
+            <Button size="sm" variant="primary" onPress={() => navigate("/strategies/new")}>
+              新增策略
             </Button>
           </div>
         </CardHeader>
@@ -459,144 +402,117 @@ export default function Strategies({ setLog }: PageLogProps) {
               <tbody>
                 {filteredRows.map((row) => {
                   const kpi = row.kpi || {};
-                  const open = expandedId === row.id;
                   return (
-                    <Fragment key={`${row.id}-${row.version}`}>
-                      <tr
-                        className={[
-                          "border-b border-[var(--desk-line)] hover:bg-[var(--desk-ink)]",
-                          row.status === "archived" || row.lifecycle_stage === "retired"
-                            ? "opacity-60"
-                            : "",
-                        ].join(" ")}
-                      >
-                        <td className="px-3 py-3">
-                          <div className="font-mono text-xs text-[var(--desk-mist)]">{row.id}</div>
-                          <div className="text-[var(--desk-text)]">{row.name}</div>
-                          <div className="mt-0.5 text-[11px] text-[var(--desk-mist)]">
-                            {row.source} · {row.version}
-                          </div>
-                        </td>
-                        <td className="px-3 py-3">
-                          <select
-                            className={`${selectClass} block`}
-                            value={row.lifecycle_stage || "incubating"}
-                            disabled={busy}
-                            onChange={(e) => void changeStage(row.id, e.target.value)}
-                            aria-label={`${row.id} 阶段`}
+                    <tr
+                      key={`${row.id}-${row.version}`}
+                      className={[
+                        "border-b border-[var(--desk-line)] hover:bg-[var(--desk-ink)]",
+                        row.status === "archived" || row.lifecycle_stage === "retired"
+                          ? "opacity-60"
+                          : "",
+                      ].join(" ")}
+                    >
+                      <td className="px-3 py-3">
+                        <div className="font-mono text-xs text-[var(--desk-mist)]">{row.id}</div>
+                        <div className="text-[var(--desk-text)]">{row.name}</div>
+                        <div className="mt-0.5 text-[11px] text-[var(--desk-mist)]">
+                          {row.source} · {row.version}
+                        </div>
+                      </td>
+                      <td className="px-3 py-3">
+                        <select
+                          className={`${selectClass} block`}
+                          value={row.lifecycle_stage || "incubating"}
+                          disabled={busy}
+                          onChange={(e) => void changeStage(row.id, e.target.value)}
+                          aria-label={`${row.id} 阶段`}
+                        >
+                          {STAGE_OPTIONS.map((opt) => (
+                            <option key={opt.value} value={opt.value}>
+                              {opt.label}
+                            </option>
+                          ))}
+                        </select>
+                      </td>
+                      <td className="px-3 py-3 font-mono text-xs text-[var(--desk-mist)]">
+                        <div>{((row.capital_pct ?? 0) * 100).toFixed(1)}%</div>
+                        <div>{fmtMoney(row.capital_allocated ?? 0)}</div>
+                      </td>
+                      <td className="px-3 py-3 text-xs text-[var(--desk-mist)]">
+                        <div>Sharpe {(kpi.rolling_30d_sharpe ?? 0).toFixed(2)}</div>
+                        <div>收益 {fmtPct(kpi.rolling_30d_return ?? 0)}</div>
+                        <div>回撤 {fmtPct(kpi.rolling_30d_maxdd ?? 0)}</div>
+                        <div>
+                          WF {(kpi.walk_forward_is_oos_ratio ?? 0).toFixed(2)}
+                          <span className="text-[10px]"> (点 WF 重算)</span>
+                        </div>
+                      </td>
+                      <td className="px-3 py-3">
+                        <StatusChip status={row.status} />
+                      </td>
+                      <td className="px-3 py-3">
+                        <div className="flex flex-wrap items-center gap-2">
+                          {row.status === "draft" ? (
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              isDisabled={busy}
+                              onPress={() => void promote(row.id)}
+                            >
+                              晋级
+                            </Button>
+                          ) : null}
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            isDisabled={busy}
+                            onPress={() => void runWalkForward(row.id)}
                           >
-                            {STAGE_OPTIONS.map((opt) => (
-                              <option key={opt.value} value={opt.value}>
-                                {opt.label}
-                              </option>
-                            ))}
-                          </select>
-                        </td>
-                        <td className="px-3 py-3 font-mono text-xs text-[var(--desk-mist)]">
-                          <div>{((row.capital_pct ?? 0) * 100).toFixed(1)}%</div>
-                          <div>{fmtMoney(row.capital_allocated ?? 0)}</div>
-                        </td>
-                        <td className="px-3 py-3 text-xs text-[var(--desk-mist)]">
-                          <div>Sharpe {(kpi.rolling_30d_sharpe ?? 0).toFixed(2)}</div>
-                          <div>收益 {fmtPct(kpi.rolling_30d_return ?? 0)}</div>
-                          <div>回撤 {fmtPct(kpi.rolling_30d_maxdd ?? 0)}</div>
-                          <div>
-                            WF {(kpi.walk_forward_is_oos_ratio ?? 0).toFixed(2)}
-                            <span className="text-[10px]"> (点 WF 重算)</span>
-                          </div>
-                        </td>
-                        <td className="px-3 py-3">
-                          <StatusChip status={row.status} />
-                        </td>
-                        <td className="px-3 py-3">
-                          <div className="flex flex-wrap gap-2" onClick={(e) => e.stopPropagation()}>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onPress={() => setExpandedId(open ? null : row.id)}
+                            WF
+                          </Button>
+                          <Dropdown>
+                            <Dropdown.Trigger
+                              className="inline-flex h-8 items-center rounded-lg border border-[var(--desk-line)] bg-[var(--desk-ink)] px-2.5 text-xs text-[var(--desk-text)] hover:border-[var(--desk-mist)]"
+                              aria-label={`${row.id} 更多操作`}
                             >
-                              {open ? "收起" : "历史"}
-                            </Button>
-                            {row.yaml_body ? (
-                              <Button size="sm" variant="ghost" onPress={() => loadIntoEditor(row)}>
-                                YAML
-                              </Button>
-                            ) : null}
-                            {row.status === "draft" ? (
-                              <Button
-                                size="sm"
-                                variant="secondary"
-                                isDisabled={busy}
-                                onPress={() => void promote(row.id)}
+                              操作 ▾
+                            </Dropdown.Trigger>
+                            <Dropdown.Popover placement="bottom end" className="min-w-[8rem]">
+                              <Dropdown.Menu
+                                aria-label={`${row.id} 操作菜单`}
+                                onAction={(key) => {
+                                  if (key === "edit") {
+                                    navigate(`/strategies/${encodeURIComponent(row.id)}/edit`);
+                                  } else if (key === "delete") {
+                                    void remove(row);
+                                  }
+                                }}
                               >
-                                晋级
-                              </Button>
-                            ) : null}
-                            {row.lifecycle_stage !== "retired" ? (
-                              <Button
-                                size="sm"
-                                variant="primary"
-                                onPress={() =>
-                                  navigate(`/backtest?strategy_id=${encodeURIComponent(row.id)}`)
-                                }
-                              >
-                                回测
-                              </Button>
-                            ) : null}
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              isDisabled={busy}
-                              onPress={() => void runWalkForward(row.id)}
-                            >
-                              WF
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant={
-                                row.status === "archived" || row.lifecycle_stage === "retired"
-                                  ? "danger"
-                                  : "ghost"
-                              }
-                              isDisabled={busy}
-                              onPress={() => void remove(row)}
-                            >
-                              {row.status === "archived" || row.lifecycle_stage === "retired"
-                                ? "彻底删除"
-                                : "删除"}
-                            </Button>
-                          </div>
-                        </td>
-                      </tr>
-                      {open ? (
-                        <tr className="border-b border-[var(--desk-line)] bg-[var(--desk-ink)]/40">
-                          <td colSpan={6} className="px-3 py-3 text-xs text-[var(--desk-mist)]">
-                            <div className="mb-1 text-[var(--desk-text)]">阶段迁移历史</div>
-                            {!row.lifecycle_history?.length ? (
-                              <div>暂无记录</div>
-                            ) : (
-                              <ul className="space-y-1">
-                                {[...row.lifecycle_history].reverse().slice(0, 8).map((h, i) => (
-                                  <li key={`${h.ts}-${i}`}>
-                                    <span className="font-mono">{h.ts || "—"}</span>
-                                    {" · "}
-                                    {h.from || "—"} → {h.to}
-                                    {" · "}
-                                    {h.reason || ""}
-                                  </li>
-                                ))}
-                              </ul>
-                            )}
-                          </td>
-                        </tr>
-                      ) : null}
-                    </Fragment>
+                                <Dropdown.Item id="edit" textValue="编辑">
+                                  编辑
+                                </Dropdown.Item>
+                                <Dropdown.Item
+                                  id="delete"
+                                  textValue="删除"
+                                  className="text-[var(--danger,#ef4444)]"
+                                >
+                                  {row.status === "archived" ||
+                                  row.lifecycle_stage === "retired"
+                                    ? "彻底删除"
+                                    : "删除"}
+                                </Dropdown.Item>
+                              </Dropdown.Menu>
+                            </Dropdown.Popover>
+                          </Dropdown>
+                        </div>
+                      </td>
+                    </tr>
                   );
                 })}
                 {!filteredRows.length && (
                   <tr>
                     <td colSpan={6} className="px-3 py-8 text-center text-[var(--desk-mist)]">
-                      暂无策略。点击「同步策略」加载 Python / YAML 示例。
+                      暂无策略。可「同步策略」或「新增策略」。
                     </td>
                   </tr>
                 )}
@@ -640,35 +556,6 @@ export default function Strategies({ setLog }: PageLogProps) {
         </CardContent>
       </Card>
 
-      <Card className="border border-[var(--desk-line)] bg-[var(--desk-panel)]">
-        <CardHeader className="flex w-full flex-row flex-nowrap items-center justify-between gap-3 p-5 pb-3">
-          <CardTitle className="text-base text-[var(--desk-text)]">YAML 策略编辑</CardTitle>
-          <div className="flex items-center gap-3">
-            <label className="flex items-center gap-2 text-sm text-[var(--desk-mist)]">
-              <input
-                type="checkbox"
-                checked={asDraft}
-                onChange={(event) => setAsDraft(event.target.checked)}
-              />
-              保存为草稿
-            </label>
-            <Button size="sm" variant="primary" isDisabled={busy} onPress={() => void saveYaml()}>
-              保存 YAML
-            </Button>
-          </div>
-        </CardHeader>
-        <CardContent className="p-5 pt-2">
-          <textarea
-            value={yamlBody}
-            onChange={(event) => setYamlBody(event.target.value)}
-            spellCheck={false}
-            className="min-h-[280px] w-full rounded-lg border border-[var(--desk-line)] bg-[var(--desk-ink)] p-4 font-mono text-xs leading-6 text-[var(--desk-text)] outline-none focus:border-[var(--desk-mist)]"
-          />
-          <p className="mt-2 text-xs text-[var(--desk-mist)]">
-            草稿需「晋级」进入孵化；「评估并迁移」按 KPI 自动推进阶段。删除会同步退役。
-          </p>
-        </CardContent>
-      </Card>
     </div>
   );
 }

@@ -138,8 +138,18 @@ class StrategyRegistry:
         self.db.flush()
         return n
 
-    def from_yaml(self, doc: str | dict[str, Any], status: str = "research") -> StrategyMeta:
-        """解析 YAML 并入库。"""
+    def from_yaml(
+        self,
+        doc: str | dict[str, Any],
+        status: str = "research",
+        *,
+        reset_lifecycle: bool = False,
+    ) -> StrategyMeta:
+        """
+        解析 YAML 并入库。
+
+        @param reset_lifecycle: 为 True 时（UI 新增/编辑保存）阶段重置为孵化并记历史
+        """
         data = yaml.safe_load(doc) if isinstance(doc, str) else doc
         sid = str(data["id"])
         meta = StrategyMeta(
@@ -148,36 +158,33 @@ class StrategyRegistry:
             source=StrategySource.YAML,
             version=str(data.get("version", "v0.1")),
             status=status,  # type: ignore[arg-type]
+            lifecycle_stage="incubating",
             yaml_body=yaml.safe_dump(data, allow_unicode=True),
             params=data.get("params") or {},
         )
-        self._upsert_row(meta)
+        self._upsert_row(meta, reset_lifecycle=reset_lifecycle)
         _REGISTRY[sid] = RegisteredStrategy(
             meta=meta,
             on_bar=lambda ctx, d=data: self._yaml_on_bar(d, ctx),
         )
-        return meta
+        return self.get_meta(sid) or meta
 
     def save_agent_draft(self, payload: dict[str, Any]) -> StrategyMeta:
-        """Agent 草稿（默认 draft）。"""
+        """Agent 草稿（默认 draft）；保存后阶段重置为孵化。"""
         body = payload.get("yaml_body") or payload
         if isinstance(body, str):
             data = yaml.safe_load(body)
         else:
             data = dict(body)
         data["id"] = data.get("id") or payload.get("id") or "agent_draft"
-        meta = self.from_yaml(data, status="draft")
-        meta.source = StrategySource.AGENT
-        row = self.db.scalar(
-            select(StrategyRow).where(
-                StrategyRow.strategy_id == meta.id, StrategyRow.version == meta.version
-            )
-        )
+        meta = self.from_yaml(data, status="draft", reset_lifecycle=True)
+        row = self._latest_row(meta.id)
         if row:
             row.source = "agent"
             row.status = "draft"
-        self.db.flush()
-        return meta
+            self.db.flush()
+        meta.source = StrategySource.AGENT
+        return self.get_meta(meta.id) or meta
 
     def promote(self, strategy_id: str, to_status: str = "research") -> StrategyMeta | None:
         """草稿晋级为 research，并进入孵化阶段。"""
@@ -282,7 +289,61 @@ class StrategyRegistry:
         text = Path(path).read_text(encoding="utf-8")
         return self.from_yaml(text)
 
-    def _upsert_row(self, meta: StrategyMeta) -> None:
+    def get_meta(self, strategy_id: str) -> StrategyMeta | None:
+        """按 ID 取最新策略元数据。"""
+        row = self._latest_row(strategy_id)
+        if not row:
+            return None
+        self._ensure_lifecycle_defaults(row)
+        return self._row_to_meta(row)
+
+    def get_source_text(self, strategy_id: str) -> dict[str, Any] | None:
+        """
+        取可编辑源码：YAML/Agent 用 yaml_body；Python 用 inspect 读类源码。
+
+        @returns: {strategy_id, source, language, text} 或 None
+        """
+        import inspect
+
+        self.sync_python_to_db()
+        meta = self.get_meta(strategy_id)
+        if not meta:
+            return None
+        src = meta.source.value if hasattr(meta.source, "value") else str(meta.source)
+        if src != "python":
+            return {
+                "strategy_id": strategy_id,
+                "source": src,
+                "language": "yaml",
+                "text": meta.yaml_body or "",
+            }
+        text = ""
+        ep = meta.entry_point or ""
+        if ":" in ep:
+            mod_name, qual = ep.split(":", 1)
+            try:
+                import importlib
+
+                mod = importlib.import_module(mod_name)
+                obj = getattr(mod, qual, None)
+                if obj is not None:
+                    text = inspect.getsource(obj)
+            except Exception:  # noqa: BLE001
+                text = ""
+        if not text:
+            text = (
+                f"# Python 策略 {strategy_id}\n"
+                f"# entry_point: {meta.entry_point or 'unknown'}\n"
+                "# 未能读取源码；请在 packages/strategy 中打开对应文件。\n"
+            )
+        return {
+            "strategy_id": strategy_id,
+            "source": "python",
+            "language": "python",
+            "text": text,
+        }
+
+    def _upsert_row(self, meta: StrategyMeta, *, reset_lifecycle: bool = False) -> None:
         existing = self.db.scalar(
             select(StrategyRow).where(
                 StrategyRow.strategy_id == meta.id, StrategyRow.version == meta.version
@@ -299,6 +360,18 @@ class StrategyRegistry:
             if meta.description:
                 existing.description = meta.description
             self._ensure_lifecycle_defaults(existing)
+            if reset_lifecycle:
+                self._apply_stage(
+                    existing,
+                    LifecycleStage.INCUBATING,
+                    reason="编辑保存，重置为孵化",
+                    reset_promotion_days=True,
+                )
+                # 草稿 status 不被 _apply_stage 覆盖；YAML 成品保持 research
+                if meta.status == "draft":
+                    existing.status = "draft"
+                elif existing.status != "archived":
+                    existing.status = meta.status
         else:
             hist = append_history(
                 [], from_stage=None, to_stage=stage.value, reason="新建策略"

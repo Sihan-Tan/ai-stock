@@ -110,7 +110,8 @@ def sync_python(db: Session = Depends(get_db)):
 
 @router.post("/from-yaml")
 def from_yaml(body: YamlIn, db: Session = Depends(get_db)):
-    meta = StrategyRegistry(db).from_yaml(body.yaml_body)
+    """保存 YAML 策略；阶段重置为孵化。"""
+    meta = StrategyRegistry(db).from_yaml(body.yaml_body, reset_lifecycle=True)
     return meta.model_dump()
 
 
@@ -129,6 +130,28 @@ def load_file(db: Session = Depends(get_db)):
 @router.post("/draft")
 def draft(body: DraftIn, db: Session = Depends(get_db)):
     return StrategyRegistry(db).save_agent_draft(body.payload).model_dump()
+
+
+@router.get("/{strategy_id}")
+def get_strategy(strategy_id: str, db: Session = Depends(get_db)):
+    """按 ID 取策略元数据（含 yaml_body 与生命周期历史）。"""
+    meta = StrategyRegistry(db).get_meta(strategy_id)
+    if not meta:
+        # 尝试同步后再取（Python 策略可能尚未落库）
+        StrategyRegistry(db).sync_python_to_db()
+        meta = StrategyRegistry(db).get_meta(strategy_id)
+    if not meta:
+        raise HTTPException(404, "not found")
+    return meta.model_dump()
+
+
+@router.get("/{strategy_id}/source")
+def get_strategy_source(strategy_id: str, db: Session = Depends(get_db)):
+    """取策略可编辑源码（YAML 正文或 Python 类源码）。"""
+    payload = StrategyRegistry(db).get_source_text(strategy_id)
+    if not payload:
+        raise HTTPException(404, "not found")
+    return payload
 
 
 @router.post("/{strategy_id}/promote")
