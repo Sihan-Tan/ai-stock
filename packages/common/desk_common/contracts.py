@@ -84,13 +84,21 @@ class StrategySource(str, Enum):
 
 
 class StrategyMeta(BaseModel):
-    """策略元数据。"""
+    """策略元数据（含生命周期 / KPI）。"""
 
     id: str
     name: str
     source: StrategySource
     version: str = "v0.1"
     status: Literal["draft", "research", "paper", "live", "archived"] = "research"
+    lifecycle_stage: Literal[
+        "incubating", "paper", "probation", "production", "retired"
+    ] = "incubating"
+    description: str = ""
+    capital_pct: float = 0.0
+    capital_allocated: float = 0.0
+    kpi: dict[str, Any] = Field(default_factory=dict)
+    lifecycle_history: list[dict[str, Any]] = Field(default_factory=list)
     entry_point: str | None = None
     yaml_body: str | None = None
     params: dict[str, Any] = Field(default_factory=dict)

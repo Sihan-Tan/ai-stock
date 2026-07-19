@@ -16,19 +16,23 @@ type Strategy = {
 
 type TradeRow = {
   side?: string;
+  /** closed=已平仓；open=期末仍持仓（平仓价为标记市价） */
+  status?: "closed" | "open" | string;
   qty?: number;
   entry_price?: number;
   exit_price?: number;
+  mark_price?: number;
   pnl?: number;
   pnlcomm?: number;
   return_pct?: number;
+  return_pct_gross?: number;
   entry_commission?: number;
   exit_commission?: number;
   stamp_duty?: number;
   fee_total?: number;
   commission?: number;
   dt_open?: string;
-  dt_close?: string;
+  dt_close?: string | null;
 };
 
 type BacktestReport = {
@@ -243,8 +247,17 @@ export default function Backtest({ setLog }: PageLogProps) {
                   tone={report.max_drawdown}
                 />
                 <Metric label="夏普" value={report.sharpe == null ? "—" : report.sharpe.toFixed(2)} />
-                <Metric label="成交笔数" value={String(report.trades)} />
+                <Metric
+                  label="成交笔数"
+                  value={String(
+                    report.trade_list?.filter((t) => t.status !== "open").length ??
+                      report.trades
+                  )}
+                />
               </div>
+              <p className="text-xs text-[var(--desk-mist)]">
+                总收益按期末账户权益（含持仓市值、佣金、印花税、滑点）。明细里「持仓中」行表示回测结束仍持仓，其盈亏为按收盘价估算的浮动盈亏；已平仓的价差盈利若叠加持仓浮动亏损/开仓费用，总收益仍可能为负。
+              </p>
               <div className="text-sm text-[var(--desk-mist)]">
                 策略 <span className="font-mono text-[var(--desk-text)]">{report.strategy_id}</span>
                 {" · "}
@@ -285,18 +298,40 @@ export default function Backtest({ setLog }: PageLogProps) {
                           <th className="px-3 py-2 font-medium">平仓佣金</th>
                           <th className="px-3 py-2 font-medium">印花税</th>
                           <th className="px-3 py-2 font-medium">费用合计</th>
-                          <th className="px-3 py-2 font-medium">收益率</th>
+                          <th className="px-3 py-2 font-medium">价差收益</th>
+                          <th className="px-3 py-2 font-medium">扣费收益</th>
                           <th className="px-3 py-2 font-medium">盈亏(扣费)</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {report.trade_list.map((t, index) => (
+                        {report.trade_list.map((t, index) => {
+                          const isOpen =
+                            t.status === "open" || (t.status == null && !t.dt_close);
+                          const notional =
+                            t.entry_price != null && t.qty != null ? t.entry_price * t.qty : 0;
+                          const grossRet = t.return_pct_gross ?? t.return_pct;
+                          const netRet =
+                            t.return_pct_gross != null
+                              ? t.return_pct
+                              : t.pnlcomm != null && notional > 0
+                                ? t.pnlcomm / notional
+                                : t.return_pct;
+                          const markOrExit = t.exit_price ?? t.mark_price;
+                          return (
                           <tr
                             key={index}
-                            className="border-b border-[var(--desk-line)] last:border-0"
+                            className={`border-b border-[var(--desk-line)] last:border-0 ${
+                              isOpen ? "bg-[var(--desk-ink)]/60" : ""
+                            }`}
                           >
                             <td className="px-3 py-2 font-mono text-xs">{t.dt_open ?? "—"}</td>
-                            <td className="px-3 py-2 font-mono text-xs">{t.dt_close ?? "—"}</td>
+                            <td className="px-3 py-2 font-mono text-xs">
+                              {isOpen ? (
+                                <span className="text-[var(--warning,#d97706)]">持仓中</span>
+                              ) : (
+                                t.dt_close ?? "—"
+                              )}
+                            </td>
                             <td className="px-3 py-2 font-mono">
                               {t.qty != null ? t.qty.toFixed(0) : "—"}
                             </td>
@@ -304,7 +339,9 @@ export default function Backtest({ setLog }: PageLogProps) {
                               {t.entry_price != null ? t.entry_price.toFixed(3) : "—"}
                             </td>
                             <td className="px-3 py-2 font-mono">
-                              {t.exit_price != null ? t.exit_price.toFixed(3) : "—"}
+                              {markOrExit != null
+                                ? `${markOrExit.toFixed(3)}${isOpen ? "(市)" : ""}`
+                                : "—"}
                             </td>
                             <td className="px-3 py-2 font-mono">
                               {formatMoney(t.entry_commission)}
@@ -318,14 +355,25 @@ export default function Backtest({ setLog }: PageLogProps) {
                             </td>
                             <td
                               className={`px-3 py-2 font-mono ${
-                                (t.return_pct ?? 0) > 0
+                                (grossRet ?? 0) > 0
                                   ? "text-[var(--danger)]"
-                                  : (t.return_pct ?? 0) < 0
+                                  : (grossRet ?? 0) < 0
                                     ? "text-[var(--success)]"
                                     : ""
                               }`}
                             >
-                              {t.return_pct != null ? formatPct(t.return_pct) : "—"}
+                              {grossRet != null ? formatPct(grossRet) : "—"}
+                            </td>
+                            <td
+                              className={`px-3 py-2 font-mono ${
+                                (netRet ?? 0) > 0
+                                  ? "text-[var(--danger)]"
+                                  : (netRet ?? 0) < 0
+                                    ? "text-[var(--success)]"
+                                    : ""
+                              }`}
+                            >
+                              {netRet != null ? formatPct(netRet) : "—"}
                             </td>
                             <td
                               className={`px-3 py-2 font-mono ${
@@ -339,7 +387,8 @@ export default function Backtest({ setLog }: PageLogProps) {
                               {t.pnlcomm != null ? t.pnlcomm.toFixed(2) : "—"}
                             </td>
                           </tr>
-                        ))}
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>

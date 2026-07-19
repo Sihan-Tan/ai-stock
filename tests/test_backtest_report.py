@@ -97,20 +97,22 @@ def test_backtest_report_has_real_metrics(_db):
     assert abs(report.max_drawdown - expected_dd) < 1e-9
     # 旧占位：盈利时 MDD 恒为 0；趋势波段下权益应出现真实回撤
     assert report.max_drawdown < -1e-6
-    assert report.trades == len(report.trade_list)
-    assert report.trades >= 1
-    trade = report.trade_list[0]
+    closed = [t for t in report.trade_list if t.get("status") != "open"]
+    open_rows = [t for t in report.trade_list if t.get("status") == "open"]
+    assert report.trades == len(closed)
+    assert report.trades >= 1 or len(open_rows) >= 1
+    trade = closed[0] if closed else open_rows[0]
     for key in (
         "qty",
         "entry_price",
         "exit_price",
         "dt_open",
-        "dt_close",
         "pnlcomm",
         "entry_commission",
         "exit_commission",
         "stamp_duty",
         "fee_total",
+        "status",
     ):
         assert key in trade
     assert float(trade["qty"]) > 0
@@ -127,3 +129,8 @@ def test_backtest_report_has_real_metrics(_db):
             + float(trade["stamp_duty"])
         )
     ) < 1e-6
+    if trade.get("status") == "closed":
+        assert trade.get("dt_close")
+    if open_rows:
+        assert open_rows[0].get("dt_close") is None
+        assert open_rows[0].get("mark_price") is not None

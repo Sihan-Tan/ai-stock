@@ -178,10 +178,14 @@ class _SignalStrategy(bt.Strategy):
             )
             fee_total = alloc_entry_comm + exit_comm + stamp
             pnlcomm = pnl - fee_total
-            ret = (exit_price / entry_price - 1.0) if entry_price else 0.0
+            notional = entry_price * q
+            # 价差收益率（不含费用）；扣费收益率与账户盈亏口径一致
+            ret_gross = (exit_price / entry_price - 1.0) if entry_price else 0.0
+            ret_net = (pnlcomm / notional) if notional else 0.0
             self.trade_list.append(
                 {
                     "side": "long",
+                    "status": "closed",
                     "qty": q,
                     "entry_price": entry_price,
                     "exit_price": exit_price,
@@ -189,7 +193,9 @@ class _SignalStrategy(bt.Strategy):
                     "dt_close": dt_str,
                     "pnl": pnl,
                     "pnlcomm": pnlcomm,
-                    "return_pct": ret,
+                    # 主展示用扣费后收益，避免「价差盈利但总收益亏损」误解
+                    "return_pct": ret_net,
+                    "return_pct_gross": ret_gross,
                     "entry_commission": alloc_entry_comm,
                     "exit_commission": exit_comm,
                     "stamp_duty": stamp,
@@ -210,6 +216,48 @@ class _SignalStrategy(bt.Strategy):
                 self._entry = None
 
         self._order = None
+
+    def stop(self):
+        """
+        回测结束时把未平仓写入明细。
+
+        总收益按账户权益（含持仓市值），若只展示已平仓会造成「成交盈利、总收益亏损」的误解。
+        """
+        if self._entry is None:
+            return
+        entry = self._entry
+        q = float(entry["qty"])
+        if q <= 1e-9:
+            return
+        entry_price = float(entry["entry_price"])
+        mark = float(self.data.close[0])
+        entry_comm = float(entry["entry_comm"])
+        pnl = (mark - entry_price) * q
+        pnlcomm = pnl - entry_comm
+        notional = entry_price * q
+        ret_gross = (mark / entry_price - 1.0) if entry_price else 0.0
+        ret_net = (pnlcomm / notional) if notional else 0.0
+        self.trade_list.append(
+            {
+                "side": "long",
+                "status": "open",
+                "qty": q,
+                "entry_price": entry_price,
+                "exit_price": mark,
+                "dt_open": entry["dt_open"],
+                "dt_close": None,
+                "pnl": pnl,
+                "pnlcomm": pnlcomm,
+                "return_pct": ret_net,
+                "return_pct_gross": ret_gross,
+                "entry_commission": entry_comm,
+                "exit_commission": 0.0,
+                "stamp_duty": 0.0,
+                "fee_total": entry_comm,
+                "commission": entry_comm,
+                "mark_price": mark,
+            }
+        )
 
 
 def _max_drawdown_from_equity(values: list[float]) -> float:
@@ -362,6 +410,7 @@ class BacktraderRunner:
             ]
         values = [float(p["value"]) for p in equity_curve]
         trade_list = list(getattr(strat, "trade_list", []) or [])
+        closed_n = sum(1 for t in trade_list if t.get("status") != "open")
         total_return = (end_value / start_value) - 1.0 if start_value else 0.0
         max_drawdown = _max_drawdown_from_equity(values)
         sharpe = _sharpe_from_equity(
@@ -374,7 +423,8 @@ class BacktraderRunner:
             total_return=total_return,
             max_drawdown=max_drawdown,
             sharpe=sharpe,
-            trades=len(trade_list),
+            # 成交笔数仅计已平仓；未平仓见 trade_list.status=open
+            trades=closed_n,
             equity_curve=_downsample_curve(equity_curve),
             trade_list=trade_list,
         )

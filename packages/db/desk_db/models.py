@@ -251,10 +251,19 @@ class StrategyRow(Base):
     source: Mapped[str] = mapped_column(String(16))  # python|yaml|agent
     version: Mapped[str] = mapped_column(String(32), default="v0.1")
     status: Mapped[str] = mapped_column(String(16), default="research")
+    """兼容字段：draft|research|paper|live|archived。"""
+    lifecycle_stage: Mapped[str] = mapped_column(String(16), default="incubating")
+    """incubating|paper|probation|production|retired。"""
+    description: Mapped[str] = mapped_column(String(256), default="")
+    capital_pct: Mapped[float] = mapped_column(Float, default=0.0)
+    capital_allocated: Mapped[float] = mapped_column(Float, default=0.0)
+    kpi_json: Mapped[str] = mapped_column(Text, default="{}")
+    lifecycle_history_json: Mapped[str] = mapped_column(Text, default="[]")
     entry_point: Mapped[str | None] = mapped_column(String(256), nullable=True)
     yaml_body: Mapped[str | None] = mapped_column(Text, nullable=True)
     params_json: Mapped[str] = mapped_column(Text, default="{}")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    lifecycle_updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class BacktestRun(Base):
