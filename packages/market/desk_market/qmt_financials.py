@@ -48,7 +48,7 @@ _FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     ),
     "total_assets": ("tot_assets", "total_assets"),
     "total_liab": ("tot_liab", "total_liab", "total_liability"),
-    "total_equity": ("total_equity", "tot_liab_shrhldr_eqy"),
+    "total_equity": ("total_equity",),
     "total_shares": ("total_capital", "total_shares", "circulating_capital"),
 }
 
