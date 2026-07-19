@@ -167,6 +167,40 @@ export default function Strategies({ setLog }: PageLogProps) {
   };
 
   /**
+   * 对策略跑 Walk-Forward 并写入 KPI。
+   * @param strategyId 策略 ID
+   */
+  const runWalkForward = async (strategyId: string) => {
+    setBusy(true);
+    try {
+      const result = await api<{
+        status: string;
+        message?: string;
+        walk_forward_is_oos_ratio?: number;
+        is_sharpe?: number | null;
+        oos_sharpe?: number | null;
+        symbol?: string;
+      }>(`/api/strategies/${encodeURIComponent(strategyId)}/lifecycle/walk-forward`, {
+        method: "POST",
+        body: JSON.stringify({}),
+      });
+      if (result.status === "ok") {
+        setLog(
+          `WF ${strategyId}@${result.symbol || "—"}: IS/OOS=${(result.walk_forward_is_oos_ratio ?? 0).toFixed(2)}` +
+            ` (IS Sharpe ${result.is_sharpe ?? "—"} / OOS ${result.oos_sharpe ?? "—"})`
+        );
+      } else {
+        setLog(`WF 失败: ${result.message || result.status}`);
+      }
+      await load();
+    } catch (error) {
+      setLog(String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
    * 手动调整阶段。
    */
   const changeStage = async (strategyId: string, stage: string) => {
@@ -466,7 +500,10 @@ export default function Strategies({ setLog }: PageLogProps) {
                           <div>Sharpe {(kpi.rolling_30d_sharpe ?? 0).toFixed(2)}</div>
                           <div>收益 {fmtPct(kpi.rolling_30d_return ?? 0)}</div>
                           <div>回撤 {fmtPct(kpi.rolling_30d_maxdd ?? 0)}</div>
-                          <div>IS/OOS {(kpi.walk_forward_is_oos_ratio ?? 0).toFixed(2)}</div>
+                          <div>
+                            WF {(kpi.walk_forward_is_oos_ratio ?? 0).toFixed(2)}
+                            <span className="text-[10px]"> (点 WF 重算)</span>
+                          </div>
                         </td>
                         <td className="px-3 py-3">
                           <StatusChip status={row.status} />
@@ -506,6 +543,14 @@ export default function Strategies({ setLog }: PageLogProps) {
                                 回测
                               </Button>
                             ) : null}
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              isDisabled={busy}
+                              onPress={() => void runWalkForward(row.id)}
+                            >
+                              WF
+                            </Button>
                             <Button
                               size="sm"
                               variant={

@@ -5,6 +5,8 @@ import type { PageLogProps } from "./types";
 
 type AppSettings = {
   trade_mode: "paper" | "live" | string;
+  auto_execute_live?: boolean;
+  i_understand_auto_live?: boolean;
   ml_engine: "lightgbm" | "xgboost" | string;
   llm_provider: string;
   llm_api_key: string;
@@ -29,6 +31,8 @@ type AppSettings = {
 
 const EMPTY: AppSettings = {
   trade_mode: "paper",
+  auto_execute_live: false,
+  i_understand_auto_live: false,
   ml_engine: "lightgbm",
   llm_provider: "deepseek",
   llm_api_key: "",
@@ -95,6 +99,8 @@ export default function Settings({ setLog }: PageLogProps) {
     try {
       const body: Record<string, unknown> = {
         trade_mode: form.trade_mode,
+        auto_execute_live: Boolean(form.auto_execute_live),
+        i_understand_auto_live: Boolean(form.i_understand_auto_live),
         ml_engine: form.ml_engine,
         llm_provider: form.llm_provider,
         llm_base_url: form.llm_base_url,
@@ -185,6 +191,51 @@ export default function Settings({ setLog }: PageLogProps) {
               onChange={(e) => patch("paper_initial_cash", Number(e.target.value) || 0)}
             />
           </Field>
+        </div>
+        <div className="mt-4 space-y-3 rounded-lg border border-[var(--desk-line)] bg-[var(--desk-ink)] p-4">
+          <div className="text-sm font-medium text-[var(--desk-text)]">实盘执行（双开关）</div>
+          <p className="text-xs text-[var(--desk-mist)]">
+            默认关闭自动成交：live 订单进入审批队列。两开关同时开启才自动成交（当前仍为
+            Mock 落库，接真 QMT 后生效）。
+          </p>
+          <label className="flex items-start gap-2 text-sm text-[var(--desk-text)]">
+            <input
+              type="checkbox"
+              className="mt-1"
+              checked={Boolean(form.auto_execute_live)}
+              onChange={(e) => patch("auto_execute_live", e.target.checked)}
+            />
+            <span>
+              自动成交（AUTO_EXECUTE_LIVE）
+              <span className="mt-0.5 block text-xs text-[var(--desk-mist)]">
+                关闭时实盘单为「待审批」
+              </span>
+            </span>
+          </label>
+          <label className="flex items-start gap-2 text-sm text-[var(--desk-text)]">
+            <input
+              type="checkbox"
+              className="mt-1"
+              checked={Boolean(form.i_understand_auto_live)}
+              onChange={(e) => patch("i_understand_auto_live", e.target.checked)}
+            />
+            <span>
+              我已理解自动实盘风险（I_UNDERSTAND_AUTO_LIVE）
+              <span className="mt-0.5 block text-xs text-[var(--desk-mist)]">
+                仅勾选此项不足以自动成交，需与上一开关同时开启
+              </span>
+            </span>
+          </label>
+          <p className="text-xs text-[var(--desk-mist)]">
+            当前实盘子模式：{" "}
+            <span className="font-mono text-[var(--desk-text)]">
+              {!form.auto_execute_live
+                ? "approval（审批）"
+                : form.i_understand_auto_live
+                  ? "auto（自动）"
+                  : "blocked（缺确认）"}
+            </span>
+          </p>
         </div>
       </Section>
 

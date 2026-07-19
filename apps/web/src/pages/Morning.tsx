@@ -80,6 +80,24 @@ export default function Morning({ setLog }: PageLogProps) {
     }
   };
 
+  /**
+   * 将当日强势个股写入自选。
+   */
+  const bindWatchlist = async () => {
+    setBusy(true);
+    try {
+      const result = await api<{ count: number; added: string[] }>("/api/morning/bind", {
+        method: "POST",
+        body: JSON.stringify({ asof: data?.asof || undefined, limit: 20 }),
+      });
+      setLog(`已写入自选 ${result.count} 只：${(result.added || []).slice(0, 8).join(", ")}`);
+    } catch (error) {
+      setLog(String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const pre = data?.briefs?.preopen;
   const post = data?.briefs?.post_auction;
 
@@ -95,12 +113,20 @@ export default function Morning({ setLog }: PageLogProps) {
               </Chip>
             )}
           </div>
-          <div className="flex shrink-0 gap-2">
+          <div className="flex shrink-0 flex-wrap gap-2">
             <Button size="sm" variant="secondary" isDisabled={busy} onPress={() => void load()}>
               刷新
             </Button>
             <Button size="sm" variant="secondary" isDisabled={busy} onPress={() => void runAuction()}>
               重跑竞价选拔
+            </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              isDisabled={busy || !(data?.stocks?.length)}
+              onPress={() => void bindWatchlist()}
+            >
+              一键进自选
             </Button>
             <Button size="sm" variant="primary" isDisabled={busy} onPress={() => void runAll()}>
               运行开盘前 + 竞价
@@ -156,8 +182,21 @@ export default function Morning({ setLog }: PageLogProps) {
       </Card>
 
       <Card className="border border-[var(--desk-line)] bg-[var(--desk-panel)]">
-        <CardHeader className="p-5 pb-3">
-          <CardTitle className="text-base text-[var(--desk-text)]">强势个股</CardTitle>
+        <CardHeader className="flex flex-wrap items-center justify-between gap-2 p-5 pb-3">
+          <div>
+            <CardTitle className="text-base text-[var(--desk-text)]">强势个股</CardTitle>
+            <p className="mt-1 text-xs text-[var(--desk-mist)]">
+              「一键进自选」写入监控池，可用策略 Runner 扫描
+            </p>
+          </div>
+          <Button
+            size="sm"
+            variant="primary"
+            isDisabled={busy || !(data?.stocks?.length)}
+            onPress={() => void bindWatchlist()}
+          >
+            一键进自选
+          </Button>
         </CardHeader>
         <CardContent className="p-5 pt-2">
           <div className="overflow-x-auto">

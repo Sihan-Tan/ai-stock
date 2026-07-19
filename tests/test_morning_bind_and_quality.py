@@ -69,8 +69,12 @@ def test_execution_quality_runs(db: Session):
     )
     stats = analyze_paper_execution(db)
     assert stats["trades"] >= 1
+    assert "configured_slip_bps" in stats
+    assert "buy_count" in stats
+    assert stats["buy_count"] >= 1
 
 
 def test_attribution_empty(db: Session):
     out = simple_vs_buyhold(db)
     assert out["status"] == "empty"
+    assert "暂无回测" in (out.get("message") or "")

@@ -44,6 +44,23 @@ type RiskState = {
 type ModeTab = "monitor" | "live";
 type DrawerState = { symbol: string; position: PositionContext };
 type StrategyOpt = { id: string; name: string };
+type ApprovalItem = {
+  id?: number;
+  client_order_id: string;
+  symbol: string;
+  side: string;
+  qty: number;
+  price?: number | null;
+  status?: string;
+  message?: string;
+  created_at?: string | null;
+};
+type TradingModeState = {
+  trade_mode?: string;
+  auto_execute_live?: boolean;
+  i_understand_auto_live?: boolean;
+  live_execution?: string;
+};
 
 const selectClass =
   "rounded-lg border border-[var(--desk-line)] bg-[var(--desk-ink)] px-2 py-1.5 text-xs text-[var(--desk-text)] outline-none focus:border-[var(--desk-mist)]";
@@ -66,19 +83,25 @@ export default function Paper({ setLog }: PageLogProps) {
   const [strategies, setStrategies] = useState<StrategyOpt[]>([]);
   const [runStrategyId, setRunStrategyId] = useState("ma_cross");
   const [runSymbol, setRunSymbol] = useState("600519.SH");
+  const [approvals, setApprovals] = useState<ApprovalItem[]>([]);
+  const [tradingMode, setTradingMode] = useState<TradingModeState | null>(null);
 
   const refresh = useCallback(async () => {
     try {
-      const [paper, wl, al, rk] = await Promise.all([
+      const [paper, wl, al, rk, ap, tm] = await Promise.all([
         api<PaperSummary>("/api/broker/paper"),
         api<WatchRow[]>("/api/market/watchlist").catch(() => [] as WatchRow[]),
         api<AlertRow[]>("/api/alerts").catch(() => [] as AlertRow[]),
         api<RiskState>("/api/broker/risk").catch(() => null),
+        api<{ items: ApprovalItem[] }>("/api/broker/approvals").catch(() => ({ items: [] })),
+        api<TradingModeState>("/api/broker/trading-mode").catch(() => null),
       ]);
       setSummary(paper);
       setWatch(wl);
       setAlerts(al);
       setRisk(rk);
+      setApprovals(ap.items || []);
+      setTradingMode(tm);
     } catch (error) {
       setLog(String(error));
     }
@@ -252,6 +275,43 @@ export default function Paper({ setLog }: PageLogProps) {
     }
   };
 
+  /**
+   * 批准待审批实盘单。
+   */
+  const approveOrder = async (clientOrderId: string) => {
+    setBusy(true);
+    try {
+      const r = await api<{ status: string; message?: string }>(
+        `/api/broker/approvals/${encodeURIComponent(clientOrderId)}/approve`,
+        { method: "POST" }
+      );
+      setLog(`已批准 ${clientOrderId}: ${r.status} ${r.message || ""}`);
+      await refresh();
+    } catch (error) {
+      setLog(String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
+   * 拒绝待审批实盘单。
+   */
+  const rejectOrder = async (clientOrderId: string) => {
+    setBusy(true);
+    try {
+      await api(`/api/broker/approvals/${encodeURIComponent(clientOrderId)}/reject`, {
+        method: "POST",
+      });
+      setLog(`已拒绝 ${clientOrderId}`);
+      await refresh();
+    } catch (error) {
+      setLog(String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const nowLabel = new Date().toLocaleTimeString("zh-CN", { hour12: false });
 
   return (
@@ -268,7 +328,7 @@ export default function Paper({ setLog }: PageLogProps) {
             ].join(" ")}
             onClick={() => setTab("monitor")}
           >
-            实盘监控
+            模拟盘
           </button>
           <button
             type="button"
@@ -291,27 +351,109 @@ export default function Paper({ setLog }: PageLogProps) {
       </div>
 
       {tab === "live" ? (
-        <Card className="border border-[var(--desk-line)] bg-[var(--desk-panel)]">
-          <CardHeader className="p-5 pb-2">
-            <CardTitle className="text-base">实盘通道</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3 p-5 pt-2 text-sm text-[var(--desk-mist)]">
-            <p>
-              实盘下单受风控闸门约束。当前 armed=
-              <span className="font-mono text-[var(--desk-text)]">
-                {String(risk?.armed ?? false)}
-              </span>
-              ，kill_switch=
-              <span className="font-mono text-[var(--desk-text)]">
-                {String(risk?.kill_switch ?? false)}
-              </span>
-              。完整控制请到「实盘风控」页。
-            </p>
-            <Button variant="secondary" onPress={refresh}>
-              刷新状态
-            </Button>
-          </CardContent>
-        </Card>
+        <div className="space-y-4">
+          <Card className="border border-[var(--desk-line)] bg-[var(--desk-panel)]">
+            <CardHeader className="p-5 pb-2">
+              <CardTitle className="text-base">实盘通道</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3 p-5 pt-2 text-sm text-[var(--desk-mist)]">
+              <p>
+                实盘下单受风控闸门约束。armed=
+                <span className="font-mono text-[var(--desk-text)]">
+                  {String(risk?.armed ?? false)}
+                </span>
+                ，kill=
+                <span className="font-mono text-[var(--desk-text)]">
+                  {String(risk?.kill_switch ?? false)}
+                </span>
+                。执行模式=
+                <span className="font-mono text-[var(--desk-text)]">
+                  {tradingMode?.live_execution || "—"}
+                </span>
+                （自动={String(tradingMode?.auto_execute_live ?? false)} / 确认=
+                {String(tradingMode?.i_understand_auto_live ?? false)}）。可在「设置」改双开关。
+              </p>
+              <Button variant="secondary" onPress={refresh}>
+                刷新状态
+              </Button>
+            </CardContent>
+          </Card>
+
+          <Card className="border border-[var(--desk-line)] bg-[var(--desk-panel)]">
+            <CardHeader className="flex flex-wrap items-center justify-between gap-2 p-5 pb-2">
+              <div>
+                <CardTitle className="text-base">待审批订单</CardTitle>
+                <p className="mt-1 text-xs text-[var(--desk-mist)]">
+                  live 且未开自动成交时，订单进入此队列
+                </p>
+              </div>
+              <Chip size="sm" variant="soft">
+                {approvals.length} 笔
+              </Chip>
+            </CardHeader>
+            <CardContent className="p-5 pt-2">
+              <div className="overflow-x-auto">
+                <table className="w-full border-collapse text-left text-sm">
+                  <thead className="border-b border-[var(--desk-line)] text-[var(--desk-mist)]">
+                    <tr>
+                      <th className="px-2 py-2 font-medium">时间</th>
+                      <th className="px-2 py-2 font-medium">标的</th>
+                      <th className="px-2 py-2 font-medium">方向</th>
+                      <th className="px-2 py-2 font-medium">数量</th>
+                      <th className="px-2 py-2 font-medium">价格</th>
+                      <th className="px-2 py-2 font-medium">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {approvals.map((a) => (
+                      <tr
+                        key={a.client_order_id}
+                        className="border-b border-[var(--desk-line)] last:border-0"
+                      >
+                        <td className="px-2 py-2 font-mono text-xs">
+                          {a.created_at?.slice(0, 19) || "—"}
+                        </td>
+                        <td className="px-2 py-2 font-mono text-xs">{a.symbol}</td>
+                        <td className="px-2 py-2">{a.side}</td>
+                        <td className="px-2 py-2 font-mono">{a.qty}</td>
+                        <td className="px-2 py-2 font-mono">
+                          {a.price != null ? a.price.toFixed(3) : "—"}
+                        </td>
+                        <td className="px-2 py-2">
+                          <div className="flex gap-2">
+                            <Button
+                              size="sm"
+                              variant="primary"
+                              isDisabled={busy}
+                              onPress={() => void approveOrder(a.client_order_id)}
+                            >
+                              批准
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="danger"
+                              isDisabled={busy}
+                              onPress={() => void rejectOrder(a.client_order_id)}
+                            >
+                              拒绝
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                    {!approvals.length && (
+                      <tr>
+                        <td colSpan={6} className="px-2 py-8 text-center text-[var(--desk-mist)]">
+                          暂无待审批订单
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
       ) : (
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.6fr)_minmax(320px,1fr)]">
           {/* 左栏 */}
