@@ -6,6 +6,7 @@
 2. Kill Switch 打开时拒绝一切 live 单。
 3. 实盘受单笔/单日名义限额与标的白名单约束。
 4. AI / nanobot **禁止**注册实盘下单或解除 Kill Switch 的工具。
+5. 投研财务类工具（`get_financials` / `peer_compare` / `get_valuation` 等）**只读**，不得触发下单或修改风控状态。
 
 ## 引擎边界
 

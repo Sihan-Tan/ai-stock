@@ -101,6 +101,36 @@ pytest -q
 
 未配置 miniQMT 时使用 `MockQmtBroker`；实盘需 ARM + 白名单 + Kill Switch。
 
-### nanobot Skills
+### 投研 · nanobot
 
-自建 skill 位于仓库根目录 `skills/`。投研 API：`GET /api/ai/skills`、`POST /api/ai/chat`。
+投研页（`/research`）支持**多轮对话**：前端累积 `messages` 随 `POST /api/ai/chat` 发送，流式展示答复；可选 `skill_hint` 指定场景 skill；「新会话」清空历史。
+
+**API**
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/ai/skills` | 列出全部 skill |
+| POST | `/api/ai/chat` | 多轮对话（body: `{ messages, skill_hint? }`，流式文本） |
+| GET | `/api/ai/financials/{symbol}` | 调试 / 验数，绕过 LLM 拉财务快照（query: `years`，默认 5） |
+
+**LLM**：设置页配置 `llm_api_key` / `llm_base_url` / `llm_model`（或 `.env` 中 `LLM_*`）。未配置时对话会提示去设置页。
+
+**联网搜索（可选）**：五步法 / `web_search` 工具需 Tavily Key。在 `.env` 设置 `TAVILY_API_KEY`；未配置时搜索工具不可用，五步法仍可基于财务与知识库并会在答复中说明。
+
+**财务数据**：`FinancialService` 取数顺序为本地缓存 → QMT `xtdata` → **akshare** 自动降级；返回带 `source`（`qmt` / `akshare`）。QMT 不可用时仍可走 akshare（在数据源可用前提下）。
+
+**Skills**（仓库根目录 `skills/`）
+
+| Skill | 用途 |
+| --- | --- |
+| `investment-research` | 场景索引 |
+| `financial-analysis` | 单股财务趋势 → `get_financials` |
+| `peer-compare` | 同行对比 → `peer_compare` |
+| `valuation` | 估值与分位 → `get_valuation` |
+| `write-report` | 五步法研报 → 财务 + `web_search` + 知识库 |
+| `desk-readonly` | 只读查自选 / 策略 / 知识库 |
+| `knowledge-rag` | 知识库检索 |
+| `strategy-yaml-author` | 策略 YAML 草稿（用户明确要求时） |
+| `auction-strong-pick` | 竞价强势池 |
+
+投研工具均为**只读**（含 `get_financials` / `peer_compare` / `get_valuation`）；禁止注册下单或解除 Kill Switch 类工具。详见 [`docs/hard-rules.md`](docs/hard-rules.md)。
