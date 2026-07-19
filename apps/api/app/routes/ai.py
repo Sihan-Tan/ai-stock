@@ -13,6 +13,7 @@ router = APIRouter(prefix="/ai")
 
 class ChatIn(BaseModel):
     messages: list[dict]
+    skill_hint: str | None = None
 
 
 @router.get("/skills")
@@ -25,7 +26,7 @@ async def chat(body: ChatIn, db: Session = Depends(get_db)):
     session = NanobotResearchSession(db)
 
     async def gen():
-        async for chunk in session.run(body.messages):
+        async for chunk in session.run(body.messages, skill_hint=body.skill_hint):
             yield chunk
 
     return StreamingResponse(gen(), media_type="text/plain; charset=utf-8")

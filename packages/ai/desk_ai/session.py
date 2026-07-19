@@ -1,10 +1,8 @@
-"""投研会话（nanobot 适配）：Skill + 简易 Agent。
-
-Task 6 将在此增强 OpenAI tools 循环；当前保持既有 run() 行为。
-"""
+"""投研会话（nanobot 适配）：Skill + OpenAI tools 循环。"""
 
 from __future__ import annotations
 
+import json
 from typing import Any, AsyncIterator
 
 from sqlalchemy.orm import Session
@@ -15,14 +13,17 @@ from desk_market import MarketService
 from desk_strategy import StrategyRegistry
 
 from .skills import SkillLoader
-from .tools import dispatch_tool
+from .tools import TOOL_SPECS, dispatch_tool
+
+_TOOL_RESULT_MAX = 12_000
+_MAX_ITERATIONS = 8
 
 
 class NanobotResearchSession:
     """
     投研会话。
 
-    优先尝试真实 nanobot；否则走 OpenAI tools 循环 / 规则回复。
+    优先走 OpenAI 兼容 tools 循环；无 API Key 时提示配置，并保留策略/知识关键词降级。
     """
 
     def __init__(self, db: Session):
@@ -42,17 +43,127 @@ class NanobotResearchSession:
         """DeskQuant 工具桥（白名单 dispatch）。"""
         return dispatch_tool(self.db, name, arguments)
 
-    async def run(self, messages: list[dict[str, str]]) -> AsyncIterator[str]:
-        """流式输出回复（简化实现）。"""
-        user = next((m["content"] for m in reversed(messages) if m.get("role") == "user"), "")
-        if self.settings.llm_api_key:
-            try:
-                async for chunk in self._openai_stream(messages):
-                    yield chunk
-                return
-            except Exception as exc:  # noqa: BLE001
-                yield f"(LLM 调用失败，降级本地回复: {exc})\n\n"
+    async def _chat_create(self, **kwargs: Any) -> Any:
+        """调用 OpenAI 兼容 chat.completions.create（测试可注入替换）。"""
+        from openai import AsyncOpenAI
 
+        client = AsyncOpenAI(
+            api_key=self.settings.llm_api_key,
+            base_url=self.settings.llm_base_url,
+        )
+        return await client.chat.completions.create(**kwargs)
+
+    def _build_system(self, skill_hint: str | None) -> str:
+        """组装 system：身份 + skills 摘要 + 硬约束；可选加载 skill 全文。"""
+        parts = [
+            "你是刻度 Desk 投研助手，运行于 nanobot 技能体系。",
+            "只用只读工具；写策略只能 save_strategy_draft。",
+            "数字必须来自工具，禁止编造财务或估值数据。",
+            "禁止下单，禁止修改交易开关或 Kill Switch。",
+            f"可用 skills:\n{self.skill_summary()}",
+        ]
+        if skill_hint:
+            try:
+                parts.append(f"\n--- skill: {skill_hint} ---\n{self.skills.load(skill_hint)}")
+            except (FileNotFoundError, OSError):
+                pass
+        return "\n".join(parts)
+
+    @staticmethod
+    def _truncate_tool_result(value: Any) -> str:
+        """将工具结果序列化为 JSON，并截断至约 12000 字符。"""
+        try:
+            text = json.dumps(value, ensure_ascii=False, default=str)
+        except TypeError:
+            text = str(value)
+        if len(text) > _TOOL_RESULT_MAX:
+            return text[:_TOOL_RESULT_MAX] + "…(truncated)"
+        return text
+
+    @staticmethod
+    def _tool_calls_payload(tool_calls: Any) -> list[dict[str, Any]]:
+        """将 SDK tool_calls 转为可 append 的 message 片段。"""
+        out: list[dict[str, Any]] = []
+        for tc in tool_calls or []:
+            out.append(
+                {
+                    "id": tc.id,
+                    "type": getattr(tc, "type", "function") or "function",
+                    "function": {
+                        "name": tc.function.name,
+                        "arguments": tc.function.arguments or "{}",
+                    },
+                }
+            )
+        return out
+
+    async def run(
+        self,
+        messages: list[dict[str, Any]],
+        skill_hint: str | None = None,
+    ) -> AsyncIterator[str]:
+        """流式输出：tools 循环或无 Key 时的提示/关键词降级。"""
+        user = next((m.get("content") or "" for m in reversed(messages) if m.get("role") == "user"), "")
+        if not isinstance(user, str):
+            user = str(user)
+
+        if not self.settings.llm_api_key:
+            async for chunk in self._fallback_without_llm(user):
+                yield chunk
+            return
+
+        system = self._build_system(skill_hint)
+        working: list[dict[str, Any]] = [{"role": "system", "content": system}, *messages]
+
+        for _ in range(_MAX_ITERATIONS):
+            resp = await self._chat_create(
+                model=self.settings.llm_model,
+                messages=working,
+                tools=TOOL_SPECS,
+                tool_choice="auto",
+            )
+            msg = resp.choices[0].message
+            tool_calls = getattr(msg, "tool_calls", None) or None
+            content = getattr(msg, "content", None)
+
+            if tool_calls:
+                working.append(
+                    {
+                        "role": "assistant",
+                        "content": content,
+                        "tool_calls": self._tool_calls_payload(tool_calls),
+                    }
+                )
+                for tc in tool_calls:
+                    name = tc.function.name
+                    yield f"[tool:{name}]\n"
+                    raw_args = tc.function.arguments or "{}"
+                    try:
+                        args = json.loads(raw_args)
+                    except json.JSONDecodeError:
+                        args = {}
+                    if not isinstance(args, dict):
+                        args = {}
+                    result = dispatch_tool(self.db, name, args)
+                    working.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tc.id,
+                            "content": self._truncate_tool_result(result),
+                        }
+                    )
+                continue
+
+            if content:
+                yield content
+                return
+
+            return
+
+        yield "（已达工具调用轮次上限，请缩小问题后重试。）"
+
+    async def _fallback_without_llm(self, user: str) -> AsyncIterator[str]:
+        """无 API Key：提示配置 LLM；可选策略/知识关键词降级（不假装五步法）。"""
         if "策略" in user or "yaml" in user.lower():
             draft = {
                 "id": "agent_auction_chase",
@@ -78,28 +189,7 @@ class NanobotResearchSession:
                 yield "检索命中：\n" + "\n---\n".join(h["content"][:200] for h in hits)
             return
 
-        wl = self.market.list_watchlist()
         yield (
-            "nanobot 适配层在线（只读工具）。\n"
-            f"Skills:\n{self.skill_summary()}\n\n"
-            f"自选（{len(wl)}）：" + ", ".join(i["symbol"] for i in wl[:10])
-        )
-
-    async def _openai_stream(self, messages: list[dict[str, str]]) -> AsyncIterator[str]:
-        """OpenAI 兼容非流式一次返回（简化）。"""
-        from openai import AsyncOpenAI
-
-        client = AsyncOpenAI(
-            api_key=self.settings.llm_api_key,
-            base_url=self.settings.llm_base_url,
-        )
-        system = (
-            "你是刻度 Desk 投研助手，运行于 nanobot 技能体系。"
-            "只用只读工具；写策略只能 save_strategy_draft。"
+            "未配置 LLM API Key。请到设置页填写 LLM（OpenAI 兼容 / DeepSeek 等）后再使用投研对话。"
             f"\n可用 skills:\n{self.skill_summary()}"
         )
-        resp = await client.chat.completions.create(
-            model=self.settings.llm_model,
-            messages=[{"role": "system", "content": system}, *messages],
-        )
-        yield resp.choices[0].message.content or ""
