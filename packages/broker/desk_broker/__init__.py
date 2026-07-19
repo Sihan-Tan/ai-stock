@@ -430,3 +430,14 @@ class BrokerGateway:
         if result.status == "filled" and intent.price:
             self.risk.daily_used += float(intent.price) * float(intent.qty)
         return result
+
+
+from desk_broker.paper_runner import PaperStrategyRunner  # noqa: E402
+
+__all__ = [
+    "Broker",
+    "PaperBroker",
+    "RiskGate",
+    "BrokerGateway",
+    "PaperStrategyRunner",
+]

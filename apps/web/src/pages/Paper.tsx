@@ -43,6 +43,10 @@ type RiskState = {
 
 type ModeTab = "monitor" | "live";
 type DrawerState = { symbol: string; position: PositionContext };
+type StrategyOpt = { id: string; name: string };
+
+const selectClass =
+  "rounded-lg border border-[var(--desk-line)] bg-[var(--desk-ink)] px-2 py-1.5 text-xs text-[var(--desk-text)] outline-none focus:border-[var(--desk-mist)]";
 
 /**
  * 实盘监控仪表盘：持仓 / 信号 / 资金 / 成交 / 风控说明。
@@ -59,6 +63,9 @@ export default function Paper({ setLog }: PageLogProps) {
   const [busy, setBusy] = useState(false);
   const [openPanel, setOpenPanel] = useState<string | null>(null);
   const [drawer, setDrawer] = useState<DrawerState | null>(null);
+  const [strategies, setStrategies] = useState<StrategyOpt[]>([]);
+  const [runStrategyId, setRunStrategyId] = useState("ma_cross");
+  const [runSymbol, setRunSymbol] = useState("600519.SH");
 
   const refresh = useCallback(async () => {
     try {
@@ -82,6 +89,80 @@ export default function Paper({ setLog }: PageLogProps) {
     const t = window.setInterval(refresh, 15000);
     return () => window.clearInterval(t);
   }, [refresh]);
+
+  useEffect(() => {
+    void api<StrategyOpt[]>("/api/strategies")
+      .then((list) => {
+        setStrategies(list.map((s) => ({ id: s.id, name: s.name })));
+        if (list[0] && !list.some((s) => s.id === runStrategyId)) {
+          setRunStrategyId(list[0].id);
+        }
+      })
+      .catch(() => undefined);
+    // 仅挂载时拉取策略列表
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /**
+   * 对指定标的跑一次纸交易策略。
+   */
+  const runPaperOnce = async () => {
+    const symbol = runSymbol.trim().toUpperCase();
+    if (!symbol || !runStrategyId) return;
+    setBusy(true);
+    try {
+      const result = await api<{
+        status: string;
+        message?: string;
+        signals?: unknown[];
+        orders?: Array<{ status?: string; message?: string }>;
+        last_price?: number;
+      }>("/api/broker/paper/run-once", {
+        method: "POST",
+        body: JSON.stringify({ strategy_id: runStrategyId, symbol }),
+      });
+      const nOrd = result.orders?.length ?? 0;
+      const nSig = result.signals?.length ?? 0;
+      setLog(
+        result.status === "ok"
+          ? `Runner ${runStrategyId}@${symbol}: 信号 ${nSig} · 订单 ${nOrd}` +
+              (result.orders?.[0]?.status ? ` · ${result.orders[0].status}` : "") +
+              (result.last_price != null ? ` · 价 ${result.last_price}` : "")
+          : `Runner 失败: ${result.message || result.status}`
+      );
+      await refresh();
+    } catch (error) {
+      setLog(String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
+   * 对自选全部标的跑一次纸交易策略。
+   */
+  const runPaperWatchlist = async () => {
+    if (!runStrategyId) return;
+    setBusy(true);
+    try {
+      const result = await api<{
+        status: string;
+        count: number;
+        filled: number;
+      }>("/api/broker/paper/run-watchlist", {
+        method: "POST",
+        body: JSON.stringify({ strategy_id: runStrategyId }),
+      });
+      setLog(
+        `Runner 自选: ${runStrategyId} · 扫描 ${result.count} · 成交 ${result.filled}`
+      );
+      await refresh();
+    } catch (error) {
+      setLog(String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const quoteMap = useMemo(() => {
     const m = new Map<string, WatchRow>();
@@ -204,7 +285,7 @@ export default function Paper({ setLog }: PageLogProps) {
         </div>
         <p className="text-xs text-[var(--desk-mist)]">
           {tab === "monitor"
-            ? "实盘监控 (/live/sim)：自动跑策略，不会真实下单"
+            ? "纸交易监控：用「策略 Runner」评估信号并下模拟单，不会真实下单"
             : "实盘 (/live)：需 ARM + 白名单，真实通道下单"}
         </p>
       </div>
@@ -417,6 +498,55 @@ export default function Paper({ setLog }: PageLogProps) {
 
           {/* 右栏 */}
           <div className="space-y-4">
+            <Card className="border border-[var(--desk-line)] bg-[var(--desk-panel)]">
+              <CardHeader className="p-5 pb-2">
+                <CardTitle className="text-base">策略 Runner</CardTitle>
+                <p className="mt-1 text-xs text-[var(--desk-mist)]">
+                  用最新日 K 评估 on_bar，空仓可买、持仓可卖（与回测口径一致）
+                </p>
+              </CardHeader>
+              <CardContent className="space-y-3 p-5 pt-2">
+                <label className="block space-y-1 text-xs text-[var(--desk-mist)]">
+                  策略
+                  <select
+                    className={`${selectClass} block w-full`}
+                    value={runStrategyId}
+                    onChange={(e) => setRunStrategyId(e.target.value)}
+                  >
+                    {(strategies.length ? strategies : [{ id: "ma_cross", name: "双均线" }]).map(
+                      (s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.name} ({s.id})
+                        </option>
+                      )
+                    )}
+                  </select>
+                </label>
+                <label className="block space-y-1 text-xs text-[var(--desk-mist)]">
+                  标的
+                  <Input
+                    aria-label="Runner 标的"
+                    value={runSymbol}
+                    onChange={(e) => setRunSymbol(e.target.value)}
+                    placeholder="600519.SH"
+                  />
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  <Button size="sm" variant="primary" isDisabled={busy} onPress={runPaperOnce}>
+                    跑一次
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    isDisabled={busy}
+                    onPress={runPaperWatchlist}
+                  >
+                    跑自选
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+
             <Card className="border border-[var(--desk-line)] bg-[var(--desk-panel)]">
               <CardHeader className="flex flex-wrap items-center justify-between gap-2 p-5 pb-2">
                 <div className="flex items-center gap-2">

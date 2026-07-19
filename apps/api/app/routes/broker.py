@@ -22,6 +22,19 @@ class OrderIn(BaseModel):
     mode: str | None = None
 
 
+class PaperRunIn(BaseModel):
+    """单标的纸交易策略跑一次。"""
+
+    strategy_id: str
+    symbol: str
+
+
+class PaperWatchRunIn(BaseModel):
+    """自选批量纸交易策略跑一次。"""
+
+    strategy_id: str
+
+
 class RiskIn(BaseModel):
     armed: bool | None = None
     kill_switch: bool | None = None
@@ -54,6 +67,24 @@ def paper_summary(db: Session = Depends(get_db)):
 def paper_reset(db: Session = Depends(get_db)):
     """重置模拟账户持仓与成交流水。"""
     return get_gate(db).paper.reset_account()
+
+
+@router.post("/paper/run-once")
+def paper_run_once(body: PaperRunIn, db: Session = Depends(get_db)):
+    """对单标的跑一次纸交易策略评估并下单。"""
+    from desk_broker.paper_runner import PaperStrategyRunner
+
+    return PaperStrategyRunner(db).run_once(
+        strategy_id=body.strategy_id, symbol=body.symbol
+    )
+
+
+@router.post("/paper/run-watchlist")
+def paper_run_watchlist(body: PaperWatchRunIn, db: Session = Depends(get_db)):
+    """对自选全部标的跑一次纸交易策略。"""
+    from desk_broker.paper_runner import PaperStrategyRunner
+
+    return PaperStrategyRunner(db).run_watchlist(strategy_id=body.strategy_id)
 
 
 @router.get("/qmt/ping")
