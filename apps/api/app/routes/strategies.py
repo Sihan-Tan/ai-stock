@@ -164,6 +164,28 @@ def update_lifecycle_kpi(strategy_id: str, body: KpiIn, db: Session = Depends(ge
     return meta.model_dump()
 
 
+class WalkForwardIn(BaseModel):
+    """Walk-Forward 请求。"""
+
+    symbol: str | None = None
+
+
+@router.post("/{strategy_id}/lifecycle/walk-forward")
+def lifecycle_walk_forward(
+    strategy_id: str,
+    body: WalkForwardIn | None = None,
+    db: Session = Depends(get_db),
+):
+    """跑 Walk-Forward 并写入 KPI 的 IS/OOS 比例。"""
+    payload = body or WalkForwardIn()
+    result = StrategyRegistry(db).apply_walk_forward(
+        strategy_id, symbol=payload.symbol
+    )
+    if result.get("status") == "error" and "not found" in str(result.get("message", "")):
+        raise HTTPException(404, result.get("message") or "not found")
+    return result
+
+
 @router.delete("/{strategy_id}")
 def delete_strategy(strategy_id: str, db: Session = Depends(get_db)):
     """

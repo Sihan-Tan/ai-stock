@@ -339,6 +339,53 @@ class StrategyRegistry:
         self.db.flush()
         return self._row_to_meta(row)
 
+    def apply_walk_forward(
+        self,
+        strategy_id: str,
+        *,
+        symbol: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        跑 Walk-Forward 并将 ``walk_forward_is_oos_ratio`` 写入 KPI。
+
+        @param strategy_id: 策略 ID
+        @param symbol: 标的；缺省用最近回测标的
+        """
+        from desk_backtest.walk_forward import run_walk_forward
+
+        row = self._latest_row(strategy_id)
+        if not row:
+            return {"status": "error", "message": "strategy not found", "strategy_id": strategy_id}
+        self._ensure_lifecycle_defaults(row)
+        sym = symbol
+        if not sym:
+            run = self.db.scalar(
+                select(BacktestRun)
+                .where(BacktestRun.strategy_id == strategy_id)
+                .order_by(BacktestRun.id.desc())
+            )
+            sym = run.symbol if run else None
+        if not sym:
+            return {
+                "status": "error",
+                "strategy_id": strategy_id,
+                "message": "symbol required (or run a backtest first)",
+                "walk_forward_is_oos_ratio": 0.0,
+            }
+        result = run_walk_forward(self.db, strategy_id=strategy_id, symbol=sym)
+        if result.get("status") == "ok":
+            kpi = StrategyKPI.from_dict(json.loads(row.kpi_json or "{}"))
+            kpi.walk_forward_is_oos_ratio = float(result["walk_forward_is_oos_ratio"])
+            if result.get("oos_return") is not None and not kpi.rolling_30d_return:
+                kpi.rolling_30d_return = float(result["oos_return"])
+            if result.get("oos_sharpe") is not None and not kpi.rolling_30d_sharpe:
+                kpi.rolling_30d_sharpe = float(result["oos_sharpe"] or 0)
+            row.kpi_json = json.dumps(kpi.to_dict(), ensure_ascii=False)
+            row.lifecycle_updated_at = datetime.utcnow()
+            self.db.flush()
+            result["kpi"] = kpi.to_dict()
+        return result
+
     def set_stage(
         self,
         strategy_id: str,
@@ -373,6 +420,13 @@ class StrategyRegistry:
             self._ensure_lifecycle_defaults(row)
             if refresh_from_backtest:
                 self._refresh_kpi_from_backtest(row)
+                # 孵化阶段且尚无 WF 比例时，用最近回测标的自动补算
+                kpi0 = StrategyKPI.from_dict(json.loads(row.kpi_json or "{}"))
+                if (
+                    row.lifecycle_stage == LifecycleStage.INCUBATING.value
+                    and float(kpi0.walk_forward_is_oos_ratio or 0) <= 0
+                ):
+                    self.apply_walk_forward(row.strategy_id)
             kpi = StrategyKPI.from_dict(json.loads(row.kpi_json or "{}"))
             # 已在生产且低 Sharpe 时累加连续天数（简化：每次评估 +1 若 sharpe<0.3）
             if (

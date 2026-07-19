@@ -350,11 +350,12 @@ class BacktraderRunner:
             return 252.0 * 240.0
         return 252.0
 
-    def run(self, req: BacktestRequest) -> BacktestReport:
+    def run(self, req: BacktestRequest, *, persist: bool = True) -> BacktestReport:
         """
-        执行回测并落库。
+        执行回测并可落库。
 
         @param req: 回测请求
+        @param persist: 是否写入 BacktestRun（Walk-Forward 子段可关）
         @returns: 归一化报告
         """
         reg = self.registry.load(req.strategy_id)
@@ -428,18 +429,19 @@ class BacktraderRunner:
             equity_curve=_downsample_curve(equity_curve),
             trade_list=trade_list,
         )
-        self.db.add(
-            BacktestRun(
-                strategy_id=req.strategy_id,
-                symbol=req.symbol,
-                start_date=req.start,
-                end_date=req.end,
-                total_return=report.total_return,
-                max_drawdown=report.max_drawdown,
-                sharpe=report.sharpe,
-                trades=report.trades,
-                report_json=report.model_dump_json(),
+        if persist:
+            self.db.add(
+                BacktestRun(
+                    strategy_id=req.strategy_id,
+                    symbol=req.symbol,
+                    start_date=req.start,
+                    end_date=req.end,
+                    total_return=report.total_return,
+                    max_drawdown=report.max_drawdown,
+                    sharpe=report.sharpe,
+                    trades=report.trades,
+                    report_json=report.model_dump_json(),
+                )
             )
-        )
-        self.db.flush()
+            self.db.flush()
         return report
