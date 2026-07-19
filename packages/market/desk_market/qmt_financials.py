@@ -35,8 +35,18 @@ _FIELD_ALIASES: dict[str, tuple[str, ...]] = {
         "net_profit_incl_min_int_inc",
         "net_profit_excl_min_int_inc",
     ),
-    "gross_margin": ("sales_gross_profit", "gross_profit", "gross_margin"),
-    "net_margin": ("net_profit", "net_margin"),
+    "gross_margin": (
+        "gross_margin",
+        "gross_profit_margin",
+        "s_fa_grossprofitmargin",
+        "毛利率",
+    ),
+    "net_margin": (
+        "net_margin",
+        "net_profit_margin",
+        "s_fa_netprofitmargin",
+        "净利率",
+    ),
     "roe": ("du_return_on_equity", "equity_roe", "net_roe", "roe"),
     "debt_ratio": ("gear_ratio", "debt_ratio", "asset_liability_ratio"),
     "eps": ("s_fa_eps_basic", "s_fa_eps_diluted", "eps", "adjusted_earnings_per_share"),
@@ -48,7 +58,11 @@ _FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     ),
     "total_assets": ("tot_assets", "total_assets"),
     "total_liab": ("tot_liab", "total_liab", "total_liability"),
-    "total_equity": ("total_equity",),
+    "total_equity": (
+        "tot_shrhldr_eqy_excl_min_int",
+        "tot_shrhldr_eqy",
+        "total_equity",
+    ),
     "total_shares": ("total_capital", "total_shares", "circulating_capital"),
 }
 

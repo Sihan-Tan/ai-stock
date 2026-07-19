@@ -61,6 +61,40 @@ def test_mock_qmt_financials_returns_tables():
     assert out["tables"]["Income"][0]["net_profit"] == 5e10
 
 
+def test_map_qmt_row_net_margin_prefers_ratio_over_net_profit():
+    from desk_market.qmt_financials import _map_qmt_row
+
+    row = _map_qmt_row(
+        {
+            "period": "20241231",
+            "net_profit": 5e10,
+            "net_margin": 25.5,
+        }
+    )
+    assert row["net_profit"] == 5e10
+    assert row["net_margin"] == 25.5
+
+
+def test_map_qmt_row_net_margin_none_when_only_net_profit():
+    from desk_market.qmt_financials import _map_qmt_row
+
+    row = _map_qmt_row({"period": "20241231", "net_profit": 5e10})
+    assert row["net_profit"] == 5e10
+    assert row["net_margin"] is None
+
+
+def test_map_qmt_row_balance_equity_maps_to_total_equity():
+    from desk_market.qmt_financials import _map_qmt_row
+
+    row = _map_qmt_row(
+        {
+            "period": "20241231",
+            "tot_shrhldr_eqy_excl_min_int": 8e11,
+        }
+    )
+    assert row["total_equity"] == 8e11
+
+
 def test_fetch_akshare_financials_monkeypatch(monkeypatch):
     from desk_market import akshare_financials
 
