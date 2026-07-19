@@ -4,6 +4,7 @@ from datetime import date
 import json
 
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -11,8 +12,17 @@ from desk_db import get_db
 from desk_db.models import MorningBriefRow, MorningStrongPick
 from desk_market.auction_ingest import AuctionSnapshotIngestor
 from desk_morning_brief import MorningBriefService
+from desk_morning_brief.bind import bind_morning_picks
 
 router = APIRouter(prefix="/morning")
+
+
+class MorningBindIn(BaseModel):
+    """晨会标的写入自选。"""
+
+    asof: date | None = None
+    limit: int = Field(20, ge=1, le=100)
+    symbols: list[str] | None = None
 
 
 def _get_market_data():
@@ -92,3 +102,17 @@ def morning_latest(asof: date | None = None, db: Session = Depends(get_db)):
         else:
             stocks.append(item)
     return {"asof": asof.isoformat(), "briefs": by_stage, "boards": boards, "stocks": stocks}
+
+
+@router.post("/bind")
+def morning_bind(body: MorningBindIn | None = None, db: Session = Depends(get_db)):
+    """
+    晨会强势个股（或指定 symbols）一键写入自选。
+    """
+    payload = body or MorningBindIn()
+    return bind_morning_picks(
+        db,
+        asof=payload.asof,
+        limit=payload.limit,
+        symbols=payload.symbols,
+    )

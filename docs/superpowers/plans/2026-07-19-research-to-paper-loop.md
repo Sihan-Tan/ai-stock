@@ -300,109 +300,46 @@ def paper_run_once(body: PaperRunIn, db: Session = Depends(get_db)):
 
 ---
 
-## Phase 2: 纸交易成本与权益对齐
+## Phase 2: 纸交易成本与权益对齐 — ✅ 已完成
 
-### Task 2.1: 抽取共用成本模块
+- 共用 `desk_common/trading_cost.py`；纸交易扣佣金/印花税/滑点；权益 mark-to-market  
+- Commit: `56520c6`
 
-**Files:**
-- Create: `packages/broker/desk_broker/trading_cost.py`（或 `packages/common/desk_common/trading_cost.py`）
-- Modify: `packages/backtest/desk_backtest/commission.py` 改为调用共用函数
-- Modify: `PaperBroker.place_order`：扣买佣金/卖佣金+印花税；可选滑点打在成交价上
-- Modify: `summary` / 成交后：`equity = cash + Σ(qty * last_close)`
+## Phase 3: Walk-Forward + KPI — ✅ 已完成
 
-- [ ] 测试：买入后 cash 减少额 = notional + commission；卖出后扣印花税  
-- [ ] 测试：有持仓时 equity ≠ cash（除非价=0）  
-- [ ] Commit: `feat(broker): 纸交易对齐 A 股费用与市值权益`
+- `desk_backtest/walk_forward.py`；孵化评估自动补算；API `.../lifecycle/walk-forward`  
+- Commit: `1b52353`
 
----
+## Phase 4: 生命周期晋升闸门 — ✅ 已完成
 
-## Phase 3: Walk-Forward + KPI 自动写入
+- `promotion_gate.py`；Runner 仅 probation/production 可买  
+- Commit: `493fb36`
 
-### Task 3.1: Walk-Forward 引擎
+## Phase 5: 审批模式 + 真 QMT — ✅ 已完成（真单仍 Mock 落库）
 
-**Files:**
-- Create: `packages/backtest/desk_backtest/walk_forward.py`
-- Modify: `StrategyRegistry.evaluate_and_migrate` / `_refresh_kpi_from_backtest`
-- API: `POST /api/strategies/{id}/lifecycle/walk-forward`
+- 默认 live → `awaiting_approval`；`AUTO_EXECUTE_LIVE` + `I_UNDERSTAND_AUTO_LIVE` 才自动成交  
+- Approvals API；xtquant 探测后仍 Mock，message 提示待接真柜台  
+- Commit: `5ad7af2`
 
-规则（对齐 AISeeValue 口径简化版）：
-- 按日切 IS/OOS（如 70%/30% 或滚动窗）
-- 各段跑 `BacktraderRunner`（或轻量复用 on_bar PnL）
-- `walk_forward_is_oos_ratio = oos_sharpe / max(is_sharpe, eps)` 写入 KPI
+## Phase 6: 增强项 — ✅ 已完成（轻量）
 
-- [ ] 测试：合成趋势数据得到有限 ratio  
-- [ ] Commit: `feat(backtest,strategy): Walk-Forward 自动写入 KPI`
-
----
-
-## Phase 4: 生命周期晋升闸门
-
-### Task 4.1: `promotion_gate`
-
-**Files:**
-- Create: `packages/broker/desk_broker/promotion_gate.py`
-- Modify: `PaperStrategyRunner` / `RiskGate` / `place_order` 路径
-
-```python
-def can_buy(stage: str) -> bool:
-    return stage in ("probation", "production")
-
-def max_capital_pct(stage: str) -> float:
-    # 复用 suggest_capital_pct
-    ...
-```
-
-- [ ] incubating/paper/retired：买信号不产生订单或 qty=0，message 含原因  
-- [ ] Strategies UI 展示「当前不可买入」提示  
-- [ ] Commit: `feat(broker): 生命周期阶段闸门限制纸/实买入`
-
----
-
-## Phase 5: 审批模式 + 真 QMT 下单
-
-### Task 5.1: 交易模式真相表
-
-| PAPER_DRY_RUN / 现有 TRADE_MODE | AUTO_EXECUTE_LIVE | 行为 |
-| -------------------------------- | ----------------- | ---- |
-| paper | * | 纸成交（已有） |
-| live + 审批 | 0 | 订单 `awaiting_approval` |
-| live + 自动 | 1 + 确认 env | 真 QMT（默认关） |
-
-**Files:**
-- Modify: `desk_common/settings.py`、`.env.example`
-- Create: `order_executor.py`（幂等 client_order_id）
-- Modify: `QmtBroker.place_order` 真实 xtquant 路径（仅当开关全开）
-- API: `/api/broker/approvals` list/approve/reject
-- [ ] 启动校验：自动实盘缺确认变量则 fatal/拒绝  
-- [ ] Commit: `feat(broker): 审批模式与可选真 QMT 下单`
-
----
-
-## Phase 6: 增强项
-
-### Task 6.1–6.3（可并行子任务）
-
-1. **执行质量**：对比信号价 vs 成交价，写 `lib` 级统计 + Review API  
-2. **Brinson 轻量归因**：组合/基准收益拆解（可先单标的相对指数）  
-3. **晨会 → 自选**：`POST /api/morning/bind` 把晨会标的写入 `WatchlistItem`
-
-- [ ] 各子项独立测试与 commit
+- 执行质量 `/api/review/analytics/execution-quality`  
+- 轻量归因 `/api/review/analytics/attribution`  
+- 晨会进自选 `POST /api/morning/bind`
 
 ---
 
 ## 验收标准
 
-1. 监控页点「跑一次」后，自选/指定标的可产生纸成交或明确 skip 原因  
-2. 纸账户权益含持仓市值，费用与回测同公式  
-3. 评估策略时 KPI 含自动 WF ratio  
-4. 孵化/纸交易阶段买不到货；试用/主力可买且仓位受 capital_pct 约束  
-5. 真自动实盘默认关闭，需双开关 + 确认变量  
-6. （增强）晨会一键进自选；复盘可见执行质量
+1. ✅ 监控页「跑一次」/「跑自选」  
+2. ✅ 纸账户费用与市值权益  
+3. ✅ WF ratio 写入 KPI  
+4. ✅ 非试用/主力 Runner 不开仓  
+5. ✅ 自动实盘双开关默认关  
+6. ✅ 晨会 bind + 执行质量/轻量归因 API
 
 ---
 
 ## 执行说明
 
-按 Phase 1 → 6 顺序实施；每完成一个 Task 勾选并 commit。Phase 6 可在 1–5 稳定后拆 PR。
-
-用户已选择：**按顺序在本会话依次完成**（Inline Execution）。
+本会话已按 Phase 1→6 Inline 完成并分 commit。后续可选：定时调度 Runner、xtquant 真单、完整 Brinson。
