@@ -1,6 +1,7 @@
 import { Button, Card, CardContent, CardHeader, CardTitle, Chip } from "@heroui/react";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { api } from "../api";
+import { AssistantMessageBody } from "./AssistantMessageBody";
 import { buildChatMessages } from "./researchMessages";
 import type { PageLogProps } from "./types";
 
@@ -356,23 +357,31 @@ export default function Research({ setLog }: PageLogProps) {
                 </p>
               </div>
             )}
-            {messages.map((msg, index) => (
-              <div
-                key={`${msg.role}-${index}`}
-                className={
-                  msg.role === "user"
-                    ? "ml-6 rounded-lg border border-[var(--desk-accent)]/35 bg-[var(--desk-panel)] px-3 py-2.5 sm:ml-12"
-                    : "mr-4 rounded-lg border border-[var(--desk-line)] bg-[var(--desk-panel)]/40 px-3 py-2.5"
-                }
-              >
-                <div className="mb-1 text-[10px] font-medium uppercase tracking-wide text-[var(--desk-mist)]">
-                  {msg.role === "user" ? "你" : "助手"}
+            {messages.map((msg, index) => {
+              const streaming =
+                busy && index === messages.length - 1 && msg.role === "assistant";
+              return (
+                <div
+                  key={`${msg.role}-${index}`}
+                  className={
+                    msg.role === "user"
+                      ? "ml-6 rounded-lg border border-[var(--desk-accent)]/35 bg-[var(--desk-panel)] px-3 py-2.5 sm:ml-12"
+                      : "mr-4 rounded-lg border border-[var(--desk-line)] bg-[var(--desk-panel)]/40 px-3 py-2.5"
+                  }
+                >
+                  <div className="mb-1 text-[10px] font-medium uppercase tracking-wide text-[var(--desk-mist)]">
+                    {msg.role === "user" ? "你" : "助手"}
+                  </div>
+                  {msg.role === "assistant" ? (
+                    <AssistantMessageBody content={msg.content} streaming={streaming} />
+                  ) : (
+                    <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-relaxed text-[var(--desk-text)]">
+                      {msg.content}
+                    </pre>
+                  )}
                 </div>
-                <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-relaxed text-[var(--desk-text)]">
-                  {msg.content || (busy && index === messages.length - 1 ? "…" : "")}
-                </pre>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           <div
