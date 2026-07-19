@@ -106,3 +106,86 @@ body {
   background: transparent;
   color: inherit;
 }
+
+/* 投研助手 Markdown（舒适密度） */
+.research-md {
+  line-height: 1.6;
+}
+.research-md > :first-child {
+  margin-top: 0;
+}
+.research-md > :last-child {
+  margin-bottom: 0;
+}
+.research-md h1 {
+  font-size: 1.25rem;
+  font-weight: 700;
+  margin: 1rem 0 0.5rem;
+}
+.research-md h2 {
+  font-size: 1.1rem;
+  font-weight: 650;
+  margin: 0.9rem 0 0.45rem;
+}
+.research-md h3 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0.75rem 0 0.35rem;
+}
+.research-md p {
+  margin: 0.45rem 0;
+}
+.research-md ul,
+.research-md ol {
+  margin: 0.4rem 0;
+  padding-left: 1.25rem;
+}
+.research-md li {
+  margin: 0.2rem 0;
+}
+.research-md table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.6rem 0;
+  font-size: 0.8125rem;
+}
+.research-md th,
+.research-md td {
+  border-bottom: 1px solid var(--desk-line);
+  padding: 0.4rem 0.5rem;
+  text-align: left;
+  vertical-align: top;
+}
+.research-md th {
+  color: var(--desk-mist);
+  font-weight: 600;
+}
+.research-md-pre {
+  margin: 0.5rem 0;
+  overflow-x: auto;
+  border-radius: 0.5rem;
+  border: 1px solid var(--desk-line);
+  background: var(--desk-ink);
+  padding: 0.65rem 0.75rem;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.research-md-inline-code {
+  border-radius: 0.25rem;
+  background: var(--desk-ink);
+  padding: 0.1rem 0.3rem;
+  font-size: 0.85em;
+}
+.research-md a {
+  color: var(--desk-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.research-md blockquote {
+  margin: 0.5rem 0;
+  border-left: 3px solid var(--desk-line);
+  padding-left: 0.75rem;
+  color: var(--desk-mist);
+}
