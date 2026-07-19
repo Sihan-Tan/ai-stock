@@ -13,7 +13,7 @@ describe("NAV", () => {
       { path: "/backtest", label: "回测" },
       { path: "/factors", label: "因子/ML" },
       { path: "/alerts", label: "告警" },
-      { path: "/ai", label: "投研 nanobot" },
+      { path: "/ai", label: "投研" },
       { path: "/morning", label: "晨会" },
       { path: "/market-sync", label: "行情同步" },
       { path: "/review", label: "复盘" },
