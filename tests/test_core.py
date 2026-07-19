@@ -309,13 +309,31 @@ def test_backtest_ma_cross(client):
     assert "total_return" in r.json()
 
 
-def test_paper_order_and_risk(client):
+def test_paper_order_and_risk(client, monkeypatch):
+    """纸单买入需策略处于试用/主力；未 ARM 的实盘应被拒。"""
+    monkeypatch.setenv("RISK_ARMED", "0")
+    monkeypatch.setenv("RISK_KILL_SWITCH", "0")
+    get_settings.cache_clear()
+    client.post("/api/strategies/sync-python")
+    sid = get_settings().paper_default_strategy_id or "ma_cross"
+    stage = client.post(
+        f"/api/strategies/{sid}/lifecycle/stage",
+        json={"stage": "probation", "note": "test"},
+    )
+    assert stage.status_code == 200, stage.text
     order = client.post(
         "/api/broker/order",
-        json={"symbol": "600519.SH", "side": "buy", "qty": 100, "price": 100, "mode": "paper"},
+        json={
+            "symbol": "600519.SH",
+            "side": "buy",
+            "qty": 100,
+            "price": 100,
+            "mode": "paper",
+            "strategy_id": sid,
+        },
     )
     assert order.status_code == 200
-    assert order.json()["status"] == "filled"
+    assert order.json()["status"] == "filled", order.json()
     paper = client.get("/api/broker/paper").json()
     assert paper["cash"] < 1_000_000
     live_reject = client.post(
@@ -325,10 +343,18 @@ def test_paper_order_and_risk(client):
     assert live_reject.json()["status"] == "rejected"
 
 
-def test_live_order_respects_settings_size_limits(client, monkeypatch):
+def test_live_order_respects_settings_size_limits(client, monkeypatch, tmp_path):
     """设置页下单限额对已 ARM 的实盘同样拦截超限单。"""
+    # 避免 apply_settings_patch 写回仓库根 .env
+    env_file = tmp_path / ".env"
+    env_file.write_text("", encoding="utf-8")
+    monkeypatch.setattr(
+        "desk_common.settings_store._env_path",
+        lambda: env_file,
+    )
     monkeypatch.setenv("RISK_MAX_ORDER_NOTIONAL", "1000")
     monkeypatch.setenv("RISK_MAX_ORDER_POSITION_PCT", "100")
+    monkeypatch.setenv("RISK_ARMED", "0")
     get_settings.cache_clear()
     armed = client.post(
         "/api/broker/risk",

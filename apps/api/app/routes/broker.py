@@ -119,16 +119,29 @@ def risk_state(db: Session = Depends(get_db)):
 
 @router.post("/risk")
 def risk_update(body: RiskIn, db: Session = Depends(get_db)):
-    """更新 ARM/Kill/白名单；金额仓位限额请走设置页（写入 .env）。"""
-    g = get_gate(db)
+    """
+    更新 ARM/Kill/白名单并持久化到 .env（与设置页同源）。
+
+    金额仓位限额请走设置页；本接口供监控页应急 Kill 等快捷操作。
+    """
+    from desk_common.settings_store import apply_settings_patch
+
+    patch: dict = {}
     if body.armed is not None:
-        g.risk.armed = body.armed
+        patch["risk_armed"] = body.armed
     if body.kill_switch is not None:
-        g.risk.kill_switch = body.kill_switch
+        patch["risk_kill_switch"] = body.kill_switch
     if body.whitelist is not None:
-        g.risk.whitelist = set(body.whitelist)
-    # 限额字段若传入则忽略内存覆盖，始终以 Settings 为准
-    g.risk.apply_from_settings()
+        patch["risk_whitelist"] = ",".join(sorted({s.strip().upper() for s in body.whitelist if s.strip()}))
+    # 限额若传入也写入（兼容旧客户端）
+    if body.max_order_position_pct is not None:
+        patch["risk_max_order_position_pct"] = body.max_order_position_pct
+    if body.max_order_notional is not None:
+        patch["risk_max_order_notional"] = body.max_order_notional
+    if body.max_daily_notional is not None:
+        patch["risk_max_daily_notional"] = body.max_daily_notional
+    if patch:
+        apply_settings_patch(patch)
     return risk_state(db)
 
 

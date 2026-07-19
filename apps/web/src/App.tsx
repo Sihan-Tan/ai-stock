@@ -13,7 +13,6 @@ import Morning from "./pages/Morning";
 import Paper from "./pages/Paper";
 import Research from "./pages/Research";
 import Review from "./pages/Review";
-import Risk from "./pages/Risk";
 import Sentiment from "./pages/Sentiment";
 import Settings from "./pages/Settings";
 import StockDetail from "./pages/StockDetail";
@@ -76,7 +75,7 @@ export default function App() {
         <Route path="/strategies" element={<Strategies setLog={setLog} />} />
         <Route path="/backtest" element={<Backtest setLog={setLog} />} />
         <Route path="/factors" element={<Factors setLog={setLog} />} />
-        <Route path="/risk" element={<Risk setLog={setLog} />} />
+        <Route path="/risk" element={<Navigate to="/settings" replace />} />
         <Route path="/alerts" element={<Alerts setLog={setLog} />} />
         <Route path="/ai" element={<Research setLog={setLog} />} />
         <Route path="/morning" element={<Morning setLog={setLog} />} />

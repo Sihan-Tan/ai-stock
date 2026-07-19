@@ -37,11 +37,13 @@ def test_default_live_is_approval():
     assert live_execution_mode() == "approval"
 
 
-def test_live_order_awaits_approval(db: Session):
+def test_live_order_awaits_approval(db: Session, monkeypatch):
+    monkeypatch.setenv("RISK_ARMED", "1")
+    monkeypatch.setenv("RISK_KILL_SWITCH", "0")
+    monkeypatch.setenv("RISK_WHITELIST", "")
+    get_settings.cache_clear()
     gate = BrokerGateway(db)
-    gate.risk.armed = True
-    gate.risk.kill_switch = False
-    gate.risk.whitelist = set()
+    gate.risk.apply_from_settings()
     cid = f"ap-{uuid4().hex[:10]}"
     result = gate.place_order(
         OrderIntent(

@@ -310,11 +310,17 @@ class RiskGate:
         return self.check_size_limits(intent, equity=equity)
 
     def apply_from_settings(self) -> None:
-        """从 Settings（.env / 设置页）同步限额字段，作为唯一来源。"""
+        """从 Settings（.env / 设置页）同步限额与实盘闸门，作为唯一来源。"""
         settings = get_settings()
         self.max_order_position_pct = float(settings.risk_max_order_position_pct)
         self.max_order_notional = float(settings.risk_max_order_notional)
         self.max_daily_notional = float(settings.risk_max_daily_notional)
+        self.armed = bool(settings.risk_armed)
+        self.kill_switch = bool(settings.risk_kill_switch)
+        raw = (settings.risk_whitelist or "").replace("，", ",")
+        self.whitelist = {
+            p.strip().upper() for p in raw.split(",") if p.strip()
+        }
 
 
 class MockQmtBroker:

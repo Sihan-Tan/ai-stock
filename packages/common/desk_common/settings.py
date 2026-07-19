@@ -57,13 +57,19 @@ class Settings(BaseSettings):
     backtest_slippage: float = 0.001
     """回测滑点（成交价比例）。"""
 
-    # 交易限额（下单风控）
+    # 交易限额与实盘闸门（下单风控，唯一来源）
     risk_max_order_position_pct: float = 10.0
     """单笔最大仓位：占总权益百分比（0–100，如 10 表示 10%）。"""
     risk_max_order_notional: float = 50_000.0
     """单笔最大金额（元）。"""
     risk_max_daily_notional: float = 200_000.0
     """单日累计最大金额（元）。"""
+    risk_armed: bool = False
+    """实盘 ARM：未开启时拒绝 live 下单。"""
+    risk_kill_switch: bool = False
+    """Kill Switch：开启后拒绝一切 live 下单。"""
+    risk_whitelist: str = ""
+    """实盘白名单，逗号分隔代码；空=不限制标的。"""
 
     market_daily_start: str = "2018-01-01"
     market_incremental_days: int = 3

@@ -16,7 +16,6 @@ export const NAV: NavigationItem[] = [
   { path: "/strategies", label: "策略" },
   { path: "/backtest", label: "回测" },
   { path: "/factors", label: "因子/ML" },
-  { path: "/risk", label: "实盘风控" },
   { path: "/alerts", label: "告警" },
   { path: "/ai", label: "投研 nanobot" },
   { path: "/morning", label: "晨会" },

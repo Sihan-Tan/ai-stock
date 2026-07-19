@@ -41,6 +41,9 @@ class SettingsPatch(BaseModel):
     risk_max_order_position_pct: float | None = None
     risk_max_order_notional: float | None = None
     risk_max_daily_notional: float | None = None
+    risk_armed: bool | None = None
+    risk_kill_switch: bool | None = None
+    risk_whitelist: str | None = None
 
 
 @router.get("")

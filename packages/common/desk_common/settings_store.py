@@ -36,6 +36,9 @@ EDITABLE_ENV: dict[str, str] = {
     "risk_max_order_position_pct": "RISK_MAX_ORDER_POSITION_PCT",
     "risk_max_order_notional": "RISK_MAX_ORDER_NOTIONAL",
     "risk_max_daily_notional": "RISK_MAX_DAILY_NOTIONAL",
+    "risk_armed": "RISK_ARMED",
+    "risk_kill_switch": "RISK_KILL_SWITCH",
+    "risk_whitelist": "RISK_WHITELIST",
 }
 
 SECRET_FIELDS = frozenset({"llm_api_key", "feishu_sign_secret"})
@@ -98,6 +101,9 @@ def public_settings() -> dict[str, Any]:
         "risk_max_order_position_pct": s.risk_max_order_position_pct,
         "risk_max_order_notional": s.risk_max_order_notional,
         "risk_max_daily_notional": s.risk_max_daily_notional,
+        "risk_armed": s.risk_armed,
+        "risk_kill_switch": s.risk_kill_switch,
+        "risk_whitelist": s.risk_whitelist,
     }
 
 
@@ -215,6 +221,8 @@ def apply_settings_patch(patch: dict[str, Any]) -> dict[str, Any]:
             "i_understand_auto_live",
             "qmt_force_mock",
             "paper_runner_enabled",
+            "risk_armed",
+            "risk_kill_switch",
         ):
             if isinstance(raw, bool):
                 cleaned[field] = raw

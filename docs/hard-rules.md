@@ -2,7 +2,7 @@
 
 ## 交易
 
-1. 默认 `TRADE_MODE=paper`；实盘需显式 ARM（`POST /api/broker/risk` 设 `armed=true`）。
+1. 默认 `TRADE_MODE=paper`；实盘需显式 ARM（设置页或 `RISK_ARMED=1` / `POST /api/broker/risk`）。
 2. Kill Switch 打开时拒绝一切 live 单。
 3. 实盘受单笔/单日名义限额与标的白名单约束。
 4. AI / nanobot **禁止**注册实盘下单或解除 Kill Switch 的工具。

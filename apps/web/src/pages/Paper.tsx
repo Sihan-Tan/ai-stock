@@ -373,7 +373,7 @@ export default function Paper({ setLog }: PageLogProps) {
             </CardHeader>
             <CardContent className="space-y-3 p-5 pt-2 text-sm text-[var(--desk-mist)]">
               <p>
-                实盘下单受风控闸门约束。armed=
+                实盘闸门与限额见「设置」。armed=
                 <span className="font-mono text-[var(--desk-text)]">
                   {String(risk?.armed ?? false)}
                 </span>
@@ -381,12 +381,11 @@ export default function Paper({ setLog }: PageLogProps) {
                 <span className="font-mono text-[var(--desk-text)]">
                   {String(risk?.kill_switch ?? false)}
                 </span>
-                。执行模式=
+                ，白名单 {risk?.whitelist?.length ?? 0} 只。执行模式=
                 <span className="font-mono text-[var(--desk-text)]">
                   {tradingMode?.live_execution || "—"}
                 </span>
-                （自动={String(tradingMode?.auto_execute_live ?? false)} / 确认=
-                {String(tradingMode?.i_understand_auto_live ?? false)}）。可在「设置」改双开关。
+                。
               </p>
               <Button variant="secondary" onPress={refresh}>
                 刷新状态
@@ -884,12 +883,12 @@ export default function Paper({ setLog }: PageLogProps) {
                 <RuleRow
                   tone="danger"
                   mark="熔"
-                  text={`Kill Switch ${risk?.kill_switch ? "已开启" : "关闭"}；未 ARM 时拒绝实盘下单`}
+                  text={`Kill Switch ${risk?.kill_switch ? "已开启" : "关闭"}；未 ARM 时拒绝实盘下单（见设置）`}
                 />
                 <RuleRow
                   tone="success"
                   mark="单"
-                  text="监控模式成交写入 paper_trades；实盘需 ARM 后走 live 通道"
+                  text="纸成交写入 paper_trades；ARM/白名单/限额均在「设置 → 风控与实盘闸门」"
                 />
               </CardContent>
             </Card>
