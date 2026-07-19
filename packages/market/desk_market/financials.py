@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import logging
 import statistics
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from datetime import datetime, timedelta
 from typing import Any, Callable, TYPE_CHECKING
 
@@ -18,6 +20,8 @@ from desk_market.qmt_financials import MockQmtFinancials, XtdataFinancials, _STA
 if TYPE_CHECKING:
     from desk_market import MarketService
 
+_LOGGER = logging.getLogger(__name__)
+
 _DEFAULT_TABLES: list[str] = [
     "Abstract",
     "Income",
@@ -31,12 +35,38 @@ _CACHE_TABLES: frozenset[str] = frozenset(
     {"Abstract", "Income", "Pershareindex", "Balance", "CashFlow", "Capital"}
 )
 
+# QMT download/get 可能无限阻塞；超时后降级 akshare
+_DEFAULT_QMT_TIMEOUT_SEC = 8.0
+_DEFAULT_AKSHARE_TIMEOUT_SEC = 25.0
 
-def _default_qmt() -> Any:
-    """优先真实 QMT；不可用时用失败 Mock，以便降级 akshare。"""
+
+def _call_with_timeout(fn: Callable[[], Any], timeout_sec: float, label: str) -> Any:
+    """
+    在线程中执行 ``fn``，超时则抛 ``TimeoutError``（不 join 卡住的线程）。
+
+    @param fn: 无参可调用
+    @param timeout_sec: 超时秒数
+    @param label: 日志/错误标签
+    """
+    executor = ThreadPoolExecutor(max_workers=1)
+    try:
+        future = executor.submit(fn)
+        try:
+            return future.result(timeout=timeout_sec)
+        except FuturesTimeout as exc:
+            raise TimeoutError(f"{label} timed out after {timeout_sec:.1f}s") from exc
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
+
+
+def _resolve_qmt(qmt: Any | None) -> Any:
+    """惰性构造 QMT 源；构造失败则返回 fail Mock。"""
+    if qmt is not None:
+        return qmt
     try:
         return XtdataFinancials()
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        _LOGGER.warning("XtdataFinancials unavailable: %s", exc)
         return MockQmtFinancials(fail=True)
 
 
@@ -111,23 +141,41 @@ class FinancialService:
         akshare_fetch: Callable[..., dict[str, Any]] | None = None,
         ttl_days: int = 7,
         market: MarketService | None = None,
+        qmt_timeout_sec: float = _DEFAULT_QMT_TIMEOUT_SEC,
+        akshare_timeout_sec: float = _DEFAULT_AKSHARE_TIMEOUT_SEC,
+        *,
+        lazy_qmt: bool = True,
     ) -> None:
         """
         @param db: SQLAlchemy Session
-        @param qmt: QMT 财务源；默认尝试 Xtdata，失败则 Mock(fail=True)
+        @param qmt: QMT 财务源；``None`` 且 ``lazy_qmt`` 时在首次取数时再构造（避免 connect 卡死）
         @param akshare_fetch: akshare 拉取函数；默认 ``fetch_akshare_financials``
         @param ttl_days: 缓存有效天数
         @param market: 可选行情服务（估值取现价）
+        @param qmt_timeout_sec: QMT 取数超时（秒）
+        @param akshare_timeout_sec: akshare 取数超时（秒）
+        @param lazy_qmt: ``qmt is None`` 时是否惰性构造
         """
         self.db = db
-        self.qmt = qmt if qmt is not None else _default_qmt()
+        self._qmt = qmt
+        self._lazy_qmt = lazy_qmt and qmt is None
         self.akshare_fetch = akshare_fetch or fetch_akshare_financials
         self.ttl_days = max(int(ttl_days), 0)
         self.market = market
+        self.qmt_timeout_sec = max(float(qmt_timeout_sec), 0.1)
+        self.akshare_timeout_sec = max(float(akshare_timeout_sec), 0.1)
+
+    @property
+    def qmt(self) -> Any:
+        """当前 QMT 源（惰性时首次访问才构造）。"""
+        if self._qmt is None and self._lazy_qmt:
+            self._qmt = _resolve_qmt(None)
+            self._lazy_qmt = False
+        return self._qmt
 
     def get_financials(self, symbol: str, years: int = 5) -> dict[str, Any]:
         """
-        缓存 → qmt → akshare；返回 ``{symbol, source, metrics, tables?, error?}``。
+        缓存 → qmt（带超时）→ akshare（带超时）；返回 ``{symbol, source, metrics, tables?, error?}``。
 
         @param symbol: 原始或可规范化代码
         @param years: 最近若干自然年
@@ -139,17 +187,29 @@ class FinancialService:
 
         errors: list[str] = []
         fetched: dict[str, Any] | None = None
+        tables_req = list(_DEFAULT_TABLES)
+
+        def _qmt_fetch() -> dict[str, Any]:
+            src = _resolve_qmt(self._qmt)
+            self._qmt = src
+            self._lazy_qmt = False
+            return src.get_financials(sym, tables=tables_req, years=years)
 
         try:
-            fetched = self.qmt.get_financials(sym, tables=list(_DEFAULT_TABLES), years=years)
+            fetched = _call_with_timeout(_qmt_fetch, self.qmt_timeout_sec, "qmt financials")
         except Exception as exc:  # noqa: BLE001
             errors.append(f"qmt: {exc}")
+            _LOGGER.warning("QMT financials failed/timeout for %s: %s", sym, exc)
 
         if fetched is None or not (fetched.get("tables") or {}):
+            def _ak_fetch() -> dict[str, Any]:
+                return self.akshare_fetch(sym, years=years)
+
             try:
-                fetched = self.akshare_fetch(sym, years=years)
+                fetched = _call_with_timeout(_ak_fetch, self.akshare_timeout_sec, "akshare financials")
             except Exception as exc:  # noqa: BLE001
                 errors.append(f"akshare: {exc}")
+                _LOGGER.warning("akshare financials failed/timeout for %s: %s", sym, exc)
                 fetched = None
 
         if fetched is None:

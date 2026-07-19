@@ -228,16 +228,40 @@ class XtdataFinancials:
         except Exception:  # noqa: BLE001
             pass
         self._xt = xtdata
-        try:
-            self._xt.connect()
-        except Exception:  # noqa: BLE001
-            pass
+        # 不在此调用 connect()：本机未就绪时会无限阻塞，由上层超时降级 akshare。
+
+    def _read_tables(
+        self, sym: str, tables: list[str], start_time: str, end_time: str
+    ) -> dict[str, list[dict[str, Any]]]:
+        """读取并映射财务表；无数据时返回空表字典。"""
+        raw = self._xt.get_financial_data(
+            [sym],
+            table_list=list(tables),
+            start_time=start_time,
+            end_time=end_time,
+        )
+        if not raw or sym not in raw:
+            return {t: [] for t in tables}
+        sym_tables = raw.get(sym) or {}
+        out_tables: dict[str, list[dict[str, Any]]] = {}
+        for table in tables:
+            table_df = sym_tables.get(table)
+            if isinstance(table_df, pd.DataFrame):
+                rows = _filter_by_years(_dataframe_to_rows(table_df), years=99)
+            elif isinstance(table_df, list):
+                rows = _filter_by_years([_map_qmt_row(dict(r)) for r in table_df], years=99)
+            else:
+                rows = []
+            out_tables[table] = rows
+        return out_tables
 
     def get_financials(
         self, symbol: str, tables: list[str], years: int = 5
     ) -> dict[str, Any]:
         """
         从本机 QMT 拉取财务表并归一化。
+
+        优先读本地缓存；为空再 download（可能阻塞，须由调用方加超时）。
 
         @param symbol: 标的
         @param tables: QMT 表名
@@ -248,32 +272,24 @@ class XtdataFinancials:
             raise RuntimeError("xtdata financials: tables must not be empty")
         start_time = _cutoff_period(years)
         end_time = date.today().strftime("%Y%m%d")
+
         try:
-            self._xt.download_financial_data([sym], table_list=list(tables))
-        except Exception:  # noqa: BLE001 — 本地已有缓存时仍可继续读
-            pass
-        try:
-            raw = self._xt.get_financial_data(
-                [sym],
-                table_list=list(tables),
-                start_time=start_time,
-                end_time=end_time,
-            )
+            out_tables = self._read_tables(sym, tables, start_time, end_time)
         except Exception as exc:  # noqa: BLE001
             raise RuntimeError(f"xtdata get_financial_data failed: {exc}") from exc
-        if not raw or sym not in raw:
-            raise RuntimeError(f"xtdata financials: no data for {sym}")
-        sym_tables = raw.get(sym) or {}
-        out_tables: dict[str, list[dict[str, Any]]] = {}
-        for table in tables:
-            table_df = sym_tables.get(table)
-            if isinstance(table_df, pd.DataFrame):
-                rows = _filter_by_years(_dataframe_to_rows(table_df), years)
-            elif isinstance(table_df, list):
-                rows = _filter_by_years([_map_qmt_row(dict(r)) for r in table_df], years)
-            else:
-                rows = []
-            out_tables[table] = rows
+
         if not any(out_tables.values()):
+            try:
+                self._xt.download_financial_data([sym], table_list=list(tables))
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                out_tables = self._read_tables(sym, tables, start_time, end_time)
+            except Exception as exc:  # noqa: BLE001
+                raise RuntimeError(f"xtdata get_financial_data failed: {exc}") from exc
+
+        # 再按 years 裁剪（_read_tables 用 years=99 取全量后裁剪）
+        trimmed = {name: _filter_by_years(rows, years) for name, rows in out_tables.items()}
+        if not any(trimmed.values()):
             raise RuntimeError(f"xtdata financials: empty tables for {sym}")
-        return _build_response(sym, out_tables, source="qmt")
+        return _build_response(sym, trimmed, source="qmt")

@@ -176,6 +176,7 @@ class NanobotResearchSession:
                         if not isinstance(args, dict):
                             args = {}
                         try:
+                            # FinancialService 内部对 QMT/akshare 已加超时，避免永久卡住
                             result = dispatch_tool(self.db, name, args)
                         except Exception as tool_exc:  # noqa: BLE001
                             result = {"error": f"{type(tool_exc).__name__}: {tool_exc}"}

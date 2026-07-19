@@ -226,6 +226,41 @@ def test_financial_service_both_fail(_db):
     db.close()
 
 
+def test_financial_service_qmt_timeout_falls_back_akshare(_db):
+    """QMT 阻塞超时后应降级 akshare，而不是永久卡住。"""
+    import time
+
+    from desk_market.financials import FinancialService
+
+    class HangQmt:
+        def get_financials(self, *a, **k):
+            time.sleep(30)
+
+    def fake_ak(symbol, years=5):
+        return {
+            "source": "akshare",
+            "symbol": "600519.SH",
+            "tables": {"Abstract": [{"period": "20241231", "roe": 22.0}]},
+        }
+
+    db = Session(get_engine())
+    svc = FinancialService(
+        db,
+        qmt=HangQmt(),
+        akshare_fetch=fake_ak,
+        qmt_timeout_sec=0.3,
+        akshare_timeout_sec=5,
+        lazy_qmt=False,
+    )
+    t0 = time.time()
+    out = svc.get_financials("600519.SH")
+    elapsed = time.time() - t0
+    assert out["source"] == "akshare"
+    assert out["metrics"][0]["roe"] == 22.0
+    assert elapsed < 5.0
+    db.close()
+
+
 def test_financial_service_peer_compare(_db):
     from desk_market.financials import FinancialService
     from desk_market.qmt_financials import MockQmtFinancials
