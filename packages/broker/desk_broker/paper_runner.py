@@ -15,6 +15,8 @@ from desk_market import MarketService
 from desk_strategy import StrategyRegistry
 from desk_strategy.bar_context import build_bar_row
 
+from desk_broker.promotion_gate import buy_block_reason, can_buy, max_capital_pct
+
 
 class PaperStrategyRunner:
     """
@@ -82,6 +84,8 @@ class PaperStrategyRunner:
         held = {p["symbol"]: float(p["qty"]) for p in summary.get("positions") or []}
         last_price = float(df.iloc[-1]["close"])
         orders: list[dict[str, Any]] = []
+        stage = self._strategy_stage(strategy_id)
+        gate_msg: str | None = None
 
         for sig in signals:
             side = sig.side if hasattr(sig, "side") else Side(str(sig["side"]))
@@ -89,11 +93,18 @@ class PaperStrategyRunner:
                 continue
             if side == Side.SELL and held.get(symbol, 0) <= 0:
                 continue
+            if side == Side.BUY and not can_buy(stage):
+                gate_msg = buy_block_reason(stage)
+                continue
             qty = float(sig.qty) if getattr(sig, "qty", None) else None
             if qty is None or qty <= 0:
                 if side == Side.BUY:
                     cash = float(summary["cash"])
-                    qty = float(int((cash * 0.95) / last_price / 100) * 100)
+                    equity = float(summary.get("equity") or cash)
+                    cap = max_capital_pct(stage)
+                    budget = equity * cap if cap > 0 else cash * 0.95
+                    budget = min(budget, cash * 0.95)
+                    qty = float(int(budget / last_price / 100) * 100)
                 else:
                     qty = float(held.get(symbol, 0))
             if side == Side.BUY and qty < 100:
@@ -114,16 +125,33 @@ class PaperStrategyRunner:
             break
 
         self.db.flush()
+        message = gate_msg or ""
         base.update(
             {
                 "status": "ok",
                 "signals": sig_dump,
                 "orders": orders,
                 "last_price": last_price,
-                "message": "",
+                "lifecycle_stage": stage,
+                "message": message,
             }
         )
         return base
+
+    def _strategy_stage(self, strategy_id: str) -> str:
+        """读取策略生命周期阶段，缺省 incubating。"""
+        from sqlalchemy import select
+
+        from desk_db.models import StrategyRow
+
+        row = self.db.scalar(
+            select(StrategyRow)
+            .where(StrategyRow.strategy_id == strategy_id)
+            .order_by(StrategyRow.id.desc())
+        )
+        if row is None:
+            return "incubating"
+        return str(getattr(row, "lifecycle_stage", None) or "incubating")
 
     def run_watchlist(self, *, strategy_id: str) -> dict[str, Any]:
         """

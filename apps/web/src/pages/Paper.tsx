@@ -502,7 +502,7 @@ export default function Paper({ setLog }: PageLogProps) {
               <CardHeader className="p-5 pb-2">
                 <CardTitle className="text-base">策略 Runner</CardTitle>
                 <p className="mt-1 text-xs text-[var(--desk-mist)]">
-                  用最新日 K 评估 on_bar，空仓可买、持仓可卖（与回测口径一致）
+                  用最新日 K 评估 on_bar；仅试用/主力阶段可开仓，持仓可卖（与回测口径一致）
                 </p>
               </CardHeader>
               <CardContent className="space-y-3 p-5 pt-2">
