@@ -102,6 +102,31 @@ class NanobotResearchSession:
             )
         return out
 
+    @staticmethod
+    def _format_llm_error(exc: BaseException) -> str:
+        """
+        将 LLM / 网络异常转为可读中文提示（避免流式连接被异常直接掐断）。
+
+        @param exc: 异常
+        """
+        name = type(exc).__name__
+        text = str(exc)
+        lower = text.lower()
+        if name in {"AuthenticationError", "PermissionDeniedError"} or "401" in text or "authentication" in lower:
+            return (
+                "LLM 认证失败（API Key 无效或已过期）。"
+                "请到「设置 → LLM」更新 Key 后重试。"
+                f"\n详情：{text[:300]}"
+            )
+        if name in {"RateLimitError"} or "429" in text or "rate limit" in lower:
+            return f"LLM 请求过于频繁，请稍后重试。\n详情：{text[:300]}"
+        if name in {"APIConnectionError", "APITimeoutError", "ConnectError", "TimeoutError"}:
+            return (
+                "无法连接 LLM 服务，请检查网络与「设置 → LLM」中的 Base URL。"
+                f"\n详情：{text[:300]}"
+            )
+        return f"LLM 调用失败（{name}）：{text[:400]}"
+
     async def run(
         self,
         messages: list[dict[str, Any]],
@@ -120,52 +145,58 @@ class NanobotResearchSession:
         system = self._build_system(skill_hint)
         working: list[dict[str, Any]] = [{"role": "system", "content": system}, *messages]
 
-        for _ in range(_MAX_ITERATIONS):
-            resp = await self._chat_create(
-                model=self.settings.llm_model,
-                messages=working,
-                tools=TOOL_SPECS,
-                tool_choice="auto",
-            )
-            msg = resp.choices[0].message
-            tool_calls = getattr(msg, "tool_calls", None) or None
-            content = getattr(msg, "content", None)
-
-            if tool_calls:
-                working.append(
-                    {
-                        "role": "assistant",
-                        "content": content,
-                        "tool_calls": self._tool_calls_payload(tool_calls),
-                    }
+        try:
+            for _ in range(_MAX_ITERATIONS):
+                resp = await self._chat_create(
+                    model=self.settings.llm_model,
+                    messages=working,
+                    tools=TOOL_SPECS,
+                    tool_choice="auto",
                 )
-                for tc in tool_calls:
-                    name = tc.function.name
-                    yield f"[tool:{name}]\n"
-                    raw_args = tc.function.arguments or "{}"
-                    try:
-                        args = json.loads(raw_args)
-                    except json.JSONDecodeError:
-                        args = {}
-                    if not isinstance(args, dict):
-                        args = {}
-                    result = dispatch_tool(self.db, name, args)
+                msg = resp.choices[0].message
+                tool_calls = getattr(msg, "tool_calls", None) or None
+                content = getattr(msg, "content", None)
+
+                if tool_calls:
                     working.append(
                         {
-                            "role": "tool",
-                            "tool_call_id": tc.id,
-                            "content": self._truncate_tool_result(result),
+                            "role": "assistant",
+                            "content": content,
+                            "tool_calls": self._tool_calls_payload(tool_calls),
                         }
                     )
-                continue
+                    for tc in tool_calls:
+                        name = tc.function.name
+                        yield f"[tool:{name}]\n"
+                        raw_args = tc.function.arguments or "{}"
+                        try:
+                            args = json.loads(raw_args)
+                        except json.JSONDecodeError:
+                            args = {}
+                        if not isinstance(args, dict):
+                            args = {}
+                        try:
+                            result = dispatch_tool(self.db, name, args)
+                        except Exception as tool_exc:  # noqa: BLE001
+                            result = {"error": f"{type(tool_exc).__name__}: {tool_exc}"}
+                        working.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tc.id,
+                                "content": self._truncate_tool_result(result),
+                            }
+                        )
+                    continue
 
-            if content:
-                yield content
+                if content:
+                    yield content
+                    return
+
                 return
 
-            return
-
-        yield "（已达工具调用轮次上限，请缩小问题后重试。）"
+            yield "（已达工具调用轮次上限，请缩小问题后重试。）"
+        except Exception as exc:  # noqa: BLE001
+            yield self._format_llm_error(exc)
 
     async def _fallback_without_llm(self, user: str) -> AsyncIterator[str]:
         """无 API Key：提示配置 LLM；可选策略/知识关键词降级（不假装五步法）。"""

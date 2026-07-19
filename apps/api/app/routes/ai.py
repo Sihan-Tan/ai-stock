@@ -26,8 +26,12 @@ async def chat(body: ChatIn, db: Session = Depends(get_db)):
     session = NanobotResearchSession(db)
 
     async def gen():
-        async for chunk in session.run(body.messages, skill_hint=body.skill_hint):
-            yield chunk
+        try:
+            async for chunk in session.run(body.messages, skill_hint=body.skill_hint):
+                yield chunk
+        except Exception as exc:  # noqa: BLE001
+            # 兜底：避免未捕获异常直接掐断 SSE/流式连接
+            yield NanobotResearchSession._format_llm_error(exc)
 
     return StreamingResponse(gen(), media_type="text/plain; charset=utf-8")
 

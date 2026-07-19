@@ -113,3 +113,27 @@ def test_skill_loader_includes_research_skills():
     names = {s["name"] for s in SkillLoader().list()}
     assert "write-report" in names
     assert "financial-analysis" in names
+
+
+@pytest.mark.asyncio
+async def test_session_llm_auth_error_yields_message(db_session, monkeypatch):
+    """LLM 401 时流式返回可读提示，而不是抛出异常掐断连接。"""
+    from desk_ai.session import NanobotResearchSession
+
+    class AuthError(Exception):
+        """模拟 openai.AuthenticationError。"""
+
+    AuthError.__name__ = "AuthenticationError"
+
+    async def boom(**kwargs):
+        raise AuthError("Error code: 401 - Authentication Fails")
+
+    session = NanobotResearchSession(db_session)
+    monkeypatch.setattr(session, "_chat_create", boom)
+    monkeypatch.setattr(session.settings, "llm_api_key", "bad-key")
+
+    chunks = []
+    async for c in session.run([{"role": "user", "content": "测试"}]):
+        chunks.append(c)
+    text = "".join(chunks)
+    assert "认证失败" in text or "API Key" in text
