@@ -437,6 +437,8 @@ def test_morning_and_ai_skills(client):
     assert len(post.json()["stocks"]) >= 1
     skills = client.get("/api/ai/skills").json()
     assert any(s["name"] == "desk-readonly" for s in skills)
+    assert any(s["name"] == "write-report" for s in skills)
+    assert any(s["name"] == "financial-analysis" for s in skills)
     chat = client.post("/api/ai/chat", json={"messages": [{"role": "user", "content": "写一个策略草稿"}]})
     assert chat.status_code == 200
     assert "draft" in chat.text.lower() or "草稿" in chat.text

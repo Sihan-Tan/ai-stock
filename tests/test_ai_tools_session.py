@@ -104,3 +104,12 @@ async def test_session_tools_loop_one_round(db_session, monkeypatch):
     text = "".join(chunks)
     assert "get_financials" in text or "ROE" in text
     assert calls["n"] >= 2
+
+
+def test_skill_loader_includes_research_skills():
+    """SkillLoader 应包含投研专项 skills。"""
+    from desk_ai.skills import SkillLoader
+
+    names = {s["name"] for s in SkillLoader().list()}
+    assert "write-report" in names
+    assert "financial-analysis" in names
