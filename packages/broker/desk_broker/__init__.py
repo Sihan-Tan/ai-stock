@@ -12,7 +12,9 @@ from sqlalchemy.orm import Session
 
 from desk_common.contracts import OrderIntent, OrderResult, Side
 from desk_common.settings import get_settings
+from desk_common.trading_cost import apply_slippage, calc_buy_commission, calc_sell_fees
 from desk_db.models import (
+    BarDaily,
     BrokerFill,
     CashLedger,
     LiveOrder,
@@ -21,6 +23,7 @@ from desk_db.models import (
     PaperOrder,
     PaperPosition,
     PaperTrade,
+    QuoteSnapshot,
 )
 
 
@@ -49,12 +52,42 @@ class PaperBroker:
             self.db.flush()
         return acc
 
+    def _last_price(self, symbol: str, *, fallback: float | None = None) -> float | None:
+        """快照价 → 最近日线收盘 → fallback。"""
+        snap = self.db.scalar(
+            select(QuoteSnapshot).where(QuoteSnapshot.symbol == symbol)
+        )
+        if snap is not None and float(snap.last) > 0:
+            return float(snap.last)
+        bar = self.db.scalar(
+            select(BarDaily)
+            .where(BarDaily.symbol == symbol)
+            .order_by(BarDaily.ts.desc())
+            .limit(1)
+        )
+        if bar is not None and float(bar.close) > 0:
+            return float(bar.close)
+        return fallback
+
+    def _mark_equity(self, acc: PaperAccount) -> float:
+        """现金 + 持仓市值。"""
+        positions = self.db.scalars(
+            select(PaperPosition).where(PaperPosition.account_id == acc.id)
+        ).all()
+        equity = float(acc.cash)
+        for p in positions:
+            last = self._last_price(p.symbol, fallback=float(p.cost)) or float(p.cost)
+            equity += float(p.qty) * last
+        acc.equity = equity
+        return equity
+
     def summary(self) -> dict:
-        """账户摘要（含近期成交）。"""
+        """账户摘要（含近期成交）；权益含持仓市值。"""
         acc = self._ensure_account()
         positions = self.db.scalars(
             select(PaperPosition).where(PaperPosition.account_id == acc.id)
         ).all()
+        self._mark_equity(acc)
         trades = self.db.scalars(
             select(PaperTrade)
             .where(PaperTrade.account_id == acc.id)
@@ -62,6 +95,7 @@ class PaperBroker:
             .limit(50)
         ).all()
         settings = get_settings()
+        self.db.flush()
         return {
             "cash": acc.cash,
             "equity": acc.equity,
@@ -111,22 +145,57 @@ class PaperBroker:
 
 
     def place_order(self, intent: OrderIntent) -> OrderResult:
-        """以指定价或市价假设成交。"""
+        """
+        以指定价成交，扣 A 股费用（与回测同公式），权益含持仓市值。
+        """
         acc = self._ensure_account()
-        price = intent.price if intent.price is not None else 0.0
-        if price <= 0:
+        raw = intent.price if intent.price is not None else 0.0
+        if raw <= 0:
             return OrderResult(
                 client_order_id=intent.client_order_id,
                 status="rejected",
                 message="price required for paper fill",
             )
+        fee = get_settings()
+        price = apply_slippage(
+            float(raw),
+            intent.side.value,
+            slippage=float(fee.backtest_slippage or 0.0),
+        )
         notional = price * intent.qty
-        if intent.side == Side.BUY and notional > acc.cash:
-            return OrderResult(
-                client_order_id=intent.client_order_id,
-                status="rejected",
-                message="insufficient cash",
+        pos = self.db.scalar(
+            select(PaperPosition).where(
+                PaperPosition.account_id == acc.id, PaperPosition.symbol == intent.symbol
             )
+        )
+        if intent.side == Side.BUY:
+            commission = calc_buy_commission(
+                notional,
+                buy_commission=fee.backtest_buy_commission,
+                min_commission=fee.backtest_min_commission,
+            )
+            stamp = 0.0
+            cash_delta = -(notional + commission)
+            if notional + commission > acc.cash:
+                return OrderResult(
+                    client_order_id=intent.client_order_id,
+                    status="rejected",
+                    message="insufficient cash",
+                )
+        else:
+            if not pos or pos.qty < intent.qty:
+                return OrderResult(
+                    client_order_id=intent.client_order_id,
+                    status="rejected",
+                    message="insufficient position",
+                )
+            commission, stamp = calc_sell_fees(
+                notional,
+                sell_commission=fee.backtest_sell_commission,
+                stamp_duty=fee.backtest_stamp_duty,
+                min_commission=fee.backtest_min_commission,
+            )
+            cash_delta = notional - commission - stamp
 
         self.db.add(
             PaperOrder(
@@ -149,13 +218,8 @@ class PaperBroker:
                 price=price,
             )
         )
-        pos = self.db.scalar(
-            select(PaperPosition).where(
-                PaperPosition.account_id == acc.id, PaperPosition.symbol == intent.symbol
-            )
-        )
         if intent.side == Side.BUY:
-            acc.cash -= notional
+            acc.cash += cash_delta
             if not pos:
                 self.db.add(
                     PaperPosition(
@@ -167,24 +231,19 @@ class PaperBroker:
                 pos.cost = (pos.cost * pos.qty + price * intent.qty) / new_qty
                 pos.qty = new_qty
         else:
-            if not pos or pos.qty < intent.qty:
-                return OrderResult(
-                    client_order_id=intent.client_order_id,
-                    status="rejected",
-                    message="insufficient position",
-                )
-            acc.cash += notional
+            acc.cash += cash_delta
             pos.qty -= intent.qty
             if pos.qty <= 0:
                 self.db.delete(pos)
-        acc.equity = acc.cash
         acc.updated_at = datetime.utcnow()
+        self._mark_equity(acc)
+        fee_total = commission + stamp
         self.db.add(
             CashLedger(
                 account_id=acc.id,
-                delta=-notional if intent.side == Side.BUY else notional,
+                delta=cash_delta,
                 balance=acc.cash,
-                reason=f"fill:{intent.client_order_id}",
+                reason=f"fill:{intent.client_order_id};fee={fee_total:.4f}",
             )
         )
         self.db.flush()
@@ -193,7 +252,7 @@ class PaperBroker:
             status="filled",
             filled_qty=intent.qty,
             avg_price=price,
-            message="paper filled",
+            message=f"paper filled; fee={fee_total:.2f}",
         )
 
 

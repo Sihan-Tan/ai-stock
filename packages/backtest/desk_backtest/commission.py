@@ -4,43 +4,9 @@ from __future__ import annotations
 
 import backtrader as bt
 
+from desk_common.trading_cost import calc_buy_commission, calc_sell_fees
 
-def calc_buy_commission(
-    turnover: float,
-    *,
-    buy_commission: float,
-    min_commission: float,
-) -> float:
-    """
-    买入佣金。
-
-    @param turnover: 成交额
-    @param buy_commission: 买入费率
-    @param min_commission: 最低佣金
-    """
-    if turnover <= 0:
-        return 0.0
-    return max(turnover * buy_commission, min_commission)
-
-
-def calc_sell_fees(
-    turnover: float,
-    *,
-    sell_commission: float,
-    stamp_duty: float,
-    min_commission: float,
-) -> tuple[float, float]:
-    """
-    拆分卖出费用。
-
-    @param turnover: 成交额
-    @returns: (卖出佣金, 印花税)
-    """
-    if turnover <= 0:
-        return 0.0, 0.0
-    commission = max(turnover * sell_commission, min_commission)
-    stamp = turnover * stamp_duty
-    return commission, stamp
+__all__ = ["AShareCommission", "calc_buy_commission", "calc_sell_fees"]
 
 
 class AShareCommission(bt.CommInfoBase):
