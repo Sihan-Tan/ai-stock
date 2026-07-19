@@ -10,6 +10,7 @@ type Props = {
 };
 
 const mdComponents: Components = {
+  pre: ({ children }) => <>{children}</>,
   a: ({ href, children }) => (
     <a href={href} target="_blank" rel="noopener noreferrer">
       {children}

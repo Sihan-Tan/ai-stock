@@ -40,4 +40,13 @@ describe("AssistantMessageBody", () => {
     );
     expect(html).toContain("…");
   });
+
+  it("does not nest pre for fenced code blocks", () => {
+    const md = "```js\nconst x = 1;\n```";
+    const html = renderToStaticMarkup(
+      createElement(AssistantMessageBody, { content: md, streaming: false }),
+    );
+    expect(html).not.toMatch(/<pre[^>]*>[\s\S]*<pre/);
+    expect(html).toContain("research-md-pre");
+  });
 });

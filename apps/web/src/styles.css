@@ -124,7 +124,7 @@ body {
 }
 .research-md h2 {
   font-size: 1.1rem;
-  font-weight: 650;
+  font-weight: 600;
   margin: 0.9rem 0 0.45rem;
 }
 .research-md h3 {
@@ -167,6 +167,7 @@ body {
   border: 1px solid var(--desk-line);
   background: var(--desk-ink);
   padding: 0.65rem 0.75rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 0.75rem;
   line-height: 1.5;
   white-space: pre-wrap;
