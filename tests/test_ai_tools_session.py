@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
@@ -29,6 +30,15 @@ def db_session():
         db.close()
         reset_engine()
         get_settings.cache_clear()
+
+
+@pytest.fixture()
+def client(db_session):
+    """FastAPI TestClient（复用内存库 fixture 的引擎初始化）。"""
+    from app.main import app
+
+    with TestClient(app) as c:
+        yield c
 
 
 def test_dispatch_unknown_tool(db_session):
@@ -114,6 +124,16 @@ def test_skill_loader_includes_research_skills():
     assert "write-report" in names
     assert "financial-analysis" in names
 
+
+def test_skill_detail_api(client):
+    """GET /api/ai/skills/{name} 返回全文。"""
+    r = client.get("/api/ai/skills/write-report")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["name"] == "write-report"
+    assert "五步法" in body["content"] or "content" in body
+    missing = client.get("/api/ai/skills/__no_such_skill__")
+    assert missing.status_code == 404
 
 @pytest.mark.asyncio
 async def test_session_llm_auth_error_yields_message(db_session, monkeypatch):

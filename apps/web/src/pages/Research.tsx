@@ -1,10 +1,12 @@
 import { Button, Card, CardContent, CardHeader, CardTitle, Chip } from "@heroui/react";
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { api } from "../api";
 import { buildChatMessages } from "./researchMessages";
 import type { PageLogProps } from "./types";
 
 type AiSkill = { name: string; description: string };
+
+type SkillDetail = { name: string; description: string; content: string };
 
 type ChatRole = "user" | "assistant";
 
@@ -39,12 +41,19 @@ const QUICK_PROMPTS: QuickPrompt[] = [
   },
 ];
 
+/** 对话消息区固定高度，避免撑长整页 */
+const CHAT_LIST_CLASS =
+  "flex h-[min(42vh,380px)] max-h-[380px] min-h-[220px] flex-col gap-3 overflow-y-auto rounded-lg border border-[var(--desk-line)] bg-[var(--desk-ink)] p-4";
+
 /**
- * 投研多轮对话：Skills、快捷提示与流式答复。
+ * 投研多轮对话：Skills 勾选、详情弹框与限高对话区。
  * @param props 页面日志写入方法
  */
 export default function Research({ setLog }: PageLogProps) {
   const [skills, setSkills] = useState<AiSkill[]>([]);
+  const [enabled, setEnabled] = useState<Record<string, boolean>>({});
+  const [detail, setDetail] = useState<SkillDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
   const [llmConfigured, setLlmConfigured] = useState<boolean | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState("");
@@ -53,9 +62,19 @@ export default function Research({ setLog }: PageLogProps) {
   const listRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
 
+  const enabledNames = useMemo(
+    () => skills.filter((s) => enabled[s.name] !== false).map((s) => s.name),
+    [skills, enabled],
+  );
+
   useEffect(() => {
     api<AiSkill[]>("/api/ai/skills")
-      .then(setSkills)
+      .then((list) => {
+        setSkills(list);
+        const next: Record<string, boolean> = {};
+        for (const s of list) next[s.name] = true;
+        setEnabled(next);
+      })
       .catch((error) => setLog(String(error)));
     api<{ llm_api_key_set?: boolean }>("/api/settings")
       .then((settings) => setLlmConfigured(Boolean(settings.llm_api_key_set)))
@@ -71,6 +90,41 @@ export default function Research({ setLog }: PageLogProps) {
   useEffect(() => {
     if (!busy) inputRef.current?.focus();
   }, [busy]);
+
+  useEffect(() => {
+    if (!detail) return;
+    const onKey = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") setDetail(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [detail]);
+
+  /**
+   * 切换 skill 启用状态。
+   * @param name skill 名
+   * @param on 是否启用
+   */
+  const toggleSkill = (name: string, on: boolean) => {
+    setEnabled((prev) => ({ ...prev, [name]: on }));
+    if (!on && skillHint === name) setSkillHint(undefined);
+  };
+
+  /**
+   * 打开 skill 详情弹框。
+   * @param name skill 名
+   */
+  const openSkillDetail = async (name: string) => {
+    setDetailLoading(true);
+    try {
+      const data = await api<SkillDetail>(`/api/ai/skills/${encodeURIComponent(name)}`);
+      setDetail(data);
+    } catch (error) {
+      setLog(String(error));
+    } finally {
+      setDetailLoading(false);
+    }
+  };
 
   /**
    * 清空对话历史，开始新会话。
@@ -95,15 +149,25 @@ export default function Research({ setLog }: PageLogProps) {
 
     const history = messages;
     const apiMessages = buildChatMessages(history, userText);
-    const nextHint = hint ?? skillHint;
+    let nextHint = hint ?? skillHint;
+    const skillsToSend = [...enabledNames];
+    if (nextHint && !skillsToSend.includes(nextHint)) {
+      skillsToSend.unshift(nextHint);
+      setEnabled((prev) => ({ ...prev, [nextHint!]: true }));
+    }
 
     setBusy(true);
     setDraft("");
     setMessages([...history, { role: "user", content: userText }, { role: "assistant", content: "" }]);
 
     try {
-      const body: { messages: Array<{ role: string; content: string }>; skill_hint?: string } = {
+      const body: {
+        messages: Array<{ role: string; content: string }>;
+        skill_hint?: string;
+        enabled_skills: string[];
+      } = {
         messages: apiMessages,
+        enabled_skills: skillsToSend,
       };
       if (nextHint) body.skill_hint = nextHint;
 
@@ -173,7 +237,10 @@ export default function Research({ setLog }: PageLogProps) {
    */
   const applyQuick = (prompt: QuickPrompt, autoSend = true) => {
     setDraft(prompt.text);
-    setSkillHint(prompt.skill_hint);
+    if (prompt.skill_hint) {
+      setSkillHint(prompt.skill_hint);
+      setEnabled((prev) => ({ ...prev, [prompt.skill_hint!]: true }));
+    }
     if (autoSend) {
       void send(prompt.text, prompt.skill_hint);
     } else {
@@ -193,9 +260,9 @@ export default function Research({ setLog }: PageLogProps) {
   };
 
   return (
-    <div className="grid min-h-[calc(100vh-8rem)] gap-4 lg:grid-cols-[260px_minmax(0,1fr)]">
+    <div className="grid gap-4 lg:grid-cols-[240px_minmax(0,1fr)]">
       <Card className="h-fit border border-[var(--desk-line)] bg-[var(--desk-panel)]">
-        <CardHeader className="flex w-full flex-row flex-wrap items-center justify-between gap-2 p-5 pb-3">
+        <CardHeader className="flex w-full flex-row flex-wrap items-center justify-between gap-2 p-4 pb-2">
           <CardTitle className="text-base text-[var(--desk-text)]">Skills</CardTitle>
           {llmConfigured === true && (
             <Chip size="sm" variant="soft" color="success">
@@ -213,51 +280,50 @@ export default function Research({ setLog }: PageLogProps) {
             </Chip>
           )}
         </CardHeader>
-        <CardContent className="space-y-3 p-5 pt-2">
+        <CardContent className="space-y-2 p-4 pt-1">
           {llmConfigured === false && (
             <p className="text-xs text-[var(--desk-mist)]">请先到「设置 → LLM」填写 API Key。</p>
           )}
-          <ul className="space-y-1.5">
+          <p className="text-[11px] text-[var(--desk-mist)]">勾选启用；点名称查看说明</p>
+          <ul className="max-h-[min(50vh,420px)] space-y-1 overflow-y-auto">
             {skills.length === 0 && <li className="text-sm text-[var(--desk-mist)]">暂无 skill</li>}
             {skills.map((skill) => {
-              const active = skillHint === skill.name;
+              const on = enabled[skill.name] !== false;
               return (
-                <li key={skill.name}>
+                <li
+                  key={skill.name}
+                  className="flex items-center gap-2 rounded-lg px-1 py-1.5 hover:bg-[var(--desk-ink)]"
+                >
+                  <input
+                    id={`skill-on-${skill.name}`}
+                    type="checkbox"
+                    className="h-3.5 w-3.5 shrink-0 accent-[var(--desk-accent)]"
+                    checked={on}
+                    disabled={busy}
+                    onChange={(event) => toggleSkill(skill.name, event.target.checked)}
+                    aria-label={`启用 ${skill.name}`}
+                  />
                   <button
                     type="button"
-                    className={[
-                      "w-full rounded-lg border px-3 py-2 text-left transition-colors",
-                      active
-                        ? "border-[var(--desk-accent)] bg-[var(--desk-ink)]"
-                        : "border-transparent hover:border-[var(--desk-line)] hover:bg-[var(--desk-ink)]",
-                    ].join(" ")}
-                    onClick={() => setSkillHint(skill.name)}
-                    title="用作 skill_hint"
+                    className="min-w-0 flex-1 truncate text-left font-mono text-sm text-[var(--desk-text)] underline-offset-2 hover:underline"
+                    onClick={() => void openSkillDetail(skill.name)}
+                    title="查看详细介绍"
                   >
-                    <span className="font-mono text-sm text-[var(--desk-text)]">{skill.name}</span>
-                    <span className="mt-0.5 block text-xs leading-snug text-[var(--desk-mist)]">
-                      {skill.description}
-                    </span>
+                    {skill.name}
                   </button>
                 </li>
               );
             })}
           </ul>
-          {skillHint && (
-            <div className="flex items-center gap-2 border-t border-[var(--desk-line)] pt-3">
-              <Chip size="sm" variant="soft" color="accent">
-                hint: {skillHint}
-              </Chip>
-              <Button size="sm" variant="secondary" isDisabled={busy} onPress={() => setSkillHint(undefined)}>
-                清除
-              </Button>
-            </div>
-          )}
+          <div className="border-t border-[var(--desk-line)] pt-2 text-[11px] text-[var(--desk-mist)]">
+            已启用 {enabledNames.length}/{skills.length}
+            {skillHint ? ` · 优先 ${skillHint}` : ""}
+          </div>
         </CardContent>
       </Card>
 
-      <Card className="flex min-h-0 flex-col border border-[var(--desk-line)] bg-[var(--desk-panel)]">
-        <CardHeader className="flex w-full shrink-0 flex-row flex-wrap items-center justify-between gap-3 p-5 pb-3">
+      <Card className="border border-[var(--desk-line)] bg-[var(--desk-panel)]">
+        <CardHeader className="flex w-full flex-row flex-wrap items-center justify-between gap-3 p-4 pb-2">
           <div>
             <CardTitle className="text-base text-[var(--desk-text)]">投研对话</CardTitle>
             <p className="mt-1 text-xs text-[var(--desk-mist)]">基本面 · 同行对比 · 估值 · 五步法</p>
@@ -266,8 +332,8 @@ export default function Research({ setLog }: PageLogProps) {
             新会话
           </Button>
         </CardHeader>
-        <CardContent className="flex min-h-0 flex-1 flex-col gap-3 p-5 pt-2">
-          <div className="flex shrink-0 flex-wrap gap-2">
+        <CardContent className="flex flex-col gap-3 p-4 pt-1">
+          <div className="flex flex-wrap gap-2">
             {QUICK_PROMPTS.map((prompt) => (
               <Button
                 key={prompt.label}
@@ -281,12 +347,9 @@ export default function Research({ setLog }: PageLogProps) {
             ))}
           </div>
 
-          <div
-            ref={listRef}
-            className="flex min-h-[280px] flex-1 flex-col gap-3 overflow-y-auto rounded-lg border border-[var(--desk-line)] bg-[var(--desk-ink)] p-4"
-          >
+          <div ref={listRef} className={CHAT_LIST_CLASS}>
             {messages.length === 0 && (
-              <div className="m-auto max-w-md px-2 py-10 text-center">
+              <div className="m-auto max-w-md px-2 py-8 text-center">
                 <p className="text-sm font-medium text-[var(--desk-text)]">从下方输入框开始提问</p>
                 <p className="mt-2 text-xs leading-relaxed text-[var(--desk-mist)]">
                   也可点上方快捷提示。支持 Ctrl + Enter 发送。
@@ -312,10 +375,9 @@ export default function Research({ setLog }: PageLogProps) {
             ))}
           </div>
 
-          {/* 输入区：对比消息区抬高一层，边框与焦点环更明显 */}
           <div
             className={[
-              "shrink-0 rounded-xl border-2 bg-[var(--desk-ink)] p-3 shadow-[0_0_0_1px_rgba(0,0,0,0.04)]",
+              "shrink-0 rounded-xl border-2 bg-[var(--desk-ink)] p-3",
               "border-[var(--desk-accent)]/55",
               "focus-within:border-[var(--desk-accent)] focus-within:shadow-[0_0_0_3px_color-mix(in_srgb,var(--desk-accent)_22%,transparent)]",
             ].join(" ")}
@@ -330,7 +392,7 @@ export default function Research({ setLog }: PageLogProps) {
               id="research-composer"
               ref={inputRef}
               aria-label="投研问题"
-              rows={4}
+              rows={3}
               value={draft}
               disabled={busy}
               onChange={(event) => setDraft(event.target.value)}
@@ -342,12 +404,13 @@ export default function Research({ setLog }: PageLogProps) {
                 "placeholder:text-[var(--desk-mist)]",
                 "outline-none focus:border-[var(--desk-accent)]",
                 "disabled:cursor-not-allowed disabled:opacity-60",
-                "min-h-[6.5rem]",
+                "min-h-[5rem] max-h-[9rem]",
               ].join(" ")}
             />
             <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
               <p className="text-[11px] text-[var(--desk-mist)]">
-                {skillHint ? `将携带 skill：${skillHint}` : "未选择 skill hint（可选左侧列表）"}
+                本次将加载 {enabledNames.length} 个 skill
+                {skillHint ? `（优先 ${skillHint}）` : ""}
               </p>
               <Button
                 variant="primary"
@@ -360,6 +423,63 @@ export default function Research({ setLog }: PageLogProps) {
           </div>
         </CardContent>
       </Card>
+
+      {(detail || detailLoading) && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4"
+          role="presentation"
+          onClick={() => !detailLoading && setDetail(null)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="skill-detail-title"
+            className="max-h-[min(80vh,640px)] w-full max-w-lg overflow-hidden rounded-xl border border-[var(--desk-line)] bg-[var(--desk-panel)] shadow-xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3 border-b border-[var(--desk-line)] px-4 py-3">
+              <div className="min-w-0">
+                <h2 id="skill-detail-title" className="truncate font-mono text-sm text-[var(--desk-text)]">
+                  {detail?.name || "加载中…"}
+                </h2>
+                {detail?.description ? (
+                  <p className="mt-1 text-xs text-[var(--desk-mist)]">{detail.description}</p>
+                ) : null}
+              </div>
+              <Button size="sm" variant="ghost" isDisabled={detailLoading} onPress={() => setDetail(null)}>
+                关闭
+              </Button>
+            </div>
+            <div className="max-h-[min(60vh,480px)] overflow-y-auto px-4 py-3">
+              {detailLoading && !detail ? (
+                <p className="text-sm text-[var(--desk-mist)]">正在加载 skill 说明…</p>
+              ) : (
+                <pre className="whitespace-pre-wrap break-words font-sans text-xs leading-relaxed text-[var(--desk-text)]">
+                  {detail?.content || ""}
+                </pre>
+              )}
+            </div>
+            {detail && (
+              <div className="flex justify-end gap-2 border-t border-[var(--desk-line)] px-4 py-3">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onPress={() => {
+                    toggleSkill(detail.name, true);
+                    setSkillHint(detail.name);
+                    setDetail(null);
+                  }}
+                >
+                  启用并优先
+                </Button>
+                <Button size="sm" variant="primary" onPress={() => setDetail(null)}>
+                  知道了
+                </Button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

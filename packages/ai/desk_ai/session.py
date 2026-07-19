@@ -53,20 +53,58 @@ class NanobotResearchSession:
         )
         return await client.chat.completions.create(**kwargs)
 
-    def _build_system(self, skill_hint: str | None) -> str:
-        """组装 system：身份 + skills 摘要 + 硬约束；可选加载 skill 全文。"""
+    def _build_system(
+        self,
+        skill_hint: str | None = None,
+        enabled_skills: list[str] | None = None,
+    ) -> str:
+        """
+        组装 system：身份 + 启用 skills 摘要/全文 + 硬约束。
+
+        @param skill_hint: 优先强调的 skill（快捷提示）
+        @param enabled_skills: 用户勾选启用的 skill 名；None 表示全部可用（仅摘要）
+        """
+        all_items = self.skills.list()
+        all_names = {i["name"] for i in all_items}
+        if enabled_skills is None:
+            enabled = [i["name"] for i in all_items]
+        else:
+            enabled = [n for n in enabled_skills if n in all_names]
+        # hint 优先加载，且并入启用列表
+        ordered: list[str] = []
+        if skill_hint and skill_hint in all_names:
+            ordered.append(skill_hint)
+        for name in enabled:
+            if name not in ordered:
+                ordered.append(name)
+
+        summary_lines = []
+        for item in all_items:
+            if item["name"] in ordered:
+                summary_lines.append(f"- {item['name']}: {item['description']}")
+        summary = "\n".join(summary_lines) if summary_lines else "（当前未启用任何 skill）"
+
         parts = [
             "你是刻度 Desk 投研助手，运行于 nanobot 技能体系。",
             "只用只读工具；写策略只能 save_strategy_draft。",
             "数字必须来自工具，禁止编造财务或估值数据。",
             "禁止下单，禁止修改交易开关或 Kill Switch。",
-            f"可用 skills:\n{self.skill_summary()}",
+            f"已启用 skills:\n{summary}",
         ]
-        if skill_hint:
+        # 加载启用 skill 全文（控制总长度，避免撑爆上下文）
+        budget = 24_000
+        used = 0
+        for name in ordered:
             try:
-                parts.append(f"\n--- skill: {skill_hint} ---\n{self.skills.load(skill_hint)}")
+                body = self.skills.load(name)
             except (FileNotFoundError, OSError):
-                pass
+                continue
+            chunk = f"\n--- skill: {name} ---\n{body}"
+            if used + len(chunk) > budget:
+                parts.append(f"\n--- skill: {name} ---\n（正文过长已省略，请按摘要执行）")
+                break
+            parts.append(chunk)
+            used += len(chunk)
         return "\n".join(parts)
 
     @staticmethod
@@ -131,6 +169,7 @@ class NanobotResearchSession:
         self,
         messages: list[dict[str, Any]],
         skill_hint: str | None = None,
+        enabled_skills: list[str] | None = None,
     ) -> AsyncIterator[str]:
         """流式输出：tools 循环或无 Key 时的提示/关键词降级。"""
         user = next((m.get("content") or "" for m in reversed(messages) if m.get("role") == "user"), "")
@@ -142,7 +181,7 @@ class NanobotResearchSession:
                 yield chunk
             return
 
-        system = self._build_system(skill_hint)
+        system = self._build_system(skill_hint=skill_hint, enabled_skills=enabled_skills)
         working: list[dict[str, Any]] = [{"role": "system", "content": system}, *messages]
 
         try:
