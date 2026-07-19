@@ -71,14 +71,19 @@ class NanobotResearchSession:
 
     @staticmethod
     def _truncate_tool_result(value: Any) -> str:
-        """将工具结果序列化为 JSON，并截断至约 12000 字符。"""
+        """将工具结果序列化为 JSON；超长时仍返回可解析对象（带 truncated 标记）。"""
         try:
             text = json.dumps(value, ensure_ascii=False, default=str)
         except TypeError:
-            text = str(value)
-        if len(text) > _TOOL_RESULT_MAX:
-            return text[:_TOOL_RESULT_MAX] + "…(truncated)"
-        return text
+            text = json.dumps({"error": "unserializable", "repr": str(value)[:2000]}, ensure_ascii=False)
+        if len(text) <= _TOOL_RESULT_MAX:
+            return text
+        # 保持合法 JSON，避免截断破坏 tools 循环解析
+        preview = text[: max(0, _TOOL_RESULT_MAX - 120)]
+        return json.dumps(
+            {"truncated": True, "preview": preview, "original_chars": len(text)},
+            ensure_ascii=False,
+        )
 
     @staticmethod
     def _tool_calls_payload(tool_calls: Any) -> list[dict[str, Any]]:

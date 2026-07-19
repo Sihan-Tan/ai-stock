@@ -24,6 +24,7 @@ _DEFAULT_TABLES: list[str] = [
     "Pershareindex",
     "Balance",
     "CashFlow",
+    "Capital",
 ]
 
 _CACHE_TABLES: frozenset[str] = frozenset(
