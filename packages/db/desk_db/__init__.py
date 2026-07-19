@@ -85,23 +85,39 @@ def ping_db() -> bool:
         return False
 
 
-def _ensure_paper_position_strategy_column() -> None:
-    """已有库补列：paper_positions.strategy_id（create_all 不会 ALTER）。"""
+def _ensure_sqlite_column(table: str, column: str, ddl_type: str = "VARCHAR(64)") -> None:
+    """SQLite 已有表补列（表不存在则跳过）。"""
+    engine = get_engine()
+    with engine.begin() as conn:
+        exists = conn.execute(
+            text("SELECT name FROM sqlite_master WHERE type='table' AND name=:t"),
+            {"t": table},
+        ).fetchone()
+        if not exists:
+            return
+        rows = conn.execute(text(f"PRAGMA table_info({table})")).fetchall()
+        names = {r[1] for r in rows}
+        if column not in names:
+            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}"))
+
+
+def _ensure_position_strategy_columns() -> None:
+    """已有库补列：paper/live_positions.strategy_id。"""
     engine = get_engine()
     dialect = engine.dialect.name
+    if dialect == "sqlite":
+        _ensure_sqlite_column("paper_positions", "strategy_id")
+        _ensure_sqlite_column("live_positions", "strategy_id")
+        return
     with engine.begin() as conn:
-        if dialect == "sqlite":
-            rows = conn.execute(text("PRAGMA table_info(paper_positions)")).fetchall()
-            names = {r[1] for r in rows}
-            if "strategy_id" not in names:
-                conn.execute(
-                    text("ALTER TABLE paper_positions ADD COLUMN strategy_id VARCHAR(64)")
-                )
-            return
-        # Postgres 等：存在则跳过
         conn.execute(
             text(
                 "ALTER TABLE paper_positions ADD COLUMN IF NOT EXISTS strategy_id VARCHAR(64)"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE live_positions ADD COLUMN IF NOT EXISTS strategy_id VARCHAR(64)"
             )
         )
 
@@ -115,9 +131,9 @@ def try_ensure_schema() -> bool:
     try:
         Base.metadata.create_all(bind=get_engine())
         try:
-            _ensure_paper_position_strategy_column()
+            _ensure_position_strategy_columns()
         except Exception as exc:  # noqa: BLE001
-            logger.warning("补齐 paper_positions.strategy_id 失败：%s", exc)
+            logger.warning("补齐 positions.strategy_id 失败：%s", exc)
         return True
     except Exception as exc:  # noqa: BLE001
         logger.warning("数据库不可达或建表失败，服务仍继续启动：%s", exc)

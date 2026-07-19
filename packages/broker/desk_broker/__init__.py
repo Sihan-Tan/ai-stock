@@ -415,6 +415,126 @@ class MockQmtBroker:
             "account_id": settings.qmt_account_id or "mock",
         }
 
+    def _live_rows_from_db(self) -> tuple[list[dict], list[dict]]:
+        """
+        从本地 live_positions 拆出持仓 / 已卖出。
+
+        @returns: (holding_rows, sold_rows)
+        """
+        rows = self.db.scalars(select(LivePosition)).all()
+        holdings: list[dict] = []
+        sold: list[dict] = []
+        for p in rows:
+            item = {
+                "symbol": p.symbol,
+                "qty": float(p.qty),
+                "can_use_qty": float(p.qty) if float(p.qty) > 0 else 0.0,
+                "cost": float(p.cost),
+                "market_value": float(p.qty) * float(p.cost),
+                "frozen_qty": 0.0,
+                "yesterday_qty": None,
+                "strategy_id": getattr(p, "strategy_id", None) or "manual",
+                "row_type": "holding" if float(p.qty) > 0 else "sold",
+            }
+            if float(p.qty) > 0:
+                holdings.append(item)
+            else:
+                sold.append(item)
+        return holdings, sold
+
+    def _sync_live_positions(self, qmt_positions: list[dict]) -> tuple[list[dict], list[dict]]:
+        """
+        用柜台持仓回写 live_positions，并标出已清仓标的。
+
+        @param qmt_positions: query_stock_positions 结果
+        @returns: (holding_rows, sold_rows)
+        """
+        existing = {
+            p.symbol: p
+            for p in self.db.scalars(select(LivePosition)).all()
+        }
+        held_syms: set[str] = set()
+        holdings: list[dict] = []
+        now = datetime.utcnow()
+        for raw in qmt_positions:
+            sym = str(raw.get("symbol") or "").strip().upper()
+            if not sym:
+                continue
+            held_syms.add(sym)
+            qty = float(raw.get("qty") or 0)
+            cost = float(raw.get("cost") or 0)
+            row = existing.get(sym)
+            if row:
+                row.qty = qty
+                if cost > 0:
+                    row.cost = cost
+                row.updated_at = now
+            else:
+                row = LivePosition(
+                    symbol=sym,
+                    qty=qty,
+                    cost=cost if cost > 0 else 0.0,
+                    strategy_id="manual",
+                    updated_at=now,
+                )
+                self.db.add(row)
+                existing[sym] = row
+            sid = getattr(row, "strategy_id", None) or "manual"
+            holdings.append(
+                {
+                    **raw,
+                    "symbol": sym,
+                    "strategy_id": sid,
+                    "row_type": "holding",
+                }
+            )
+        sold: list[dict] = []
+        for sym, row in existing.items():
+            if sym in held_syms:
+                continue
+            prev_qty = float(row.qty or 0)
+            if prev_qty > 0:
+                row.qty = 0.0
+                row.updated_at = now
+            sold.append(
+                {
+                    "symbol": sym,
+                    "qty": prev_qty if prev_qty > 0 else 0.0,
+                    "can_use_qty": 0.0,
+                    "cost": float(row.cost or 0),
+                    "market_value": 0.0,
+                    "frozen_qty": 0.0,
+                    "yesterday_qty": None,
+                    "strategy_id": getattr(row, "strategy_id", None) or "manual",
+                    "row_type": "sold",
+                }
+            )
+        self.db.flush()
+        return holdings, sold
+
+    def account_snapshot(self) -> dict:
+        """
+        实盘持仓快照（Mock：读本地 live_positions）。
+
+        @returns: source / mode / asset / positions / sold / message
+        """
+        holdings, sold = self._live_rows_from_db()
+        mv = sum(float(p["market_value"]) for p in holdings)
+        return {
+            "source": "local_db",
+            "mode": self.mode,
+            "asset": {
+                "cash": None,
+                "frozen_cash": None,
+                "market_value": mv,
+                "total_asset": mv,
+                "account_id": get_settings().qmt_account_id or "mock",
+            },
+            "positions": holdings,
+            "sold": sold,
+            "message": "当前为 Mock/本地库持仓；配置 QMT 真连后可看柜台持仓",
+        }
+
     def place_order(self, intent: OrderIntent) -> OrderResult:
         """模拟成交。"""
         price = intent.price or 0.0
@@ -487,21 +607,77 @@ class QmtBroker(MockQmtBroker):
     def ping(self) -> dict:
         """连通探测（含 force_mock / 账号配置）。"""
         settings = get_settings()
+        query_ready = self._qmt_query_ready()
+        real_ready = query_ready and not bool(settings.qmt_force_mock)
         base = super().ping()
         base.update(
             {
                 "xtquant": bool(self._xt),
                 "force_mock": bool(settings.qmt_force_mock),
                 "account_configured": bool(settings.qmt_account_id),
-                "real_ready": bool(
-                    self._xt
-                    and not settings.qmt_force_mock
-                    and settings.qmt_account_id
-                    and settings.qmt_userdata_path
-                ),
+                "query_ready": query_ready,
+                "real_ready": real_ready,
             }
         )
         return base
+
+    def _qmt_query_ready(self) -> bool:
+        """
+        是否可连接柜台读持仓/资产。
+
+        仅需 xtquant + 路径 + 账号；``QMT_FORCE_MOCK`` 只拦真下单，不拦查询。
+        """
+        settings = get_settings()
+        return bool(
+            self._xt and settings.qmt_account_id and settings.qmt_userdata_path
+        )
+
+    def _real_qmt_ready(self) -> bool:
+        """是否具备向柜台发真单的配置（需关闭 force_mock）。"""
+        return self._qmt_query_ready() and not bool(get_settings().qmt_force_mock)
+
+    def account_snapshot(self) -> dict:
+        """
+        优先查 QMT 柜台持仓与资产；不可用时回退本地 live_positions。
+
+        读持仓不依赖 ``QMT_FORCE_MOCK``（该开关仅控制是否发真单）。
+        """
+        if not self._qmt_query_ready():
+            snap = super().account_snapshot()
+            snap["message"] = (
+                "未配置 QMT 路径/账号或 xtquant 不可用，展示本地 live_positions"
+            )
+            return snap
+        settings = get_settings()
+        try:
+            from desk_broker.qmt_trader import (
+                connect_qmt,
+                query_stock_asset,
+                query_stock_positions,
+            )
+
+            connect_qmt(
+                userdata_path=settings.qmt_userdata_path,
+                account_id=settings.qmt_account_id,
+            )
+            qmt_positions = query_stock_positions()
+            asset = query_stock_asset()
+            holdings, sold = self._sync_live_positions(qmt_positions)
+            note = ""
+            if settings.qmt_force_mock:
+                note = "持仓来自 QMT 柜台；当前 QMT_FORCE_MOCK=1，下单仍走 Mock"
+            return {
+                "source": "qmt",
+                "mode": "qmt",
+                "asset": asset,
+                "positions": holdings,
+                "sold": sold,
+                "message": note,
+            }
+        except Exception as exc:  # noqa: BLE001
+            base = super().account_snapshot()
+            base["message"] = f"QMT 持仓查询失败，已回退本地库：{exc}"
+            return base
 
     def place_order(self, intent: OrderIntent) -> OrderResult:
         """
@@ -898,6 +1074,26 @@ class BrokerGateway:
         if not pos:
             return {"ok": False, "symbol": sym, "message": "持仓不存在"}
         pos.strategy_id = sid
+        self.db.flush()
+        return {"ok": True, "symbol": sym, "strategy_id": sid}
+
+    def set_live_position_strategy(self, symbol: str, strategy_id: str) -> dict:
+        """
+        更换实盘持仓的执行策略标签（不改柜台数量）。
+
+        @param symbol: 标的
+        @param strategy_id: 新策略 ID（含 manual）
+        """
+        from desk_common.symbols import normalize_symbol
+
+        sym = normalize_symbol(symbol)
+        sid = (strategy_id or MANUAL_PAPER_STRATEGY_ID).strip() or MANUAL_PAPER_STRATEGY_ID
+        pos = self.db.scalar(select(LivePosition).where(LivePosition.symbol == sym))
+        if not pos:
+            pos = LivePosition(symbol=sym, qty=0.0, cost=0.0, strategy_id=sid)
+            self.db.add(pos)
+        else:
+            pos.strategy_id = sid
         self.db.flush()
         return {"ok": True, "symbol": sym, "strategy_id": sid}
 

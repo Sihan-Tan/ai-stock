@@ -365,6 +365,7 @@ class LivePosition(Base):
     symbol: Mapped[str] = mapped_column(String(16))
     qty: Mapped[float] = mapped_column(Float, default=0.0)
     cost: Mapped[float] = mapped_column(Float, default=0.0)
+    strategy_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 

@@ -129,6 +129,70 @@ def place_stock_order(
     }
 
 
+def query_stock_positions() -> list[dict[str, Any]]:
+    """
+    查询当前账号全部股票持仓。
+
+    @returns: 标准化持仓列表（qty>0）
+    @raises RuntimeError: 未连接
+    """
+    if not _CONNECTED or _TRADER is None or _ACCOUNT is None:
+        raise RuntimeError("QMT not connected")
+    rows = _TRADER.query_stock_positions(_ACCOUNT)
+    if not rows:
+        return []
+    out: list[dict[str, Any]] = []
+    for pos in rows:
+        qty = int(getattr(pos, "volume", 0) or 0)
+        if qty <= 0:
+            continue
+        symbol = str(
+            getattr(pos, "stock_code", None)
+            or getattr(pos, "stock_code1", None)
+            or ""
+        ).strip().upper()
+        if not symbol:
+            continue
+        cost = float(
+            getattr(pos, "avg_price", None)
+            or getattr(pos, "open_price", None)
+            or 0.0
+        )
+        out.append(
+            {
+                "symbol": symbol,
+                "qty": float(qty),
+                "can_use_qty": float(getattr(pos, "can_use_volume", 0) or 0),
+                "cost": cost,
+                "market_value": float(getattr(pos, "market_value", 0) or 0),
+                "frozen_qty": float(getattr(pos, "frozen_volume", 0) or 0),
+                "yesterday_qty": float(getattr(pos, "yesterday_volume", 0) or 0),
+            }
+        )
+    return out
+
+
+def query_stock_asset() -> dict[str, Any] | None:
+    """
+    查询资金账号资产。
+
+    @returns: cash / market_value / total_asset 等；失败则 None
+    @raises RuntimeError: 未连接
+    """
+    if not _CONNECTED or _TRADER is None or _ACCOUNT is None:
+        raise RuntimeError("QMT not connected")
+    asset = _TRADER.query_stock_asset(_ACCOUNT)
+    if asset is None:
+        return None
+    return {
+        "cash": float(getattr(asset, "cash", 0) or 0),
+        "frozen_cash": float(getattr(asset, "frozen_cash", 0) or 0),
+        "market_value": float(getattr(asset, "market_value", 0) or 0),
+        "total_asset": float(getattr(asset, "total_asset", 0) or 0),
+        "account_id": str(getattr(asset, "account_id", "") or ""),
+    }
+
+
 def disconnect_qmt() -> None:
     """断开交易连接。"""
     global _TRADER, _ACCOUNT, _CONNECTED

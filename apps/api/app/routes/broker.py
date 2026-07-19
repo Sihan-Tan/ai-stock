@@ -142,6 +142,14 @@ def paper_position_strategy(
     return result
 
 
+@router.post("/live/positions/{symbol}/strategy")
+def live_position_strategy(
+    symbol: str, body: PaperPositionStrategyIn, db: Session = Depends(get_db)
+):
+    """更换实盘持仓的执行策略标签。"""
+    return get_gate(db).set_live_position_strategy(symbol, body.strategy_id)
+
+
 @router.post("/paper/run-once")
 def paper_run_once(body: PaperRunIn, db: Session = Depends(get_db)):
     """对单标的跑一次纸交易策略评估并下单。"""
@@ -163,6 +171,14 @@ def paper_run_watchlist(body: PaperWatchRunIn, db: Session = Depends(get_db)):
 @router.get("/qmt/ping")
 def qmt_ping(db: Session = Depends(get_db)):
     return get_gate(db).live.ping()
+
+
+@router.get("/live/positions")
+def live_positions(db: Session = Depends(get_db)):
+    """
+    实盘持仓：优先 QMT ``query_stock_positions``，否则本地 live_positions。
+    """
+    return get_gate(db).live.account_snapshot()
 
 
 @router.get("/risk")

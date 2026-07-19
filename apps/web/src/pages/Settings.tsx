@@ -346,7 +346,7 @@ export default function Settings({ setLog }: PageLogProps) {
                     <span>
                       强制 Mock 不发真单（QMT_FORCE_MOCK）
                       <span className="mt-0.5 block text-xs text-[var(--desk-mist)]">
-                        取消勾选且账号/路径齐全时走 XtQuantTrader 真单
+                        仅拦截真下单；持仓/资金仍可从 QMT 柜台查询。取消勾选且账号/路径齐全时发真单
                       </span>
                     </span>
                   </label>

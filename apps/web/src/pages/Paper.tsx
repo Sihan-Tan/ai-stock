@@ -68,6 +68,32 @@ type TradingModeState = {
   live_execution?: string;
 };
 
+type LivePositionRow = {
+  symbol: string;
+  qty: number;
+  can_use_qty?: number;
+  cost?: number;
+  market_value?: number;
+  frozen_qty?: number;
+  strategy_id?: string | null;
+  row_type?: "holding" | "sold";
+};
+
+type LiveSnapshot = {
+  source?: string;
+  mode?: string;
+  message?: string;
+  asset?: {
+    cash?: number | null;
+    frozen_cash?: number | null;
+    market_value?: number | null;
+    total_asset?: number | null;
+    account_id?: string;
+  } | null;
+  positions?: LivePositionRow[];
+  sold?: LivePositionRow[];
+};
+
 const selectClass =
   "rounded-lg border border-[var(--desk-line)] bg-[var(--desk-ink)] px-2 py-1.5 text-xs text-[var(--desk-text)] outline-none focus:border-[var(--desk-mist)]";
 
@@ -95,7 +121,11 @@ export default function Paper({ setLog }: PageLogProps) {
     symbol: string;
     name: string;
     currentId: string;
+    mode: "paper" | "live";
   } | null>(null);
+  const [liveQuotes, setLiveQuotes] = useState<
+    Record<string, { name?: string; last?: number }>
+  >({});
   const [stratPreviewId, setStratPreviewId] = useState("manual");
   const [stratExample, setStratExample] = useState("");
   const [stratExampleLoading, setStratExampleLoading] = useState(false);
@@ -107,6 +137,14 @@ export default function Paper({ setLog }: PageLogProps) {
   const [runSymbol, setRunSymbol] = useState("600519.SH");
   const [approvals, setApprovals] = useState<ApprovalItem[]>([]);
   const [tradingMode, setTradingMode] = useState<TradingModeState | null>(null);
+  const [liveSnap, setLiveSnap] = useState<LiveSnapshot | null>(null);
+  const [qmtPing, setQmtPing] = useState<{
+    real_ready?: boolean;
+    query_ready?: boolean;
+    mode?: string;
+    account_id?: string;
+    force_mock?: boolean;
+  } | null>(null);
   const [runnerStatus, setRunnerStatus] = useState<{
     enabled?: boolean;
     strategy_id?: string;
@@ -118,7 +156,7 @@ export default function Paper({ setLog }: PageLogProps) {
 
   const refresh = useCallback(async () => {
     try {
-      const [paper, wl, al, rk, ap, tm, rs] = await Promise.all([
+      const [paper, wl, al, rk, ap, tm, rs, live, ping] = await Promise.all([
         api<PaperSummary>("/api/broker/paper"),
         api<WatchRow[]>("/api/market/watchlist").catch(() => [] as WatchRow[]),
         api<AlertRow[]>("/api/alerts").catch(() => [] as AlertRow[]),
@@ -126,6 +164,8 @@ export default function Paper({ setLog }: PageLogProps) {
         api<{ items: ApprovalItem[] }>("/api/broker/approvals").catch(() => ({ items: [] })),
         api<TradingModeState>("/api/broker/trading-mode").catch(() => null),
         api<NonNullable<typeof runnerStatus>>("/api/broker/paper/runner").catch(() => null),
+        api<LiveSnapshot>("/api/broker/live/positions").catch(() => null),
+        api<NonNullable<typeof qmtPing>>("/api/broker/qmt/ping").catch(() => null),
       ]);
       setSummary(paper);
       setWatch(wl);
@@ -134,6 +174,8 @@ export default function Paper({ setLog }: PageLogProps) {
       setApprovals(ap.items || []);
       setTradingMode(tm);
       setRunnerStatus(rs);
+      setLiveSnap(live);
+      setQmtPing(ping);
     } catch (error) {
       setLog(String(error));
     }
@@ -301,6 +343,129 @@ export default function Paper({ setLog }: PageLogProps) {
   const stratDirty =
     !!stratModal && (stratPreviewId || "manual") !== (stratModal.currentId || "manual");
 
+  /** 实盘：持仓 / 待审批 / 已卖出（同一表格） */
+  const liveTableRows = useMemo(() => {
+    type Row = {
+      key: string;
+      type: "holding" | "approval" | "sold";
+      symbol: string;
+      name: string;
+      strategyId: string;
+      strategyName: string;
+      qty: number;
+      canUse: number | null;
+      cost: number | null;
+      last: number | null;
+      pnl: number | null;
+      pnlPct: number | null;
+      clientOrderId?: string;
+    };
+    const rows: Row[] = [];
+    const nameOf = (sym: string) => liveQuotes[sym]?.name || quoteMap.get(sym)?.name || sym;
+    const lastOf = (sym: string, fallback?: number) => {
+      const q = liveQuotes[sym]?.last ?? quoteMap.get(sym)?.last;
+      if (q != null && Number(q) > 0) return Number(q);
+      return fallback != null && fallback > 0 ? fallback : null;
+    };
+    const stratName = (sid: string) =>
+      sid === "manual"
+        ? "手动建仓"
+        : strategies.find((s) => s.id === sid)?.name || sid;
+
+    for (const p of liveSnap?.positions || []) {
+      const cost = p.cost != null ? Number(p.cost) : null;
+      const lastFromMv =
+        p.qty > 0 && p.market_value != null ? Number(p.market_value) / p.qty : undefined;
+      const last = lastOf(p.symbol, lastFromMv);
+      const pnl =
+        cost != null && last != null && p.qty > 0 ? (last - cost) * p.qty : null;
+      const pnlPct = cost != null && cost > 0 && last != null ? ((last - cost) / cost) * 100 : null;
+      const sid = p.strategy_id || "manual";
+      rows.push({
+        key: `h:${p.symbol}`,
+        type: "holding",
+        symbol: p.symbol,
+        name: nameOf(p.symbol),
+        strategyId: sid,
+        strategyName: stratName(sid),
+        qty: p.qty,
+        canUse: p.can_use_qty ?? p.qty,
+        cost,
+        last,
+        pnl,
+        pnlPct,
+      });
+    }
+    for (const a of approvals) {
+      const last = a.price != null ? Number(a.price) : lastOf(a.symbol);
+      rows.push({
+        key: `a:${a.client_order_id}`,
+        type: "approval",
+        symbol: a.symbol,
+        name: nameOf(a.symbol),
+        strategyId: "manual",
+        strategyName: "—",
+        qty: a.qty,
+        canUse: null,
+        cost: a.price != null ? Number(a.price) : null,
+        last,
+        pnl: null,
+        pnlPct: null,
+        clientOrderId: a.client_order_id,
+      });
+    }
+    for (const p of liveSnap?.sold || []) {
+      const cost = p.cost != null ? Number(p.cost) : null;
+      const last = lastOf(p.symbol);
+      const sid = p.strategy_id || "manual";
+      rows.push({
+        key: `s:${p.symbol}`,
+        type: "sold",
+        symbol: p.symbol,
+        name: nameOf(p.symbol),
+        strategyId: sid,
+        strategyName: stratName(sid),
+        qty: p.qty,
+        canUse: 0,
+        cost,
+        last,
+        pnl: null,
+        pnlPct: null,
+      });
+    }
+    return rows;
+  }, [liveSnap?.positions, liveSnap?.sold, approvals, liveQuotes, quoteMap, strategies]);
+
+  useEffect(() => {
+    const syms = new Set<string>();
+    for (const p of liveSnap?.positions || []) syms.add(p.symbol);
+    for (const p of liveSnap?.sold || []) syms.add(p.symbol);
+    for (const a of approvals) syms.add(a.symbol);
+    if (!syms.size) {
+      setLiveQuotes({});
+      return;
+    }
+    let cancelled = false;
+    void api<Record<string, { name?: string; last?: number; symbol?: string }>>(
+      `/api/market/intraday/quote?symbols=${encodeURIComponent([...syms].join(","))}`
+    )
+      .then((snaps) => {
+        if (cancelled) return;
+        const map: Record<string, { name?: string; last?: number }> = {};
+        for (const [sym, snap] of Object.entries(snaps || {})) {
+          if (!sym || !snap) continue;
+          map[sym] = { name: snap.name, last: snap.last };
+        }
+        setLiveQuotes(map);
+      })
+      .catch(() => {
+        if (!cancelled) setLiveQuotes({});
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [liveSnap?.positions, liveSnap?.sold, approvals]);
+
   const initialCash = summary?.initial_cash ?? 1_000_000;
   const cash = summary?.cash ?? 0;
   const posMv = positions.reduce((s, p) => s + p.mv, 0);
@@ -316,11 +481,17 @@ export default function Paper({ setLog }: PageLogProps) {
    * @param symbol 标的
    * @param name 标的名称
    * @param strategyId 当前策略
+   * @param mode paper=模拟 / live=实盘
    */
-  const openStrategyModal = (symbol: string, name: string, strategyId: string) => {
+  const openStrategyModal = (
+    symbol: string,
+    name: string,
+    strategyId: string,
+    mode: "paper" | "live" = "paper"
+  ) => {
     const sid = strategyId || "manual";
     setStratPreviewId(sid);
-    setStratModal({ symbol, name, currentId: sid });
+    setStratModal({ symbol, name, currentId: sid, mode });
   };
 
   /**
@@ -328,17 +499,18 @@ export default function Paper({ setLog }: PageLogProps) {
    */
   const confirmPositionStrategy = async () => {
     if (!stratModal) return;
-    const { symbol } = stratModal;
+    const { symbol, mode } = stratModal;
     const strategyId = stratPreviewId || "manual";
+    const path =
+      mode === "live"
+        ? `/api/broker/live/positions/${encodeURIComponent(symbol)}/strategy`
+        : `/api/broker/paper/positions/${encodeURIComponent(symbol)}/strategy`;
     setBusy(true);
     try {
-      const r = await api<{ ok: boolean; strategy_id?: string }>(
-        `/api/broker/paper/positions/${encodeURIComponent(symbol)}/strategy`,
-        {
-          method: "POST",
-          body: JSON.stringify({ strategy_id: strategyId }),
-        }
-      );
+      const r = await api<{ ok: boolean; strategy_id?: string }>(path, {
+        method: "POST",
+        body: JSON.stringify({ strategy_id: strategyId }),
+      });
       setStratModal(null);
       setLog(`已将 ${symbol} 执行策略改为 ${r.strategy_id || strategyId}`);
       await refresh();
@@ -503,114 +675,246 @@ export default function Paper({ setLog }: PageLogProps) {
         </div>
         <p className="text-xs text-[var(--desk-mist)]">
           {tab === "monitor"
-            ? "纸交易监控：用「策略 Runner」评估信号并下模拟单，不会真实下单"
-            : "实盘 (/live)：需 ARM + 白名单，真实通道下单"}
+            ? "纸交易：策略 Runner 评估信号并下模拟单"
+            : "实盘：QMT 柜台持仓 · 待审批同表处理"}
         </p>
       </div>
 
       {tab === "live" ? (
-        <div className="space-y-4">
-          <Card className="border border-[var(--desk-line)] bg-[var(--desk-panel)]">
-            <CardHeader className="p-5 pb-2">
-              <CardTitle className="text-base">实盘通道</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3 p-5 pt-2 text-sm text-[var(--desk-mist)]">
-              <p>
-                实盘闸门与限额见「设置」。armed=
-                <span className="font-mono text-[var(--desk-text)]">
-                  {String(risk?.armed ?? false)}
-                </span>
-                ，kill=
-                <span className="font-mono text-[var(--desk-text)]">
-                  {String(risk?.kill_switch ?? false)}
-                </span>
-                ，白名单 {risk?.whitelist?.length ?? 0} 只。执行模式=
-                <span className="font-mono text-[var(--desk-text)]">
-                  {tradingMode?.live_execution || "—"}
-                </span>
-                。
-              </p>
-              <Button variant="secondary" onPress={refresh}>
-                刷新状态
+        <Card className="border border-[var(--desk-line)] bg-[var(--desk-panel)]">
+          <div className="flex flex-col gap-4 p-5 pb-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <CardTitle className="text-base text-[var(--desk-text)]">实盘持仓</CardTitle>
+                {qmtPing?.account_id ? (
+                  <span className="font-mono text-xs text-[var(--desk-mist)]">
+                    {qmtPing.account_id}
+                  </span>
+                ) : null}
+                <Chip size="sm" variant="soft">
+                  {liveSnap?.source === "qmt" ? "柜台" : "本地"}
+                </Chip>
+                <Chip
+                  size="sm"
+                  variant="soft"
+                  color={qmtPing?.query_ready ? undefined : "warning"}
+                >
+                  {qmtPing?.query_ready ? "可查询" : "查询未就绪"}
+                </Chip>
+                <Chip
+                  size="sm"
+                  variant="soft"
+                  color={qmtPing?.real_ready ? undefined : "warning"}
+                >
+                  {qmtPing?.real_ready ? "可真单" : "Mock 下单"}
+                </Chip>
+                {risk?.armed ? (
+                  <Chip size="sm" variant="soft">
+                    ARM
+                  </Chip>
+                ) : null}
+                {risk?.kill_switch ? (
+                  <Chip size="sm" variant="soft" color="danger">
+                    Kill
+                  </Chip>
+                ) : null}
+              </div>
+              <Button
+                className="shrink-0"
+                size="sm"
+                variant="secondary"
+                onPress={() => void refresh()}
+              >
+                刷新
               </Button>
-            </CardContent>
-          </Card>
+            </div>
 
-          <Card className="border border-[var(--desk-line)] bg-[var(--desk-panel)]">
-            <CardHeader className="flex flex-wrap items-center justify-between gap-2 p-5 pb-2">
-              <div>
-                <CardTitle className="text-base">待审批订单</CardTitle>
-                <p className="mt-1 text-xs text-[var(--desk-mist)]">
-                  live 且未开自动成交时，订单进入此队列
-                </p>
-              </div>
-              <Chip size="sm" variant="soft">
-                {approvals.length} 笔
-              </Chip>
-            </CardHeader>
-            <CardContent className="p-5 pt-2">
-              <div className="overflow-x-auto">
-                <table className="w-full border-collapse text-left text-sm">
-                  <thead className="border-b border-[var(--desk-line)] text-[var(--desk-mist)]">
-                    <tr>
-                      <th className="px-2 py-2 font-medium">时间</th>
-                      <th className="px-2 py-2 font-medium">标的</th>
-                      <th className="px-2 py-2 font-medium">方向</th>
-                      <th className="px-2 py-2 font-medium">数量</th>
-                      <th className="px-2 py-2 font-medium">价格</th>
-                      <th className="px-2 py-2 font-medium">操作</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {approvals.map((a) => (
-                      <tr
-                        key={a.client_order_id}
-                        className="border-b border-[var(--desk-line)] last:border-0"
+            <div className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-[var(--desk-line)] bg-[var(--desk-line)] sm:grid-cols-4">
+              <LiveStat
+                label="可用资金"
+                value={
+                  liveSnap?.asset?.cash != null
+                    ? fmtNum(Number(liveSnap.asset.cash), 0)
+                    : "—"
+                }
+              />
+              <LiveStat
+                label="持仓市值"
+                value={
+                  liveSnap?.asset?.market_value != null
+                    ? fmtNum(Number(liveSnap.asset.market_value), 0)
+                    : "—"
+                }
+              />
+              <LiveStat
+                label="总资产"
+                value={
+                  liveSnap?.asset?.total_asset != null
+                    ? fmtNum(Number(liveSnap.asset.total_asset), 0)
+                    : "—"
+                }
+              />
+              <LiveStat
+                label="表内"
+                value={`${(liveSnap?.positions || []).length}持仓 · ${approvals.length}审批 · ${(liveSnap?.sold || []).length}卖出`}
+                mono={false}
+              />
+            </div>
+
+            {liveSnap?.message ? (
+              <p className="text-xs text-[var(--desk-accent)]">{liveSnap.message}</p>
+            ) : null}
+          </div>
+
+          <div className="overflow-x-auto border-t border-[var(--desk-line)] px-2 pb-2 sm:px-3">
+            <table className="w-full border-collapse text-left text-sm">
+              <thead className="border-b border-[var(--desk-line)] text-[var(--desk-mist)]">
+                <tr>
+                  {[
+                    "代码",
+                    "名称",
+                    "策略",
+                    "持仓",
+                    "可用持仓",
+                    "成本",
+                    "现价",
+                    "盈亏",
+                    "盈亏率",
+                    "类型",
+                    "操作",
+                  ].map((h) => (
+                    <th key={h} className="px-2 py-2.5 font-medium">
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {liveTableRows.map((row) => {
+                  const typeLabel =
+                    row.type === "holding"
+                      ? "持仓"
+                      : row.type === "approval"
+                        ? "待审批"
+                        : "已卖出";
+                  return (
+                    <tr
+                      key={row.key}
+                      className="border-b border-[var(--desk-line)] last:border-0"
+                    >
+                      <td className="px-2 py-2 font-mono text-xs">
+                        <button
+                          type="button"
+                          className="text-left text-[var(--desk-text)] underline-offset-2 hover:text-[var(--desk-accent)] hover:underline"
+                          onClick={() =>
+                            setDrawer({
+                              symbol: row.symbol,
+                              position: {
+                                symbol: row.symbol,
+                                qty: row.qty,
+                                cost: row.cost ?? 0,
+                                last: row.last ?? row.cost ?? 0,
+                                pnl: row.pnl ?? 0,
+                                pnlPct: row.pnlPct ?? 0,
+                                weightPct: 0,
+                              },
+                            })
+                          }
+                        >
+                          {row.symbol}
+                        </button>
+                      </td>
+                      <td className="px-2 py-2">{row.name}</td>
+                      <td className="px-2 py-2">
+                        {row.type === "approval" ? (
+                          <span className="text-[var(--desk-mist)]">—</span>
+                        ) : (
+                          <button
+                            type="button"
+                            className="max-w-[7.5rem] truncate text-left text-sm text-[var(--desk-accent)] underline-offset-2 hover:underline"
+                            onClick={() =>
+                              openStrategyModal(
+                                row.symbol,
+                                row.name,
+                                row.strategyId,
+                                "live"
+                              )
+                            }
+                          >
+                            {row.strategyName}
+                          </button>
+                        )}
+                      </td>
+                      <td className="px-2 py-2 font-mono">{fmtNum(row.qty, 0)}</td>
+                      <td className="px-2 py-2 font-mono">
+                        {row.canUse != null ? fmtNum(row.canUse, 0) : "—"}
+                      </td>
+                      <td className="px-2 py-2 font-mono">
+                        {row.cost != null ? fmtNum(row.cost) : "—"}
+                      </td>
+                      <td className="px-2 py-2 font-mono">
+                        {row.last != null ? fmtNum(row.last) : "—"}
+                      </td>
+                      <td
+                        className={`px-2 py-2 font-mono ${
+                          row.pnl != null ? pnlClass(row.pnl) : "text-[var(--desk-mist)]"
+                        }`}
                       >
-                        <td className="px-2 py-2 font-mono text-xs">
-                          {a.created_at?.slice(0, 19) || "—"}
-                        </td>
-                        <td className="px-2 py-2 font-mono text-xs">{a.symbol}</td>
-                        <td className="px-2 py-2">{a.side}</td>
-                        <td className="px-2 py-2 font-mono">{a.qty}</td>
-                        <td className="px-2 py-2 font-mono">
-                          {a.price != null ? a.price.toFixed(3) : "—"}
-                        </td>
-                        <td className="px-2 py-2">
-                          <div className="flex gap-2">
-                            <Button
-                              size="sm"
-                              variant="primary"
-                              isDisabled={busy}
-                              onPress={() => void approveOrder(a.client_order_id)}
-                            >
-                              批准
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="danger"
-                              isDisabled={busy}
-                              onPress={() => void rejectOrder(a.client_order_id)}
-                            >
-                              拒绝
-                            </Button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                    {!approvals.length && (
-                      <tr>
-                        <td colSpan={6} className="px-2 py-8 text-center text-[var(--desk-mist)]">
-                          暂无待审批订单
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
+                        {row.pnl != null ? fmtSigned(row.pnl, 0) : "—"}
+                      </td>
+                      <td
+                        className={`px-2 py-2 font-mono ${
+                          row.pnlPct != null ? pnlClass(row.pnlPct) : "text-[var(--desk-mist)]"
+                        }`}
+                      >
+                        {row.pnlPct != null ? `${fmtSigned(row.pnlPct, 2)}%` : "—"}
+                      </td>
+                      <td className="px-2 py-2">
+                        <Chip
+                          size="sm"
+                          variant="soft"
+                          color={
+                            row.type === "approval"
+                              ? "warning"
+                              : row.type === "sold"
+                                ? "danger"
+                                : undefined
+                          }
+                        >
+                          {typeLabel}
+                        </Chip>
+                      </td>
+                      <td className="px-2 py-2">
+                        {row.type === "approval" && row.clientOrderId ? (
+                          <Button
+                            size="sm"
+                            variant="primary"
+                            isDisabled={busy}
+                            onPress={() => void approveOrder(row.clientOrderId!)}
+                          >
+                            通过
+                          </Button>
+                        ) : (
+                          <span className="text-[var(--desk-mist)]">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+                {!liveTableRows.length && (
+                  <tr>
+                    <td colSpan={11} className="px-2 py-10 text-center text-[var(--desk-mist)]">
+                      暂无数据
+                      {qmtPing && !qmtPing.query_ready
+                        ? "（请配置 QMT 路径与资金账号）"
+                        : ""}
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </Card>
       ) : (
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.6fr)_minmax(320px,1fr)]">
           {/* 左栏 */}
@@ -1400,6 +1704,36 @@ function AccordionRow({
         </Chip>
       </button>
       {open && <div className="border-t border-[var(--desk-line)] px-4 py-3">{children}</div>}
+    </div>
+  );
+}
+
+/**
+ * 实盘顶栏指标格。
+ * @param props 标签与展示值
+ */
+function LiveStat({
+  label,
+  value,
+  mono = true,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+}) {
+  return (
+    <div className="bg-[var(--desk-panel)] px-3 py-2.5">
+      <div className="text-[10px] uppercase tracking-wide text-[var(--desk-mist)]">
+        {label}
+      </div>
+      <div
+        className={[
+          "mt-1 truncate text-sm text-[var(--desk-text)]",
+          mono ? "font-mono tabular-nums" : "text-xs leading-5",
+        ].join(" ")}
+      >
+        {value}
+      </div>
     </div>
   );
 }

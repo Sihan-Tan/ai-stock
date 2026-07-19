@@ -241,3 +241,67 @@ def test_qmt_ping_reports_force_mock(db: Session):
     ping = gate.live.ping()
     assert ping.get("force_mock") is True
     assert "real_ready" in ping
+
+
+def test_live_positions_api_returns_local_when_unconfigured(client, db: Session, monkeypatch):
+    """未配置账号时 /live/positions 回退本地 live_positions。"""
+    from desk_db.models import LivePosition
+
+    monkeypatch.setenv("QMT_ACCOUNT_ID", "")
+    monkeypatch.setenv("QMT_USERDATA_PATH", "")
+    get_settings.cache_clear()
+    try:
+        from app.routes import broker as broker_routes
+
+        broker_routes._GATE = None
+    except Exception:  # noqa: BLE001
+        pass
+
+    db.add(LivePosition(symbol="600519.SH", qty=200, cost=1800.0))
+    db.commit()
+    r = client.get("/api/broker/live/positions")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["source"] == "local_db"
+    assert any(p["symbol"] == "600519.SH" and p["qty"] == 200 for p in body["positions"])
+
+
+def test_live_positions_query_ignores_force_mock(db: Session, monkeypatch):
+    """force_mock 为 True 时仍应允许读 QMT 持仓（不拦查询）。"""
+    monkeypatch.setenv("QMT_FORCE_MOCK", "1")
+    monkeypatch.setenv("QMT_ACCOUNT_ID", "8880309163")
+    monkeypatch.setenv("QMT_USERDATA_PATH", r"D:\dummy\userdata_mini")
+    get_settings.cache_clear()
+    gate = BrokerGateway(db)
+    assert gate.live._qmt_query_ready() is True
+    assert gate.live._real_qmt_ready() is False
+
+    fake_pos = [
+        {
+            "symbol": "600519.SH",
+            "qty": 100.0,
+            "can_use_qty": 100.0,
+            "cost": 10.0,
+            "market_value": 1000.0,
+            "frozen_qty": 0.0,
+            "yesterday_qty": 100.0,
+        }
+    ]
+    monkeypatch.setattr(
+        "desk_broker.qmt_trader.connect_qmt",
+        lambda **kwargs: {"connected": True},
+    )
+    monkeypatch.setattr(
+        "desk_broker.qmt_trader.query_stock_positions",
+        lambda: fake_pos,
+    )
+    monkeypatch.setattr(
+        "desk_broker.qmt_trader.query_stock_asset",
+        lambda: {"cash": 1.0, "market_value": 1000.0, "total_asset": 1001.0},
+    )
+    snap = gate.live.account_snapshot()
+    assert snap["source"] == "qmt"
+    assert snap["positions"][0]["symbol"] == "600519.SH"
+    assert snap["positions"][0].get("strategy_id")
+    assert "sold" in snap
+    assert "FORCE_MOCK" in (snap.get("message") or "")
