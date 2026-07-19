@@ -43,3 +43,37 @@ def test_financial_snapshot_roundtrip(_db):
     assert row.id is not None
     db.rollback()
     db.close()
+
+
+def test_mock_qmt_financials_returns_tables():
+    from desk_market.qmt_financials import MockQmtFinancials
+
+    src = MockQmtFinancials(
+        data={
+            "600519.SH": {
+                "Income": [{"period": "20241231", "revenue": 1e11, "net_profit": 5e10}],
+                "Pershareindex": [{"period": "20241231", "roe": 30.0, "eps": 50.0}],
+            }
+        }
+    )
+    out = src.get_financials("600519.SH", tables=["Income", "Pershareindex"])
+    assert out["source"] == "qmt"
+    assert out["tables"]["Income"][0]["net_profit"] == 5e10
+
+
+def test_fetch_akshare_financials_monkeypatch(monkeypatch):
+    from desk_market import akshare_financials
+
+    def fake_raw(code: str, years: int = 5):
+        assert code == "600519"
+        assert years == 5
+        return {
+            "Income": [{"period": "20241231", "revenue": 1e11, "net_profit": 5e10}],
+            "Pershareindex": [{"period": "20241231", "roe": 28.0, "eps": 45.0}],
+        }
+
+    monkeypatch.setattr(akshare_financials, "_raw_fetch", fake_raw)
+    out = akshare_financials.fetch_akshare_financials("600519")
+    assert out["source"] == "akshare"
+    assert out["symbol"] == "600519.SH"
+    assert out["tables"]["Income"][0]["net_profit"] == 5e10
