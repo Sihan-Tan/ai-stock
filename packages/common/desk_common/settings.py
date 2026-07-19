@@ -44,6 +44,8 @@ class Settings(BaseSettings):
     """连续竞价时段扫描间隔（分钟，≥5）。"""
     paper_runner_interval_minutes: int = 30
     skills_dir: str = "skills"
+    """Tavily 搜索 API Key（env ``TAVILY_API_KEY``）；空则 web_search 工具不可用。"""
+    tavily_api_key: str = ""
 
     # 回测费用（A 股近似；均在 .env 配置）
     backtest_buy_commission: float = 0.00025
