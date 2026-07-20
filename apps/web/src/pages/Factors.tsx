@@ -71,6 +71,8 @@ export default function Factors({ setLog }: PageLogProps) {
   const [models, setModels] = useState<unknown[]>([]);
   const [comparison, setComparison] = useState<unknown>(null);
   const catalogReady = useRef(false);
+  /** 序列请求序号，用于丢弃过期响应 */
+  const seriesRequestIdRef = useRef(0);
 
   const selectedMetas = useMemo(
     () => factors.filter((f) => selected.has(f.name)),
@@ -103,12 +105,16 @@ export default function Factors({ setLog }: PageLogProps) {
   }, [setLog]);
 
   /**
-   * 按当前勾选与区间拉取因子序列。
+   * 按当前勾选与区间拉取因子序列；仅最新请求可写回状态。
    */
   const loadSeries = useCallback(async () => {
+    const requestId = ++seriesRequestIdRef.current;
     if (!symbol.trim() || selected.size === 0) {
-      setSeries(null);
-      setSeriesError(null);
+      if (requestId === seriesRequestIdRef.current) {
+        setSeries(null);
+        setSeriesError(null);
+        setLoading(false);
+      }
       return;
     }
     const { start, end } = rangeBounds(range);
@@ -119,13 +125,17 @@ export default function Factors({ setLog }: PageLogProps) {
       const data = await api<FactorSeriesResponse>(
         `/api/factors/series?symbol=${encodeURIComponent(symbol.trim())}&names=${encodeURIComponent(names)}&start=${start}&end=${end}`
       );
+      if (requestId !== seriesRequestIdRef.current) return;
       setSeries(data);
     } catch (error) {
+      if (requestId !== seriesRequestIdRef.current) return;
       setSeries(null);
       setSeriesError(String(error));
       setLog(String(error));
     } finally {
-      setLoading(false);
+      if (requestId === seriesRequestIdRef.current) {
+        setLoading(false);
+      }
     }
   }, [symbol, selected, range, setLog]);
 
@@ -146,26 +156,26 @@ export default function Factors({ setLog }: PageLogProps) {
    * @param name 因子 name
    */
   const onToggle = (name: string) => {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(name)) {
-        next.delete(name);
-        return next;
+    if (selected.has(name)) {
+      const next = new Set(selected);
+      next.delete(name);
+      setSelected(next);
+      return;
+    }
+    const meta = factors.find((f) => f.name === name);
+    if (meta?.plot === "panel") {
+      const panelCount = [...selected].filter((n) => {
+        const m = factors.find((f) => f.name === n);
+        return m?.plot === "panel";
+      }).length;
+      if (panelCount >= PANEL_LIMIT) {
+        setLog(`副图最多勾选 ${PANEL_LIMIT} 个，请先取消部分 panel 因子`);
+        return;
       }
-      const meta = factors.find((f) => f.name === name);
-      if (meta?.plot === "panel") {
-        const panelCount = [...next].filter((n) => {
-          const m = factors.find((f) => f.name === n);
-          return m?.plot === "panel";
-        }).length;
-        if (panelCount >= PANEL_LIMIT) {
-          setLog(`副图最多勾选 ${PANEL_LIMIT} 个，请先取消部分 panel 因子`);
-          return prev;
-        }
-      }
-      next.add(name);
-      return next;
-    });
+    }
+    const next = new Set(selected);
+    next.add(name);
+    setSelected(next);
   };
 
   const trainBoth = async () => {

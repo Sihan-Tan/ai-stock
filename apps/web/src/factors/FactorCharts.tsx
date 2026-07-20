@@ -249,6 +249,7 @@ export function FactorCharts({ data, metas }: FactorChartsProps) {
       }
     };
     mainChart.timeScale().subscribeVisibleLogicalRangeChange(syncPanels);
+    syncPanels(mainChart.timeScale().getVisibleLogicalRange());
 
     return () => {
       mainChart.timeScale().unsubscribeVisibleLogicalRangeChange(syncPanels);
