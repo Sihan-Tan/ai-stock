@@ -30,7 +30,24 @@ class CompareIn(BaseModel):
 
 @router.get("/factors")
 def factors():
-    return FactorService().list_factors()
+    return {"factors": FactorService().list_factors()}
+
+
+@router.get("/factors/series")
+def factor_series(
+    symbol: str,
+    names: str,
+    start: date | None = None,
+    end: date | None = None,
+    db: Session = Depends(get_db),
+):
+    name_list = [n.strip() for n in names.split(",") if n.strip()]
+    if not name_list:
+        raise HTTPException(400, "names required")
+    try:
+        return FactorService(db).compute_series(symbol, name_list, start=start, end=end)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 @router.get("/ml/models")
