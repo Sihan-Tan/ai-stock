@@ -43,7 +43,6 @@ def compute(ohlcv: pd.DataFrame, specs: Iterable[str] | None = None) -> pd.DataF
     close = df["close"].astype(float).values
     high = df["high"].astype(float).values
     low = df["low"].astype(float).values
-    volume = df["volume"].astype(float).values
     specs = list(specs or ["SMA_5", "SMA_20", "EMA_12", "RSI_14", "MACD", "ATR_14", "BOLL"])
 
     for spec in specs:
@@ -76,6 +75,7 @@ def compute(ohlcv: pd.DataFrame, specs: Iterable[str] | None = None) -> pd.DataF
             n = int(key.split("_")[1])
             df[f"adx_{n}"] = _adx(high, low, close, n)
         elif key == "OBV":
+            volume = df["volume"].astype(float).values
             df["obv"] = _obv(close, volume)
         elif key.startswith("MOM_"):
             n = int(key.split("_")[1])

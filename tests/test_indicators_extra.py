@@ -45,3 +45,14 @@ def test_engine_flag_matches_has_talib():
     compute(_ohlcv(40), ["SMA_5"])
     assert last_engine() in ("talib", "python")
     assert (last_engine() == "talib") == HAS_TALIB
+
+
+def test_python_fallback_smoke(monkeypatch):
+    import desk_indicators as di
+
+    monkeypatch.setattr(di, "HAS_TALIB", False)
+    df = compute(_ohlcv(), ["STOCH", "OBV", "MOM_10"])
+    for col in ("stoch_k", "stoch_d", "obv", "mom_10"):
+        assert col in df.columns
+        assert df[col].notna().sum() > 0
+    assert di.last_engine() == "python"
