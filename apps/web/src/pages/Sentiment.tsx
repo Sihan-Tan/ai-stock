@@ -5,6 +5,7 @@ import { StockDetailDrawer } from "../stock/StockDetailDrawer";
 import type { PageLogProps } from "./types";
 
 type SentimentSnapshot = {
+  asof?: string;
   limit_up_count?: number;
   limit_down_count?: number;
   max_board?: number;
@@ -44,10 +45,24 @@ export default function Sentiment({ setLog }: PageLogProps) {
   const sync = async () => {
     setBusy(true);
     try {
-      const result = await api<{ status?: string; skipped?: boolean }>("/api/sentiment/jobs/sync", {
+      const result = await api<{
+        status?: string;
+        skipped?: boolean;
+        empty_source?: boolean;
+        asof?: string;
+        cover?: number;
+      }>("/api/sentiment/jobs/sync", {
         method: "POST",
       });
-      setLog(result.skipped ? "非交易日，已跳过情绪同步" : `情绪同步：${result.status ?? "ok"}`);
+      if (result.skipped) {
+        setLog("非交易日，已跳过情绪同步");
+      } else if (result.empty_source) {
+        setLog(
+          `情绪同步完成但行情源无涨停表现数据（asof=${result.asof ?? "?"}，cover=${result.cover ?? 0}）。请确认 QMT/xtdata；页面将回退展示库内最近一日。`,
+        );
+      } else {
+        setLog(`情绪同步：${result.status ?? "ok"}（asof=${result.asof ?? "?"}）`);
+      }
       await load();
     } catch (error) {
       setLog(String(error));
@@ -76,6 +91,11 @@ export default function Sentiment({ setLog }: PageLogProps) {
         <CardHeader className="flex w-full flex-row flex-nowrap items-center justify-between gap-3 p-5 pb-3">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             <CardTitle className="text-base text-[var(--desk-text)]">打板情绪</CardTitle>
+            {data.asof ? (
+              <Chip size="sm" variant="soft">
+                {data.asof}
+              </Chip>
+            ) : null}
             <Chip variant="soft" color="success">
               涨停 {data.limit_up_count ?? 0}
             </Chip>
@@ -99,7 +119,7 @@ export default function Sentiment({ setLog }: PageLogProps) {
         <CardContent className="p-5 pt-2">
           {empty && (
             <p className="mb-4 text-sm text-[var(--desk-mist)]">
-              暂无日终情绪快照。可点击「同步情绪」从 QMT 拉取（需交易日与行情源可用）。
+              暂无日终情绪快照。可点击「同步情绪」从 QMT 拉取（需交易日与 xtdata 可用）；若库内仅有历史日数据，刷新后会自动展示最近一日。
             </p>
           )}
           <div className="mb-3 text-sm font-medium text-[var(--desk-text)]">连板梯队</div>

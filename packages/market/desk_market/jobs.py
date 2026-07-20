@@ -197,14 +197,32 @@ class MarketJobs:
     def _resolve_sentiment_client(self):
         if self.sentiment_client is not None:
             return self.sentiment_client
+        primary = None
         try:
             from desk_sentiment import XtdataSentimentClient
 
-            return XtdataSentimentClient()
+            primary = XtdataSentimentClient()
         except Exception:  # noqa: BLE001
-            from desk_sentiment import MockQmtSentimentClient
+            primary = None
+        try:
+            from desk_sentiment.akshare_client import AkshareSentimentClient
 
-            return MockQmtSentimentClient([])
+            secondary = AkshareSentimentClient()
+        except Exception:  # noqa: BLE001
+            secondary = None
+
+        if primary is not None and secondary is not None:
+            from desk_sentiment.akshare_client import FallbackSentimentClient
+
+            # AkShare 涨停池优先（快）；xtdata 作次选
+            return FallbackSentimentClient(secondary, primary)
+        if secondary is not None:
+            return secondary
+        if primary is not None:
+            return primary
+        from desk_sentiment import MockQmtSentimentClient
+
+        return MockQmtSentimentClient([])
 
     def _resolve_lhb_client(self):
         if self.lhb_client is not None:
@@ -215,18 +233,20 @@ class MarketJobs:
 
     def sync_sentiment_daily(self, asof: date | None = None) -> dict[str, Any]:
         """日终打板情绪。"""
+        from desk_common.beijing_time import beijing_today
         from desk_sentiment import SentimentDailyIngestor
 
         row = self.store.start("sync_sentiment_daily")
-        asof = asof or date.today()
+        asof = asof or beijing_today()
         try:
             if not CalendarService(self.db).require_trade_day(asof):
                 self.store.finish(row, status="ok", message="skipped_non_trade_day")
-                return {"status": "ok", "skipped": True}
+                return {"status": "ok", "skipped": True, "asof": asof.isoformat()}
             client = self._resolve_sentiment_client()
-            symbols = None
             from sqlalchemy import select
+
             from desk_db.models import SecurityMeta
+            from desk_sentiment.akshare_client import AkshareSentimentClient, FallbackSentimentClient
 
             listed = self.db.scalars(
                 select(SecurityMeta).where(SecurityMeta.is_delisted.is_(False))
@@ -235,19 +255,35 @@ class MarketJobs:
                 symbols = [r.symbol for r in listed]
             else:
                 symbols = self.md.list_a_share_symbols(include_delisted=False)
+            # 涨停池源不按全市场过滤，避免 BJ/代码格式误杀
+            ingest_symbols: list[str] | None
+            if isinstance(client, (AkshareSentimentClient, FallbackSentimentClient)):
+                ingest_symbols = None
+            else:
+                ingest_symbols = symbols or None
             result = SentimentDailyIngestor(
-                self.db, client, asof=asof, symbols=symbols or None
+                self.db, client, asof=asof, symbols=ingest_symbols
             ).run()
+            cover = int(result.get("cover") or 0)
+            skipped_write = bool(result.get("skipped_write"))
+            msg = f"cover={cover}"
+            if skipped_write or cover == 0:
+                msg = f"{msg}; empty_source（未覆盖库内快照；请检查网络/AkShare 或 QMT）"
             self.store.finish(
                 row,
                 status="ok",
                 symbols_done=int(result.get("symbols_done", 0)),
-                message=f"cover={result.get('cover')}",
+                message=msg,
             )
-            return {"status": "ok", **result}
+            return {
+                "status": "ok",
+                "asof": asof.isoformat(),
+                **result,
+                "empty_source": skipped_write or cover == 0,
+            }
         except Exception as exc:  # noqa: BLE001
             self.store.finish(row, status="failed", error_summary=str(exc))
-            return {"status": "failed", "error": str(exc)}
+            return {"status": "failed", "error": str(exc), "asof": asof.isoformat()}
 
     def sync_lhb_daily(self, asof: date | None = None) -> dict[str, Any]:
         """日终龙虎榜。"""

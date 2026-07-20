@@ -9,6 +9,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from desk_common.symbols import normalize_symbol
+from desk_common.beijing_time import beijing_today
 from desk_db.models import LimitUpStat, LimitUpStock, SecurityMeta
 from desk_sentiment.aggregator import aggregate_limit_rows
 from desk_sentiment.qmt_client import QmtSentimentClient
@@ -26,7 +27,7 @@ class SentimentDailyIngestor:
     ) -> None:
         self.db = db
         self.client = client
-        self.asof = asof or date.today()
+        self.asof = asof or beijing_today()
         self.symbols = symbols
 
     def _universe(self) -> list[str]:
@@ -50,6 +51,16 @@ class SentimentDailyIngestor:
             raw = self.client.fetch_limit_performance(universe, self.asof)
         except Exception as exc:  # noqa: BLE001
             raise RuntimeError(str(exc)) from exc
+
+        # 源为空时不覆盖已有快照，避免写入全 0 挡住「最近一日」回退
+        if not raw:
+            return {
+                "symbols_done": 0,
+                "cover": 0,
+                "universe": len(universe),
+                "errors": ["empty_source"],
+                "skipped_write": True,
+            }
 
         agg = aggregate_limit_rows(raw)
         asof = self.asof

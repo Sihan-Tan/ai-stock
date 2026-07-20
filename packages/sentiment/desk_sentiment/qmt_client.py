@@ -139,6 +139,13 @@ class XtdataSentimentClient:
         start_s = f"{day}000000"
         end_s = f"{day}235959"
         syms = [normalize_symbol(s) for s in symbols if s and str(s).strip()]
+        # 全 A 逐标的 download 过慢且常为空；过大宇宙直接跳过，交由 AkShare 降级
+        if len(syms) > 400:
+            _LOGGER.warning(
+                "limitupperformance skip: universe=%s too large for per-symbol xtdata",
+                len(syms),
+            )
+            return []
         out: list[dict[str, Any]] = []
         # 分批避免一次过大
         batch_size = 80
