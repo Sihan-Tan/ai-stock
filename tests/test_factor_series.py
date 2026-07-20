@@ -38,9 +38,12 @@ def _bars(n: int = 60) -> pd.DataFrame:
 def test_list_factors_wrapped_shape():
     rows = FactorService().list_factors()
     assert isinstance(rows, list)
-    assert rows[0]["name"] == "SMA_5"
-    assert "plot" in rows[0]
-    assert "default_enabled" in rows[0]
+    assert len(rows) >= 158
+    by_name = {r["name"]: r for r in rows}
+    assert "SMA_5" in by_name
+    assert "plot" in by_name["SMA_5"]
+    assert "default_enabled" in by_name["SMA_5"]
+    assert "CDLDOJI" in by_name
 
 
 def test_compute_series_returns_bars_and_outputs():

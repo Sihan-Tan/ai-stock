@@ -9,7 +9,7 @@ import pandas as pd
 from sqlalchemy.orm import Session
 
 from desk_factor.registry import get_factor, list_enabled_registry
-from desk_indicators import compute, last_engine
+from desk_indicators import apply_factor_specs, last_engine
 from desk_indicators import compute as compute_indicators
 from desk_market import MarketService
 
@@ -37,8 +37,11 @@ class FactorService:
                 raise ValueError(f"unknown factor: {raw}")
             resolved.append(meta)
 
-        specs = [m["name"] for m in resolved]
-        df = compute(ohlcv, specs)
+        specs = [
+            {"talib": m["talib"], "params": m["params"], "outputs": m["outputs"]}
+            for m in resolved
+        ]
+        df = apply_factor_specs(ohlcv, specs)
         bars = [
             {
                 "date": str(r["date"])[:10] if not isinstance(r["date"], str) else r["date"][:10],

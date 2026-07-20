@@ -9,6 +9,8 @@ export type FactorMeta = {
   plot: FactorPlot;
   default_enabled: boolean;
   enabled: boolean;
+  /** 对应 TA-Lib 函数名 */
+  talib?: string;
 };
 
 export type FactorPoint = { date: string; v: number | null };
