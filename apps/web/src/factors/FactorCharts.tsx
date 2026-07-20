@@ -32,9 +32,11 @@ const OVERLAY_COLORS = [
 
 const PANEL_HEIGHT = 120;
 const MAIN_HEIGHT = 320;
+/** 统一右侧价格轴宽度，避免主/副图绘图区左右错位 */
+const PRICE_SCALE_MIN_WIDTH = 64;
 
 /**
- * 将日期字符串转为 lightweight-charts 时间（优先业务日，否则 UTC 秒）。
+ * 将日期字符串转为 lightweight-charts 时间（优先业务日）。
  * @param date API 日期
  */
 function toChartTime(date: string): Time | null {
@@ -47,16 +49,28 @@ function toChartTime(date: string): Time | null {
 }
 
 /**
- * 将因子点转为折线/柱状数据（跳过 null）。
- * @param points 因子序列点
+ * 按主图 bars 的日期对齐因子序列：无效值用 whitespace，保证逻辑索引与主图一致。
+ * @param barDates 主图日期列表（已规范化）
+ * @param points 因子点
  */
-function toLineData(points: FactorPoint[]): { time: Time; value: number }[] {
-  const out: { time: Time; value: number }[] = [];
+function toAlignedLineData(
+  barDates: string[],
+  points: FactorPoint[]
+): ({ time: Time; value: number } | { time: Time })[] {
+  const byDate = new Map<string, number | null>();
   for (const p of points) {
-    if (p.v == null || !Number.isFinite(p.v)) continue;
-    const time = toChartTime(p.date);
+    byDate.set(p.date.slice(0, 10), p.v);
+  }
+  const out: ({ time: Time; value: number } | { time: Time })[] = [];
+  for (const date of barDates) {
+    const time = toChartTime(date);
     if (time == null) continue;
-    out.push({ time, value: p.v });
+    const v = byDate.get(date);
+    if (v == null || !Number.isFinite(v)) {
+      out.push({ time });
+    } else {
+      out.push({ time, value: v });
+    }
   }
   return out;
 }
@@ -65,8 +79,13 @@ function toLineData(points: FactorPoint[]): { time: Time; value: number }[] {
  * 创建统一样式的图表实例。
  * @param container 挂载容器
  * @param height 高度
+ * @param options 是否显示时间轴刻度
  */
-function makeChart(container: HTMLElement, height: number): IChartApi {
+function makeChart(
+  container: HTMLElement,
+  height: number,
+  options?: { timeVisible?: boolean }
+): IChartApi {
   return createChart(container, {
     width: container.clientWidth,
     height,
@@ -81,11 +100,13 @@ function makeChart(container: HTMLElement, height: number): IChartApi {
     rightPriceScale: {
       borderColor: "rgba(255, 255, 255, 0.12)",
       scaleMargins: { top: 0.08, bottom: 0.08 },
+      minimumWidth: PRICE_SCALE_MIN_WIDTH,
     },
     timeScale: {
       borderColor: "rgba(255, 255, 255, 0.12)",
-      timeVisible: false,
+      timeVisible: options?.timeVisible ?? false,
       secondsVisible: false,
+      lockVisibleTimeRangeOnResize: true,
     },
     crosshair: {
       horzLine: { labelVisible: true },
@@ -95,7 +116,7 @@ function makeChart(container: HTMLElement, height: number): IChartApi {
 }
 
 /**
- * 主图 + 副图：overlay 叠主图，每个 panel 因子独立 pane；主图时间范围同步到副图。
+ * 主图 + 副图：overlay 叠主图；panel 独立 pane；时间轴与价格轴宽度对齐。
  * @param props 序列数据与勾选元数据
  */
 export function FactorCharts({ data, metas }: FactorChartsProps) {
@@ -118,10 +139,12 @@ export function FactorCharts({ data, metas }: FactorChartsProps) {
       return;
     }
 
+    const barDates = data.bars.map((b) => b.date.slice(0, 10));
     const charts: IChartApi[] = [];
     const resizeObservers: ResizeObserver[] = [];
+    let syncing = false;
 
-    const mainChart = makeChart(mainEl, MAIN_HEIGHT);
+    const mainChart = makeChart(mainEl, MAIN_HEIGHT, { timeVisible: false });
     charts.push(mainChart);
 
     const candle = mainChart.addSeries(CandlestickSeries, {
@@ -134,7 +157,7 @@ export function FactorCharts({ data, metas }: FactorChartsProps) {
     });
     candle.setData(
       data.bars.flatMap((bar) => {
-        const time = toChartTime(bar.date);
+        const time = toChartTime(bar.date.slice(0, 10));
         if (time == null) return [];
         return [{ time, open: bar.o, high: bar.h, low: bar.l, close: bar.c }];
       })
@@ -154,13 +177,9 @@ export function FactorCharts({ data, metas }: FactorChartsProps) {
           crosshairMarkerVisible: false,
         });
         colorIdx += 1;
-        series.setData(toLineData(points));
+        series.setData(toAlignedLineData(barDates, points));
       }
     }
-
-    mainChart.timeScale().fitContent();
-
-    const panelCharts: IChartApi[] = [];
 
     /**
      * 监听容器宽度变化并同步图表宽度。
@@ -176,11 +195,16 @@ export function FactorCharts({ data, metas }: FactorChartsProps) {
     };
     observeWidth(mainEl, mainChart);
 
+    const panelCharts: IChartApi[] = [];
+
     if (panelsHost) {
-      for (const meta of panelMetas) {
-        const el = panelsHost.querySelector<HTMLElement>(`[data-panel="${meta.name}"]`);
-        if (!el) continue;
-        const panelChart = makeChart(el, PANEL_HEIGHT);
+      panelMetas.forEach((meta, index) => {
+        const el = panelsHost.querySelector<HTMLElement>(
+          `[data-panel="${CSS.escape(meta.name)}"]`
+        );
+        if (!el) return;
+        const isLast = index === panelMetas.length - 1;
+        const panelChart = makeChart(el, PANEL_HEIGHT, { timeVisible: isLast });
         charts.push(panelChart);
         panelCharts.push(panelChart);
         observeWidth(el, panelChart);
@@ -188,6 +212,7 @@ export function FactorCharts({ data, metas }: FactorChartsProps) {
         const outputs = data.series[meta.name]?.outputs ?? {};
         const isMacd =
           meta.name.toUpperCase() === "MACD" ||
+          meta.name.toUpperCase().startsWith("MACD") ||
           meta.outputs.some((o) => o.includes("hist"));
 
         if (isMacd) {
@@ -200,10 +225,13 @@ export function FactorCharts({ data, metas }: FactorChartsProps) {
               priceLineVisible: false,
             });
             histSeries.setData(
-              toLineData(histPoints).map((p) => ({
-                ...p,
-                color: p.value >= 0 ? "rgba(239, 68, 68, 0.55)" : "rgba(34, 197, 94, 0.55)",
-              }))
+              toAlignedLineData(barDates, histPoints).map((p) => {
+                if (!("value" in p)) return p;
+                return {
+                  ...p,
+                  color: p.value >= 0 ? "rgba(239, 68, 68, 0.55)" : "rgba(34, 197, 94, 0.55)",
+                };
+              })
             );
           }
           let lineColorIdx = 0;
@@ -219,7 +247,7 @@ export function FactorCharts({ data, metas }: FactorChartsProps) {
               crosshairMarkerVisible: false,
             });
             lineColorIdx += 1;
-            line.setData(toLineData(points));
+            line.setData(toAlignedLineData(barDates, points));
           }
         } else {
           let lineColorIdx = 0;
@@ -234,25 +262,45 @@ export function FactorCharts({ data, metas }: FactorChartsProps) {
               crosshairMarkerVisible: false,
             });
             lineColorIdx += 1;
-            line.setData(toLineData(points));
+            line.setData(toAlignedLineData(barDates, points));
           }
         }
-
-        panelChart.timeScale().fitContent();
-      }
+      });
     }
 
-    const syncPanels = (range: LogicalRange | null) => {
-      if (!range) return;
-      for (const panel of panelCharts) {
-        panel.timeScale().setVisibleLogicalRange(range);
+    const allCharts = [mainChart, ...panelCharts];
+
+    /**
+     * 将可见逻辑区间同步到除 source 外的所有图表。
+     * @param range 逻辑区间
+     * @param source 发起同步的图表
+     */
+    const syncLogicalRange = (range: LogicalRange | null, source: IChartApi) => {
+      if (!range || syncing) return;
+      syncing = true;
+      try {
+        for (const chart of allCharts) {
+          if (chart === source) continue;
+          chart.timeScale().setVisibleLogicalRange(range);
+        }
+      } finally {
+        syncing = false;
       }
     };
-    mainChart.timeScale().subscribeVisibleLogicalRangeChange(syncPanels);
-    syncPanels(mainChart.timeScale().getVisibleLogicalRange());
+
+    const unsubs: Array<() => void> = [];
+    for (const chart of allCharts) {
+      const handler = (range: LogicalRange | null) => syncLogicalRange(range, chart);
+      chart.timeScale().subscribeVisibleLogicalRangeChange(handler);
+      unsubs.push(() => chart.timeScale().unsubscribeVisibleLogicalRangeChange(handler));
+    }
+
+    mainChart.timeScale().fitContent();
+    const initial = mainChart.timeScale().getVisibleLogicalRange();
+    syncLogicalRange(initial, mainChart);
 
     return () => {
-      mainChart.timeScale().unsubscribeVisibleLogicalRangeChange(syncPanels);
+      for (const unsub of unsubs) unsub();
       for (const ro of resizeObservers) ro.disconnect();
       for (const chart of charts) chart.remove();
     };
