@@ -12,6 +12,33 @@ const PANEL_LIMIT = 6;
 type RangeKey = "3m" | "1y";
 
 /**
+ * 从目录构建初始勾选：overlay 默认全选，panel 默认最多 6 个（按目录顺序）。
+ * @param rows 因子目录
+ */
+function buildInitialSelected(rows: FactorMeta[]): { selected: Set<string>; panelTruncated: boolean } {
+  const selected = new Set<string>();
+  let panelDefaultCount = 0;
+  let panelDefaultTotal = 0;
+
+  for (const factor of rows) {
+    if (!factor.default_enabled) continue;
+    if (factor.plot === "overlay") {
+      selected.add(factor.name);
+      continue;
+    }
+    if (factor.plot === "panel") {
+      panelDefaultTotal += 1;
+      if (panelDefaultCount < PANEL_LIMIT) {
+        selected.add(factor.name);
+        panelDefaultCount += 1;
+      }
+    }
+  }
+
+  return { selected, panelTruncated: panelDefaultTotal > PANEL_LIMIT };
+}
+
+/**
  * 按区间推算 start/end（北京日期 YYYY-MM-DD）。
  * @param range 近3月 / 近1年
  */
@@ -64,7 +91,11 @@ export default function Factors({ setLog }: PageLogProps) {
       setModels(modelRows);
       if (!catalogReady.current) {
         catalogReady.current = true;
-        setSelected(new Set(rows.filter((f) => f.default_enabled).map((f) => f.name)));
+        const { selected: initial, panelTruncated } = buildInitialSelected(rows);
+        setSelected(initial);
+        if (panelTruncated) {
+          setLog("默认副图超过 6，已截取前 6 个");
+        }
       }
     } catch (error) {
       setLog(String(error));
