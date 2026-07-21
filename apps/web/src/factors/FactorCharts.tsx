@@ -4,8 +4,8 @@ import {
   HistogramSeries,
   LineSeries,
   createChart,
+  createTextWatermark,
   type IChartApi,
-  type LogicalRange,
   type Time,
   type UTCTimestamp,
 } from "lightweight-charts";
@@ -32,8 +32,10 @@ const OVERLAY_COLORS = [
 
 const PANEL_HEIGHT = 120;
 const MAIN_HEIGHT = 320;
-/** 统一右侧价格轴宽度，避免主/副图绘图区左右错位 */
-const PRICE_SCALE_MIN_WIDTH = 64;
+/** 时间轴预留高度 */
+const TIME_AXIS_HEIGHT = 28;
+/** 右侧价格轴统一最小宽度（多 pane 仍会再取各轴 max） */
+const PRICE_SCALE_MIN_WIDTH = 80;
 
 /**
  * 将日期字符串转为 lightweight-charts 时间（优先业务日）。
@@ -49,7 +51,7 @@ function toChartTime(date: string): Time | null {
 }
 
 /**
- * 按主图 bars 的日期对齐因子序列：无效值用 whitespace，保证逻辑索引与主图一致。
+ * 按主图 bars 的日期对齐因子序列：无效值用 whitespace，保证与 K 线一一对应。
  * @param barDates 主图日期列表（已规范化）
  * @param points 因子点
  */
@@ -76,52 +78,28 @@ function toAlignedLineData(
 }
 
 /**
- * 创建统一样式的图表实例。
- * @param container 挂载容器
- * @param height 高度
- * @param options 是否显示时间轴刻度
+ * 将各 pane 右侧价格轴拉到同一宽度（库本身会取 max，这里再显式加固一次）。
+ * @param chart 图表
  */
-function makeChart(
-  container: HTMLElement,
-  height: number,
-  options?: { timeVisible?: boolean }
-): IChartApi {
-  return createChart(container, {
-    width: container.clientWidth,
-    height,
-    layout: {
-      background: { type: ColorType.Solid, color: "transparent" },
-      textColor: "rgba(232, 236, 244, 0.72)",
-    },
-    grid: {
-      vertLines: { color: "rgba(255, 255, 255, 0.08)" },
-      horzLines: { color: "rgba(255, 255, 255, 0.08)" },
-    },
-    rightPriceScale: {
-      borderColor: "rgba(255, 255, 255, 0.12)",
-      scaleMargins: { top: 0.08, bottom: 0.08 },
-      minimumWidth: PRICE_SCALE_MIN_WIDTH,
-    },
-    timeScale: {
-      borderColor: "rgba(255, 255, 255, 0.12)",
-      timeVisible: options?.timeVisible ?? false,
-      secondsVisible: false,
-      lockVisibleTimeRangeOnResize: true,
-    },
-    crosshair: {
-      horzLine: { labelVisible: true },
-      vertLine: { labelVisible: true },
-    },
+function syncPanePriceScaleWidths(chart: IChartApi): void {
+  let maxWidth = PRICE_SCALE_MIN_WIDTH;
+  for (const pane of chart.panes()) {
+    maxWidth = Math.max(maxWidth, pane.priceScale("right").width());
+  }
+  chart.applyOptions({
+    rightPriceScale: { minimumWidth: maxWidth },
   });
+  for (const pane of chart.panes()) {
+    pane.priceScale("right").applyOptions({ minimumWidth: maxWidth });
+  }
 }
 
 /**
- * 主图 + 副图：overlay 叠主图；panel 独立 pane；时间轴与价格轴宽度对齐。
+ * 主图 + 副图：同一 chart 多 pane，共用时间轴；右侧轴宽由库按各 pane 取 max 对齐。
  * @param props 序列数据与勾选元数据
  */
 export function FactorCharts({ data, metas }: FactorChartsProps) {
-  const mainRef = useRef<HTMLDivElement>(null);
-  const panelsHostRef = useRef<HTMLDivElement>(null);
+  const hostRef = useRef<HTMLDivElement>(null);
 
   const overlayMetas = useMemo(
     () => metas.filter((m) => m.plot === "overlay"),
@@ -132,28 +110,68 @@ export function FactorCharts({ data, metas }: FactorChartsProps) {
     [metas]
   );
 
+  const separatorExtra = Math.max(0, panelMetas.length); // pane 之间分隔线
+  const totalHeight =
+    MAIN_HEIGHT + panelMetas.length * PANEL_HEIGHT + TIME_AXIS_HEIGHT + separatorExtra;
+
   useEffect(() => {
-    const mainEl = mainRef.current;
-    const panelsHost = panelsHostRef.current;
-    if (!data || data.bars.length === 0 || !mainEl) {
+    const host = hostRef.current;
+    if (!data || data.bars.length === 0 || !host) {
       return;
     }
 
+    // HMR / 严格模式重跑时清掉残留 DOM，避免叠两套图
+    host.replaceChildren();
+
     const barDates = data.bars.map((b) => b.date.slice(0, 10));
-    const charts: IChartApi[] = [];
-    const resizeObservers: ResizeObserver[] = [];
-    let syncing = false;
+    let disposed = false;
 
-    const mainChart = makeChart(mainEl, MAIN_HEIGHT, { timeVisible: false });
-    charts.push(mainChart);
+    const chart = createChart(host, {
+      autoSize: true,
+      width: host.clientWidth || undefined,
+      height: totalHeight,
+      layout: {
+        background: { type: ColorType.Solid, color: "transparent" },
+        textColor: "rgba(232, 236, 244, 0.72)",
+        attributionLogo: true,
+        panes: {
+          enableResize: false,
+          separatorColor: "rgba(255, 255, 255, 0.14)",
+          separatorHoverColor: "rgba(255, 255, 255, 0.22)",
+        },
+      },
+      grid: {
+        vertLines: { color: "rgba(255, 255, 255, 0.08)" },
+        horzLines: { color: "rgba(255, 255, 255, 0.08)" },
+      },
+      rightPriceScale: {
+        borderColor: "rgba(255, 255, 255, 0.12)",
+        scaleMargins: { top: 0.08, bottom: 0.08 },
+        minimumWidth: PRICE_SCALE_MIN_WIDTH,
+      },
+      timeScale: {
+        borderColor: "rgba(255, 255, 255, 0.12)",
+        visible: true,
+        timeVisible: false,
+        secondsVisible: false,
+      },
+      crosshair: {
+        horzLine: { labelVisible: true },
+        vertLine: { labelVisible: true },
+      },
+    });
 
-    const candle = mainChart.addSeries(CandlestickSeries, {
+    const mainPane = chart.panes()[0];
+    mainPane.setStretchFactor(MAIN_HEIGHT);
+
+    const candle = mainPane.addSeries(CandlestickSeries, {
       upColor: "#ef4444",
       downColor: "#22c55e",
       borderVisible: false,
       wickUpColor: "#ef4444",
       wickDownColor: "#22c55e",
       lastValueVisible: false,
+      priceScaleId: "right",
     });
     candle.setData(
       data.bars.flatMap((bar) => {
@@ -169,142 +187,120 @@ export function FactorCharts({ data, metas }: FactorChartsProps) {
       for (const outName of meta.outputs) {
         const points = outputs[outName];
         if (!points?.length) continue;
-        const series = mainChart.addSeries(LineSeries, {
+        const series = mainPane.addSeries(LineSeries, {
           color: OVERLAY_COLORS[colorIdx % OVERLAY_COLORS.length],
           lineWidth: 1,
           priceLineVisible: false,
           lastValueVisible: false,
           crosshairMarkerVisible: false,
+          priceScaleId: "right",
         });
         colorIdx += 1;
         series.setData(toAlignedLineData(barDates, points));
       }
     }
 
-    /**
-     * 监听容器宽度变化并同步图表宽度。
-     * @param el 容器
-     * @param chart 图表
-     */
-    const observeWidth = (el: HTMLElement, chart: IChartApi) => {
-      const ro = new ResizeObserver(([entry]) => {
-        chart.applyOptions({ width: entry.contentRect.width });
+    for (const meta of panelMetas) {
+      const pane = chart.addPane(true);
+      pane.setStretchFactor(PANEL_HEIGHT);
+      createTextWatermark(pane, {
+        horzAlign: "left",
+        vertAlign: "top",
+        lines: [
+          {
+            text: meta.label || meta.name,
+            color: "rgba(232, 236, 244, 0.55)",
+            fontSize: 11,
+          },
+        ],
       });
-      ro.observe(el);
-      resizeObservers.push(ro);
-    };
-    observeWidth(mainEl, mainChart);
-
-    const panelCharts: IChartApi[] = [];
-
-    if (panelsHost) {
-      panelMetas.forEach((meta, index) => {
-        const el = panelsHost.querySelector<HTMLElement>(
-          `[data-panel="${CSS.escape(meta.name)}"]`
-        );
-        if (!el) return;
-        const isLast = index === panelMetas.length - 1;
-        const panelChart = makeChart(el, PANEL_HEIGHT, { timeVisible: isLast });
-        charts.push(panelChart);
-        panelCharts.push(panelChart);
-        observeWidth(el, panelChart);
-
-        const outputs = data.series[meta.name]?.outputs ?? {};
-        const isMacd =
-          meta.name.toUpperCase() === "MACD" ||
-          meta.name.toUpperCase().startsWith("MACD") ||
-          meta.outputs.some((o) => o.includes("hist"));
-
-        if (isMacd) {
-          const histKey =
-            meta.outputs.find((o) => o.includes("hist")) ?? "macd_hist";
-          const histPoints = outputs[histKey];
-          if (histPoints?.length) {
-            const histSeries = panelChart.addSeries(HistogramSeries, {
-              lastValueVisible: false,
-              priceLineVisible: false,
-            });
-            histSeries.setData(
-              toAlignedLineData(barDates, histPoints).map((p) => {
-                if (!("value" in p)) return p;
-                return {
-                  ...p,
-                  color: p.value >= 0 ? "rgba(239, 68, 68, 0.55)" : "rgba(34, 197, 94, 0.55)",
-                };
-              })
-            );
-          }
-          let lineColorIdx = 0;
-          for (const outName of meta.outputs) {
-            if (outName.includes("hist")) continue;
-            const points = outputs[outName];
-            if (!points?.length) continue;
-            const line = panelChart.addSeries(LineSeries, {
-              color: lineColorIdx === 0 ? "#fbbf24" : "#38bdf8",
-              lineWidth: 1,
-              priceLineVisible: false,
-              lastValueVisible: false,
-              crosshairMarkerVisible: false,
-            });
-            lineColorIdx += 1;
-            line.setData(toAlignedLineData(barDates, points));
-          }
-        } else {
-          let lineColorIdx = 0;
-          for (const outName of meta.outputs) {
-            const points = outputs[outName];
-            if (!points?.length) continue;
-            const line = panelChart.addSeries(LineSeries, {
-              color: OVERLAY_COLORS[lineColorIdx % OVERLAY_COLORS.length],
-              lineWidth: 1,
-              priceLineVisible: false,
-              lastValueVisible: false,
-              crosshairMarkerVisible: false,
-            });
-            lineColorIdx += 1;
-            line.setData(toAlignedLineData(barDates, points));
-          }
-        }
+      pane.priceScale("right").applyOptions({
+        borderColor: "rgba(255, 255, 255, 0.12)",
+        scaleMargins: { top: 0.12, bottom: 0.12 },
+        minimumWidth: PRICE_SCALE_MIN_WIDTH,
       });
-    }
 
-    const allCharts = [mainChart, ...panelCharts];
+      const outputs = data.series[meta.name]?.outputs ?? {};
+      const isMacd =
+        meta.name.toUpperCase() === "MACD" ||
+        meta.name.toUpperCase().startsWith("MACD") ||
+        meta.outputs.some((o) => o.includes("hist"));
 
-    /**
-     * 将可见逻辑区间同步到除 source 外的所有图表。
-     * @param range 逻辑区间
-     * @param source 发起同步的图表
-     */
-    const syncLogicalRange = (range: LogicalRange | null, source: IChartApi) => {
-      if (!range || syncing) return;
-      syncing = true;
-      try {
-        for (const chart of allCharts) {
-          if (chart === source) continue;
-          chart.timeScale().setVisibleLogicalRange(range);
+      if (isMacd) {
+        const histKey = meta.outputs.find((o) => o.includes("hist")) ?? "macd_hist";
+        const histPoints = outputs[histKey];
+        if (histPoints?.length) {
+          const histSeries = pane.addSeries(HistogramSeries, {
+            lastValueVisible: false,
+            priceLineVisible: false,
+            priceScaleId: "right",
+          });
+          histSeries.setData(
+            toAlignedLineData(barDates, histPoints).map((p) => {
+              if (!("value" in p)) return p;
+              return {
+                ...p,
+                color: p.value >= 0 ? "rgba(239, 68, 68, 0.55)" : "rgba(34, 197, 94, 0.55)",
+              };
+            })
+          );
         }
-      } finally {
-        syncing = false;
+        let lineColorIdx = 0;
+        for (const outName of meta.outputs) {
+          if (outName.includes("hist")) continue;
+          const points = outputs[outName];
+          if (!points?.length) continue;
+          const line = pane.addSeries(LineSeries, {
+            color: lineColorIdx === 0 ? "#fbbf24" : "#38bdf8",
+            lineWidth: 1,
+            priceLineVisible: false,
+            lastValueVisible: false,
+            crosshairMarkerVisible: false,
+            priceScaleId: "right",
+          });
+          lineColorIdx += 1;
+          line.setData(toAlignedLineData(barDates, points));
+        }
+      } else {
+        let lineColorIdx = 0;
+        for (const outName of meta.outputs) {
+          const points = outputs[outName];
+          if (!points?.length) continue;
+          const line = pane.addSeries(LineSeries, {
+            color: OVERLAY_COLORS[lineColorIdx % OVERLAY_COLORS.length],
+            lineWidth: 1,
+            priceLineVisible: false,
+            lastValueVisible: false,
+            crosshairMarkerVisible: false,
+            priceScaleId: "right",
+          });
+          lineColorIdx += 1;
+          line.setData(toAlignedLineData(barDates, points));
+        }
       }
-    };
-
-    const unsubs: Array<() => void> = [];
-    for (const chart of allCharts) {
-      const handler = (range: LogicalRange | null) => syncLogicalRange(range, chart);
-      chart.timeScale().subscribeVisibleLogicalRangeChange(handler);
-      unsubs.push(() => chart.timeScale().unsubscribeVisibleLogicalRangeChange(handler));
     }
 
-    mainChart.timeScale().fitContent();
-    const initial = mainChart.timeScale().getVisibleLogicalRange();
-    syncLogicalRange(initial, mainChart);
+    chart.timeScale().fitContent();
+
+    const realign = () => {
+      if (disposed) return;
+      syncPanePriceScaleWidths(chart);
+    };
+    requestAnimationFrame(() => {
+      realign();
+      requestAnimationFrame(realign);
+    });
+    const t1 = window.setTimeout(realign, 50);
+    const t2 = window.setTimeout(realign, 200);
 
     return () => {
-      for (const unsub of unsubs) unsub();
-      for (const ro of resizeObservers) ro.disconnect();
-      for (const chart of charts) chart.remove();
+      disposed = true;
+      window.clearTimeout(t1);
+      window.clearTimeout(t2);
+      chart.remove();
+      host.replaceChildren();
     };
-  }, [data, overlayMetas, panelMetas]);
+  }, [data, overlayMetas, panelMetas, totalHeight]);
 
   if (!data) {
     return (
@@ -323,26 +319,12 @@ export function FactorCharts({ data, metas }: FactorChartsProps) {
   }
 
   return (
-    <div className="space-y-2">
-      <div
-        ref={mainRef}
-        className="w-full"
-        style={{ height: MAIN_HEIGHT }}
-        aria-label="因子主图"
-      />
-      <div ref={panelsHostRef} className="space-y-2">
-        {panelMetas.map((meta) => (
-          <div key={meta.name}>
-            <div className="mb-0.5 text-xs text-[var(--desk-mist)]">{meta.label}</div>
-            <div
-              data-panel={meta.name}
-              className="w-full"
-              style={{ height: PANEL_HEIGHT }}
-              aria-label={`${meta.label} 副图`}
-            />
-          </div>
-        ))}
-      </div>
-    </div>
+    <div
+      ref={hostRef}
+      className="w-full"
+      style={{ height: totalHeight }}
+      data-factor-charts="multipane-v2"
+      aria-label="因子主图与副图（单图多窗格）"
+    />
   );
 }

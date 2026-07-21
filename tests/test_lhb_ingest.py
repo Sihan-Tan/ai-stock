@@ -40,6 +40,7 @@ def test_lhb_ingest_replace(_db):
                 "name": "宁德时代",
                 "reason": "振幅",
                 "net_buy": 1e8,
+                "pct_chg": 5.23,
                 "seats": [
                     {"side": "buy", "seat_name": "某营业部", "amount": 1},
                     {"side": "sell", "seat_name": "机构专用", "amount": 2},
@@ -51,6 +52,7 @@ def test_lhb_ingest_replace(_db):
     db.commit()
     rows = LhbService(db).by_date(asof)
     assert len(rows) == 1
+    assert rows[0]["pct_chg"] == pytest.approx(5.23)
     assert len(rows[0]["seats"]) == 2
     assert rows[0]["seats"][1]["is_institution"] is True
     n1 = db.scalar(select(func.count()).select_from(LhbSeat))

@@ -36,12 +36,21 @@ class LhbDailyIngestor:
 
         n_seats = 0
         for item in payload:
+            raw_pct = item.get("pct_chg")
+            pct_chg: float | None
+            try:
+                pct_chg = float(raw_pct) if raw_pct is not None else None
+                if pct_chg is not None and pct_chg != pct_chg:
+                    pct_chg = None
+            except (TypeError, ValueError):
+                pct_chg = None
             daily = LhbDaily(
                 asof=self.asof,
                 symbol=normalize_symbol(str(item.get("symbol") or "")),
                 name=str(item.get("name") or ""),
                 reason=str(item.get("reason") or ""),
                 net_buy=float(item.get("net_buy") or 0.0),
+                pct_chg=pct_chg,
             )
             self.db.add(daily)
             self.db.flush()

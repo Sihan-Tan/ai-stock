@@ -10,12 +10,29 @@ from desk_common.symbols import normalize_symbol
 _INST_KEYWORDS = ("机构专用", "机构席位", "社保", "券商自营")
 
 
+def _optional_pct(value: Any) -> float | None:
+    """
+    解析涨跌幅百分数；无效返回 None。
+
+    @param value 源字段（可能为 float / str / NaN）
+    """
+    if value is None:
+        return None
+    try:
+        pct = float(value)
+    except (TypeError, ValueError):
+        return None
+    if pct != pct:  # NaN
+        return None
+    return pct
+
+
 class LhbClient(Protocol):
     """龙虎榜拉取协议。"""
 
     def fetch_by_date(self, asof: date) -> list[dict[str, Any]]:
         """
-        返回上榜列表，每项含 symbol/name/reason/net_buy/seats。
+        返回上榜列表，每项含 symbol/name/reason/net_buy/pct_chg/seats。
 
         seats: [{side, seat_name, amount}, ...]
         """
@@ -56,6 +73,7 @@ class AkshareLhbClient:
             name = str(r.get("名称") or r.get("股票名称") or "")
             reason = str(r.get("上榜原因") or r.get("解读") or "")
             net = float(r.get("净买额") or r.get("龙虎榜净买额") or 0 or 0)
+            pct_chg = _optional_pct(r.get("涨跌幅"))
             sym = normalize_symbol(code)
             rows.append(
                 {
@@ -63,6 +81,7 @@ class AkshareLhbClient:
                     "name": name,
                     "reason": reason,
                     "net_buy": net,
+                    "pct_chg": pct_chg,
                     "seats": [],  # 明细接口若无席位则留空；另途可补
                 }
             )

@@ -40,6 +40,7 @@ class LhbService:
                     "name": r.name,
                     "reason": r.reason,
                     "net_buy": r.net_buy,
+                    "pct_chg": r.pct_chg,
                     "seats": [
                         {
                             "side": s.side,

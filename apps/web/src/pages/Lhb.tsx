@@ -16,6 +16,7 @@ type LhbRow = {
   name: string;
   reason: string;
   net_buy: number;
+  pct_chg?: number | null;
   seats: LhbSeat[];
 };
 
@@ -89,6 +90,7 @@ export default function Lhb({ setLog }: PageLogProps) {
                 <tr>
                   <th className="px-3 py-2 font-medium">代码</th>
                   <th className="px-3 py-2 font-medium">名称</th>
+                  <th className="px-3 py-2 font-medium">涨跌幅</th>
                   <th className="px-3 py-2 font-medium">净买额</th>
                   <th className="px-3 py-2 font-medium">上榜理由</th>
                   <th className="px-3 py-2 font-medium">席位</th>
@@ -103,6 +105,9 @@ export default function Lhb({ setLog }: PageLogProps) {
                   >
                     <td className="px-3 py-3 font-mono">{row.symbol}</td>
                     <td className="px-3 py-3">{row.name || "—"}</td>
+                    <td className={`px-3 py-3 font-mono ${pctClass(row.pct_chg)}`}>
+                      {formatSignedPercent(row.pct_chg)}
+                    </td>
                     <td className={`px-3 py-3 font-mono ${netClass(row.net_buy)}`}>
                       {formatCompact(row.net_buy)}
                     </td>
@@ -133,6 +138,27 @@ export default function Lhb({ setLog }: PageLogProps) {
 function netClass(value: number | null | undefined): string {
   if (value == null || Number.isNaN(value) || value === 0) return "text-[var(--desk-mist)]";
   return value > 0 ? "text-[var(--danger)]" : "text-[var(--success)]";
+}
+
+/**
+ * 涨跌幅着色（A 股习惯：涨红跌绿）。
+ * @param value 百分数
+ */
+function pctClass(value: number | null | undefined): string {
+  if (value == null || Number.isNaN(value)) return "text-[var(--desk-mist)]";
+  if (value > 0) return "text-[var(--danger)]";
+  if (value < 0) return "text-[var(--success)]";
+  return "text-[var(--desk-mist)]";
+}
+
+/**
+ * 格式化带符号涨跌幅。
+ * @param value 百分数
+ */
+function formatSignedPercent(value: number | null | undefined): string {
+  if (value == null || Number.isNaN(value)) return "—";
+  const sign = value > 0 ? "+" : "";
+  return `${sign}${value.toFixed(2)}%`;
 }
 
 /**
