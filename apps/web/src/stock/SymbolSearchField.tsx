@@ -13,6 +13,15 @@ type SymbolSearchFieldProps = {
   value: string;
   /** 选中或确认后的回调 */
   onChange: (symbol: string) => void;
+  /**
+   * 选中时附带名称（搜索命中时有值；纯代码确认可能为空串）。
+   * @param item 标准代码与名称
+   */
+  onPick?: (item: { symbol: string; name: string }) => void;
+  /**
+   * 确认后清空输入（用于「添加标的」类场景；父组件 value 常保持为空串）。
+   */
+  clearAfterCommit?: boolean;
   /** 输入框 className */
   className?: string;
   /** placeholder */
@@ -28,6 +37,8 @@ type SymbolSearchFieldProps = {
 export function SymbolSearchField({
   value,
   onChange,
+  onPick,
+  clearAfterCommit = false,
   className,
   placeholder = "代码 / 名称 / 拼音",
   "aria-label": ariaLabel = "搜索标的",
@@ -39,6 +50,11 @@ export function SymbolSearchField({
   const skipSearchRef = useRef(false);
 
   useEffect(() => {
+    // 父组件清空 value 时必须清空输入（否则「代码 名称」展示态会因 startsWith("") 被跳过）
+    if (value === "") {
+      setQuery("");
+      return;
+    }
     // 外部 value 变化且本地未在编辑名称时同步展示
     const parsed = parseSearchSymbol(query);
     if (parsed === value) return;
@@ -86,12 +102,14 @@ export function SymbolSearchField({
   /**
    * 确认某一标的。
    * @param symbol 标准代码
+   * @param name 股票名称（可空）
    * @param label 输入框展示文案
    */
-  const commit = (symbol: string, label?: string) => {
+  const commit = (symbol: string, name = "", label?: string) => {
     skipSearchRef.current = true;
     onChange(symbol);
-    setQuery(label ?? symbol);
+    onPick?.({ symbol, name });
+    setQuery(clearAfterCommit ? "" : label ?? (name ? `${symbol} ${name}` : symbol));
     setSuggestions([]);
     setOpen(false);
   };
@@ -103,7 +121,13 @@ export function SymbolSearchField({
     // 已是「代码」或「代码 名称」展示态，失焦时不要冲掉名称
     if (value && (query === value || query.startsWith(`${value} `))) {
       const direct = parseSearchSymbol(value);
-      if (direct) onChange(direct);
+      if (direct) {
+        const nameFromLabel = query.startsWith(`${direct} `)
+          ? query.slice(direct.length + 1).trim()
+          : "";
+        onChange(direct);
+        onPick?.({ symbol: direct, name: nameFromLabel });
+      }
       setOpen(false);
       return;
     }
@@ -114,7 +138,7 @@ export function SymbolSearchField({
       return;
     }
     const hit = suggestions.find((item) => item.symbol === target);
-    commit(target, hit ? `${hit.symbol} ${hit.name}` : target);
+    commit(target, hit?.name ?? "", hit ? `${hit.symbol} ${hit.name}` : target);
   };
 
   return (
@@ -162,7 +186,7 @@ export function SymbolSearchField({
                 type="button"
                 className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-[var(--desk-line)]"
                 onMouseDown={(event) => event.preventDefault()}
-                onClick={() => commit(item.symbol, `${item.symbol} ${item.name}`)}
+                onClick={() => commit(item.symbol, item.name, `${item.symbol} ${item.name}`)}
               >
                 <span className="font-mono text-xs text-[var(--desk-mist)]">
                   {item.symbol}

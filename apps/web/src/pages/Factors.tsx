@@ -16,6 +16,9 @@ import type { PageLogProps } from "./types";
 /** 副图同时勾选上限（主图 overlay 不计入） */
 const PANEL_LIMIT = 12;
 
+/** 本地持久化：上次训练股票池与区间 */
+const TRAIN_POOL_STORAGE_KEY = "desk.ml.trainPool.v1";
+
 /** 因子模块 Tab */
 const FACTOR_TABS = [
   { id: "charts", label: "因子图表" },
@@ -23,6 +26,72 @@ const FACTOR_TABS = [
 ] as const;
 
 type FactorTabId = (typeof FACTOR_TABS)[number]["id"];
+
+/** 训练池单只标的 */
+type TrainSymbolItem = { symbol: string; name: string };
+
+/** 上次训练快照 */
+type LastTrainSnapshot = {
+  symbols: TrainSymbolItem[];
+  start: string;
+  end: string;
+  trainedAt: string;
+};
+
+/** 已登记 ML 模型摘要 */
+type RegisteredModel = {
+  model_id?: string;
+  engine?: string;
+  metrics?: Record<string, number | string>;
+  features?: string[];
+  path?: string;
+  /** 是否已出现在因子目录 */
+  as_factor?: boolean;
+};
+
+/**
+ * 读取上次训练股票池快照。
+ */
+function loadLastTrainSnapshot(): LastTrainSnapshot | null {
+  try {
+    const raw = localStorage.getItem(TRAIN_POOL_STORAGE_KEY);
+    if (!raw) return null;
+    const data = JSON.parse(raw) as LastTrainSnapshot;
+    if (!Array.isArray(data.symbols) || !data.start || !data.end || !data.trainedAt) return null;
+    const symbols = data.symbols
+      .map((row) => ({
+        symbol: String(row.symbol || "").trim().toUpperCase(),
+        name: String(row.name || "").trim(),
+      }))
+      .filter((row) => row.symbol);
+    if (symbols.length === 0) return null;
+    return { symbols, start: data.start, end: data.end, trainedAt: data.trainedAt };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 写入上次训练快照。
+ * @param snapshot 股票池与区间
+ */
+function saveLastTrainSnapshot(snapshot: LastTrainSnapshot): void {
+  try {
+    localStorage.setItem(TRAIN_POOL_STORAGE_KEY, JSON.stringify(snapshot));
+  } catch {
+    // 忽略配额 / 隐私模式
+  }
+}
+
+/**
+ * 格式化上次训练时间展示。
+ * @param iso ISO 时间串
+ */
+function formatTrainedAt(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString("zh-CN", { hour12: false });
+}
 
 /**
  * 从目录构建初始勾选：overlay 默认全选，panel 默认最多 PANEL_LIMIT 个（按目录顺序）。
@@ -76,10 +145,23 @@ export default function Factors({ setLog }: PageLogProps) {
   const [loading, setLoading] = useState(false);
   const [models, setModels] = useState<unknown[]>([]);
   const [comparison, setComparison] = useState<unknown>(null);
-  const [trainSymbols, setTrainSymbols] = useState<string[]>(["600519.SH"]);
-  const [trainRange, setTrainRange] = useState<DateRangeValue>(() => defaultDateRangeValue());
+  const [trainSymbols, setTrainSymbols] = useState<TrainSymbolItem[]>(() => {
+    const last = loadLastTrainSnapshot();
+    if (last) return last.symbols;
+    return [{ symbol: "600519.SH", name: "贵州茅台" }];
+  });
+  const [trainRange, setTrainRange] = useState<DateRangeValue>(() => {
+    const last = loadLastTrainSnapshot();
+    if (last) return { start: last.start, end: last.end, preset: "custom" };
+    return defaultDateRangeValue();
+  });
+  const [lastTrainMeta, setLastTrainMeta] = useState<LastTrainSnapshot | null>(() =>
+    loadLastTrainSnapshot()
+  );
   const [trainBusy, setTrainBusy] = useState(false);
   const [trainAddSymbol, setTrainAddSymbol] = useState("");
+  /** 登记因子 / 模型说明弹框 */
+  const [explainModel, setExplainModel] = useState<RegisteredModel | null>(null);
   const catalogReady = useRef(false);
   /** 序列请求序号，用于丢弃过期响应 */
   const seriesRequestIdRef = useRef(0);
@@ -198,13 +280,23 @@ export default function Factors({ setLog }: PageLogProps) {
   };
 
   /**
-   * 向训练池添加标的（去重）。
+   * 向训练池添加标的（去重）；添加后清空搜索框。
    * @param sym 标准代码
+   * @param name 股票名称
    */
-  const addTrainSymbol = (sym: string) => {
+  const addTrainSymbol = (sym: string, name = "") => {
     const code = sym.trim().toUpperCase();
     if (!code) return;
-    setTrainSymbols((prev) => (prev.includes(code) ? prev : [...prev, code]));
+    setTrainSymbols((prev) => {
+      const existing = prev.find((row) => row.symbol === code);
+      if (existing) {
+        if (name && !existing.name) {
+          return prev.map((row) => (row.symbol === code ? { ...row, name } : row));
+        }
+        return prev;
+      }
+      return [...prev, { symbol: code, name: name.trim() }];
+    });
     setTrainAddSymbol("");
   };
 
@@ -213,7 +305,7 @@ export default function Factors({ setLog }: PageLogProps) {
    * @param sym 标准代码
    */
   const removeTrainSymbol = (sym: string) => {
-    setTrainSymbols((prev) => prev.filter((s) => s !== sym));
+    setTrainSymbols((prev) => prev.filter((row) => row.symbol !== sym));
   };
 
   /**
@@ -221,13 +313,26 @@ export default function Factors({ setLog }: PageLogProps) {
    */
   const importWatchlist = async () => {
     try {
-      const rows = await api<Array<{ symbol: string }>>("/api/market/watchlist");
-      const next = new Set(trainSymbols);
-      for (const row of rows) {
-        if (row.symbol) next.add(row.symbol);
-      }
-      setTrainSymbols([...next]);
-      setLog(`已导入自选，训练池共 ${next.size} 只`);
+      const rows = await api<Array<{ symbol: string; name?: string }>>("/api/market/watchlist");
+      let total = 0;
+      setTrainSymbols((prev) => {
+        const bySymbol = new Map(prev.map((row) => [row.symbol, row]));
+        for (const row of rows) {
+          const code = String(row.symbol || "").trim().toUpperCase();
+          if (!code) continue;
+          const name = String(row.name || "").trim();
+          const existing = bySymbol.get(code);
+          if (existing) {
+            if (name && !existing.name) bySymbol.set(code, { ...existing, name });
+          } else {
+            bySymbol.set(code, { symbol: code, name });
+          }
+        }
+        const next = [...bySymbol.values()];
+        total = next.length;
+        return next;
+      });
+      setLog(`已导入自选，训练池共 ${total} 只`);
     } catch (error) {
       setLog(String(error));
     }
@@ -248,17 +353,26 @@ export default function Factors({ setLog }: PageLogProps) {
     }
     setTrainBusy(true);
     try {
+      const symbols = trainSymbols.map((row) => row.symbol);
       const result = await api("/api/ml/train-symbols", {
         method: "POST",
         body: JSON.stringify({
-          symbols: trainSymbols,
+          symbols,
           start: trainRange.start,
           end: trainRange.end,
         }),
       });
       setComparison(result);
+      const snapshot: LastTrainSnapshot = {
+        symbols: trainSymbols,
+        start: trainRange.start,
+        end: trainRange.end,
+        trainedAt: new Date().toISOString(),
+      };
+      saveLastTrainSnapshot(snapshot);
+      setLastTrainMeta(snapshot);
       await refreshMeta();
-      setLog(`双引擎对比训练完成（${trainSymbols.length} 只）`);
+      setLog(`双引擎对比训练完成（${symbols.length} 只）`);
     } catch (error) {
       setLog(String(error));
     } finally {
@@ -315,6 +429,25 @@ export default function Factors({ setLog }: PageLogProps) {
                     factors={factors}
                     selected={selected}
                     onToggle={onToggle}
+                    onExplain={(factor) => {
+                      const mid =
+                        typeof factor.params?.model_id === "string"
+                          ? factor.params.model_id
+                          : factor.name.startsWith("ml:")
+                            ? factor.name.slice(3)
+                            : "";
+                      const found = (models as RegisteredModel[]).find((m) => m.model_id === mid);
+                      setExplainModel(
+                        found ?? {
+                          model_id: mid || factor.name,
+                          engine:
+                            typeof factor.params?.engine === "string"
+                              ? factor.params.engine
+                              : undefined,
+                          as_factor: true,
+                        }
+                      );
+                    }}
                     query={query}
                     onQuery={setQuery}
                     panelLimit={PANEL_LIMIT}
@@ -388,49 +521,124 @@ export default function Factors({ setLog }: PageLogProps) {
                     </ul>
                   </section>
 
-                  <section className="space-y-3 rounded-lg border border-[var(--desk-line)] bg-[var(--desk-ink)]/30 p-4">
-                    <div className="flex flex-wrap items-end justify-between gap-2">
-                      <div>
-                        <h4 className="text-sm font-medium text-[var(--desk-text)]">训练股票池</h4>
-                        <p className="mt-0.5 text-xs text-[var(--desk-mist)]">
-                          搜索添加或导入自选；点击代码可移除（当前 {trainSymbols.length} 只）
-                        </p>
+                  <section className="overflow-hidden rounded-lg border border-[var(--desk-line)] bg-[var(--desk-ink)]/40">
+                    <div className="flex flex-wrap items-center gap-3 border-b border-[var(--desk-line)]/80 px-4 py-3">
+                      <div className="min-w-0 shrink-0 space-y-1.5">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h4 className="text-sm font-medium tracking-wide text-[var(--desk-text)]">
+                            训练股票池
+                          </h4>
+                          <span className="rounded border border-[var(--desk-line)] bg-[var(--desk-panel)] px-1.5 py-0.5 font-mono text-[11px] tabular-nums text-[var(--desk-accent)]">
+                            {trainSymbols.length}
+                          </span>
+                        </div>
+                        {lastTrainMeta ? (
+                          <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-[var(--desk-mist)]">
+                            <span className="inline-flex items-center gap-1.5">
+                              <span
+                                className="size-1.5 shrink-0 rounded-full bg-[var(--desk-signal)]"
+                                aria-hidden
+                              />
+                              上次 {formatTrainedAt(lastTrainMeta.trainedAt)}
+                            </span>
+                            <span className="text-[var(--desk-line)]" aria-hidden>
+                              ·
+                            </span>
+                            <span className="font-mono tabular-nums">
+                              {lastTrainMeta.symbols.length} 只
+                            </span>
+                            <span className="text-[var(--desk-line)]" aria-hidden>
+                              ·
+                            </span>
+                            <span className="font-mono tabular-nums">
+                              {lastTrainMeta.start} → {lastTrainMeta.end}
+                            </span>
+                          </p>
+                        ) : (
+                          <p className="text-xs text-[var(--desk-mist)]">
+                            搜索添加或导入自选；完成后会记住本池与区间
+                          </p>
+                        )}
                       </div>
-                      <DateRangePresetSelect value={trainRange} onChange={setTrainRange} />
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <div className="w-[240px] max-w-full shrink-0">
-                        <SymbolSearchField
-                          value={trainAddSymbol}
-                          onChange={addTrainSymbol}
-                          placeholder="添加训练标的"
-                          aria-label="添加训练标的"
-                          className="w-full rounded-lg border border-[var(--desk-line)] bg-[var(--desk-ink)] px-3 py-2 text-sm text-[var(--desk-text)] outline-none focus:border-[var(--desk-mist)]"
-                        />
+
+                      <DateRangePresetSelect
+                        value={trainRange}
+                        onChange={setTrainRange}
+                        className="min-w-0 flex-1 justify-center"
+                      />
+
+                      <div className="flex shrink-0 flex-wrap items-stretch gap-2">
+                        <div className="w-[200px] max-w-full sm:w-[240px]">
+                          <SymbolSearchField
+                            value={trainAddSymbol}
+                            onChange={() => {
+                              /* 名称经 onPick 写入；此处仅占位受控 */
+                            }}
+                            onPick={({ symbol: code, name }) => addTrainSymbol(code, name)}
+                            clearAfterCommit
+                            placeholder="代码 / 名称 / 拼音"
+                            aria-label="添加训练标的"
+                            className="w-full rounded-md border border-[var(--desk-line)] bg-[var(--desk-panel)] px-3 py-2 text-sm text-[var(--desk-text)] outline-none transition-colors placeholder:text-[var(--desk-mist)]/70 focus:border-[var(--desk-accent)]"
+                          />
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          className="h-auto shrink-0 self-stretch px-3"
+                          onPress={() => void importWatchlist()}
+                        >
+                          导入自选
+                        </Button>
                       </div>
-                      <Button size="sm" variant="secondary" onPress={() => void importWatchlist()}>
-                        导入自选
-                      </Button>
                     </div>
-                    <div className="flex min-h-[40px] flex-wrap gap-2">
-                      {trainSymbols.length === 0 ? (
-                        <span className="text-sm text-[var(--desk-mist)]">
-                          暂无标的。请搜索添加，或点「导入自选」。
-                        </span>
-                      ) : (
-                        trainSymbols.map((sym) => (
-                          <button
-                            key={sym}
-                            type="button"
-                            className="rounded-md border border-[var(--desk-line)] bg-[var(--desk-ink)] px-2.5 py-1 font-mono text-xs text-[var(--desk-text)] transition-colors hover:border-[var(--desk-mist)] hover:text-[var(--danger)]"
-                            onClick={() => removeTrainSymbol(sym)}
-                            aria-label={`移除 ${sym}`}
-                          >
-                            {sym}
-                            <span className="ml-1.5 opacity-60">×</span>
-                          </button>
-                        ))
-                      )}
+
+                    <div className="p-4">
+                      <div
+                        className={[
+                          "min-h-[72px] rounded-md border border-dashed px-2.5 py-2.5",
+                          trainSymbols.length === 0
+                            ? "border-[var(--desk-line)]/70 bg-transparent"
+                            : "border-[var(--desk-line)] bg-[var(--desk-panel)]/50",
+                        ].join(" ")}
+                      >
+                        {trainSymbols.length === 0 ? (
+                          <div className="flex h-[52px] flex-col items-center justify-center gap-0.5 text-center">
+                            <p className="text-sm text-[var(--desk-mist)]">池内暂无标的</p>
+                            <p className="text-xs text-[var(--desk-mist)]/80">
+                              上方搜索添加，或一键导入自选
+                            </p>
+                          </div>
+                        ) : (
+                          <ul className="flex flex-wrap gap-2">
+                            {trainSymbols.map((row) => (
+                              <li key={row.symbol}>
+                                <div className="group flex items-center gap-2 rounded-md border border-[var(--desk-line)] bg-[var(--desk-ink)]/80 py-1.5 pl-2.5 pr-1 transition-colors hover:border-[var(--desk-accent)]/50">
+                                  <div className="min-w-0 leading-tight">
+                                    <div className="truncate text-sm text-[var(--desk-text)]">
+                                      {row.name || row.symbol}
+                                    </div>
+                                    {row.name ? (
+                                      <div className="font-mono text-[10px] tracking-wide text-[var(--desk-mist)]">
+                                        {row.symbol}
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                  <button
+                                    type="button"
+                                    className="flex size-6 shrink-0 items-center justify-center rounded text-[var(--desk-mist)] transition-colors hover:bg-[var(--desk-line)]/40 hover:text-[var(--danger)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--desk-accent)]"
+                                    onClick={() => removeTrainSymbol(row.symbol)}
+                                    aria-label={`移除 ${row.name || row.symbol}`}
+                                  >
+                                    <span aria-hidden className="text-sm leading-none">
+                                      ×
+                                    </span>
+                                  </button>
+                                </div>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
                     </div>
                   </section>
 
@@ -438,13 +646,20 @@ export default function Factors({ setLog }: PageLogProps) {
                     <TrainComparisonPanel comparison={comparison} />
                   )}
 
-                  <RegisteredModelsPanel models={models} onChanged={refreshMeta} setLog={setLog} />
+                  <RegisteredModelsPanel
+                    models={models}
+                    onChanged={refreshMeta}
+                    setLog={setLog}
+                    onExplain={setExplainModel}
+                  />
                 </div>
               </TabPanel>
             )}
           </div>
         </CardContent>
       </Card>
+
+      <RegisteredFactorExplainDialog model={explainModel} onClose={() => setExplainModel(null)} />
     </div>
   );
 }
@@ -492,16 +707,6 @@ type TrainComparison = {
   xgboost?: TrainEngineResult;
   start?: string;
   end?: string;
-};
-
-type RegisteredModel = {
-  model_id?: string;
-  engine?: string;
-  metrics?: Record<string, number | string>;
-  features?: string[];
-  path?: string;
-  /** 是否已出现在因子目录 */
-  as_factor?: boolean;
 };
 
 /**
@@ -593,20 +798,177 @@ function TrainComparisonPanel({ comparison }: { comparison: unknown }) {
 }
 
 /**
- * 已登记模型列表：放入/移出因子目录、删除。
+ * 训练特征列 → 含义说明（与 desk_strategy.ml_prob_engine.FEATURE_COLS 对齐）。
+ */
+const ML_FEATURE_DESCRIPTIONS: Record<string, string> = {
+  ret_1d: "近 1 日收益率（收盘相对昨收）",
+  ret_5d: "近 5 日累计收益率",
+  ret_10d: "近 10 日累计收益率",
+  vol_ratio_5d: "当日成交量相对近 5 日均量的比值",
+  amplitude_5d: "近 5 日振幅（最高−最低）相对均价",
+  hist_vol_20d: "近 20 日收益波动率（年化近似）",
+  momentum_5d: "近 5 日价格动量（与 5 日收益同口径）",
+  momentum_20d: "近 20 日价格动量",
+  rsi_14: "14 日相对强弱指数 RSI",
+  macd: "MACD 快慢线差值（DIF）",
+  macd_signal: "MACD 信号线（DEA）",
+  macd_hist: "MACD 柱（DIF−DEA）",
+  boll_pos: "收盘价在布林带上下轨之间的相对位置（0–1）",
+  ma5_bias: "收盘相对 5 日均线的偏离度",
+  ma20_bias: "收盘相对 20 日均线的偏离度",
+};
+
+/**
+ * 查询特征列含义；未知列返回通用提示。
+ * @param name 特征列名
+ */
+function describeMlFeature(name: string): string {
+  return ML_FEATURE_DESCRIPTIONS[name] ?? "该模型登记的特征列（暂无内置释义）";
+}
+
+/**
+ * 登记因子说明弹框：仅展示模型特征列及含义。
+ * @param props 模型摘要与关闭回调
+ */
+function RegisteredFactorExplainDialog({
+  model,
+  onClose,
+}: {
+  model: RegisteredModel | null;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    if (!model) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [model, onClose]);
+
+  if (!model) return null;
+
+  const mid = model.model_id ?? "—";
+  const features = model.features ?? [];
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <button
+        type="button"
+        className="absolute inset-0 cursor-default bg-black/50"
+        aria-label="关闭说明"
+        onClick={onClose}
+      />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="registered-factor-explain-title"
+        className="relative z-10 flex max-h-[85vh] w-full max-w-lg flex-col rounded-xl border border-[var(--desk-line)] bg-[var(--desk-panel)] shadow-2xl"
+      >
+        <div className="flex shrink-0 items-start justify-between gap-3 border-b border-[var(--desk-line)] px-5 py-4">
+          <div className="min-w-0">
+            <h2
+              id="registered-factor-explain-title"
+              className="text-base font-medium text-[var(--desk-text)]"
+            >
+              模型因子列
+            </h2>
+            <p className="mt-1 truncate font-mono text-xs text-[var(--desk-mist)]">{mid}</p>
+          </div>
+          <Button size="sm" variant="ghost" onPress={onClose}>
+            关闭
+          </Button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+          {features.length === 0 ? (
+            <p className="text-sm text-[var(--desk-mist)]">该模型未登记特征列。</p>
+          ) : (
+            <table className="w-full border-collapse text-left text-sm">
+              <thead className="border-b border-[var(--desk-line)] text-[var(--desk-mist)]">
+                <tr>
+                  <th className="w-[38%] px-0 py-2 pr-3 font-medium">因子列</th>
+                  <th className="px-0 py-2 font-medium">含义</th>
+                </tr>
+              </thead>
+              <tbody>
+                {features.map((name) => (
+                  <tr key={name} className="border-b border-[var(--desk-line)]/70 last:border-0">
+                    <td className="px-0 py-2.5 pr-3 align-top font-mono text-xs text-[var(--desk-text)]">
+                      {name}
+                    </td>
+                    <td className="px-0 py-2.5 align-top leading-relaxed text-[var(--desk-mist)]">
+                      {describeMlFeature(name)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * 已登记模型列表：单行操作 + 复选批量放入/删除。
  * @param props 模型数组、变更回调与日志
  */
 function RegisteredModelsPanel({
   models,
   onChanged,
   setLog,
+  onExplain,
 }: {
   models: unknown[];
   onChanged: () => void | Promise<void>;
   setLog: (s: string) => void;
+  /** 打开模型说明弹框 */
+  onExplain: (model: RegisteredModel) => void;
 }) {
   const rows = (models as RegisteredModel[]) ?? [];
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [batchBusy, setBatchBusy] = useState(false);
+  const [checked, setChecked] = useState<Set<string>>(() => new Set());
+
+  useEffect(() => {
+    const valid = new Set(rows.map((row) => row.model_id).filter(Boolean) as string[]);
+    setChecked((prev) => {
+      let changed = false;
+      const next = new Set<string>();
+      for (const id of prev) {
+        if (valid.has(id)) next.add(id);
+        else changed = true;
+      }
+      if (!changed && next.size === prev.size) return prev;
+      return next;
+    });
+  }, [rows]);
+
+  const allIds = rows.map((row) => row.model_id).filter(Boolean) as string[];
+  const allChecked = allIds.length > 0 && allIds.every((id) => checked.has(id));
+  const someChecked = allIds.some((id) => checked.has(id));
+  const busy = busyId !== null || batchBusy;
+
+  /**
+   * 切换单行勾选。
+   * @param modelId 模型 id
+   */
+  function toggleChecked(modelId: string) {
+    setChecked((prev) => {
+      const next = new Set(prev);
+      if (next.has(modelId)) next.delete(modelId);
+      else next.add(modelId);
+      return next;
+    });
+  }
+
+  /**
+   * 全选 / 取消全选。
+   */
+  function toggleAll() {
+    setChecked(allChecked ? new Set() : new Set(allIds));
+  }
 
   /**
    * 切换模型是否进入因子列表。
@@ -651,11 +1013,94 @@ function RegisteredModelsPanel({
     }
   }
 
+  /**
+   * 批量放入因子列表（仅未放入的勾选项）。
+   */
+  async function batchAsFactor() {
+    const ids = [...checked].filter((id) => {
+      const row = rows.find((r) => r.model_id === id);
+      return row && !row.as_factor;
+    });
+    if (ids.length === 0) {
+      setLog("请勾选至少一只尚未放入因子列表的模型");
+      return;
+    }
+    setBatchBusy(true);
+    let ok = 0;
+    try {
+      for (const id of ids) {
+        await api(`/api/ml/models/${encodeURIComponent(id)}/as-factor`, {
+          method: "POST",
+          body: JSON.stringify({ as_factor: true }),
+        });
+        ok += 1;
+      }
+      await onChanged();
+      setChecked(new Set());
+      setLog(`已批量放入因子列表：${ok} 个，可到「因子图表」勾选`);
+    } catch (error) {
+      await onChanged();
+      setLog(`批量放入中断（已成功 ${ok}/${ids.length}）：${String(error)}`);
+    } finally {
+      setBatchBusy(false);
+    }
+  }
+
+  /**
+   * 批量删除勾选模型。
+   */
+  async function batchDelete() {
+    const ids = [...checked];
+    if (ids.length === 0) {
+      setLog("请先勾选要删除的模型");
+      return;
+    }
+    if (!window.confirm(`确认删除选中的 ${ids.length} 个模型？此操作不可恢复。`)) return;
+    setBatchBusy(true);
+    let ok = 0;
+    try {
+      for (const id of ids) {
+        await api(`/api/ml/models/${encodeURIComponent(id)}`, { method: "DELETE" });
+        ok += 1;
+      }
+      await onChanged();
+      setChecked(new Set());
+      setLog(`已批量删除：${ok} 个模型`);
+    } catch (error) {
+      await onChanged();
+      setLog(`批量删除中断（已成功 ${ok}/${ids.length}）：${String(error)}`);
+    } finally {
+      setBatchBusy(false);
+    }
+  }
+
   return (
     <section className="space-y-2 rounded-lg border border-[var(--desk-line)] bg-[var(--desk-ink)]/20 p-4">
-      <div className="flex items-baseline justify-between gap-2">
-        <h4 className="text-sm font-medium text-[var(--desk-text)]">已登记模型</h4>
-        <span className="text-xs text-[var(--desk-mist)]">{rows.length} 个</span>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-baseline gap-2">
+          <h4 className="text-sm font-medium text-[var(--desk-text)]">已登记模型</h4>
+          <span className="text-xs text-[var(--desk-mist)]">{rows.length} 个</span>
+        </div>
+        {rows.length > 0 ? (
+          <div className="flex flex-wrap gap-2">
+            <Button
+              size="sm"
+              variant="secondary"
+              isDisabled={busy || !someChecked}
+              onPress={() => void batchAsFactor()}
+            >
+              批量放入因子
+            </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              isDisabled={busy || !someChecked}
+              onPress={() => void batchDelete()}
+            >
+              批量删除
+            </Button>
+          </div>
+        ) : null}
       </div>
       {rows.length === 0 ? (
         <p className="text-sm text-[var(--desk-mist)]">尚无登记模型。完成一次对比训练后会出现在这里。</p>
@@ -664,6 +1109,18 @@ function RegisteredModelsPanel({
           <table className="w-full border-collapse text-left text-sm">
             <thead className="border-b border-[var(--desk-line)] text-[var(--desk-mist)]">
               <tr>
+                <th className="w-10 px-2 py-2 font-medium">
+                  <input
+                    type="checkbox"
+                    checked={allChecked}
+                    ref={(el) => {
+                      if (el) el.indeterminate = someChecked && !allChecked;
+                    }}
+                    onChange={toggleAll}
+                    disabled={busy}
+                    aria-label="全选模型"
+                  />
+                </th>
                 <th className="px-2 py-2 font-medium">model_id</th>
                 <th className="px-2 py-2 font-medium">引擎</th>
                 <th className="px-2 py-2 font-medium">样本</th>
@@ -679,12 +1136,32 @@ function RegisteredModelsPanel({
                 const acc = typeof metrics.train_accuracy === "number" ? metrics.train_accuracy : undefined;
                 const n = metrics.n_samples;
                 const id = row.model_id ?? "";
-                const busy = busyId === id;
+                const rowBusy = busyId === id || batchBusy;
                 const inList = Boolean(row.as_factor);
                 return (
                   <tr key={row.model_id} className="border-b border-[var(--desk-line)] last:border-0">
+                    <td className="px-2 py-2">
+                      <input
+                        type="checkbox"
+                        checked={id ? checked.has(id) : false}
+                        disabled={!id || busy}
+                        onChange={() => id && toggleChecked(id)}
+                        aria-label={`选择 ${id}`}
+                      />
+                    </td>
                     <td className="px-2 py-2 font-mono text-xs text-[var(--desk-text)]">
-                      {row.model_id ?? "—"}
+                      {id ? (
+                        <button
+                          type="button"
+                          className="text-left underline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--desk-accent)]"
+                          onClick={() => onExplain(row)}
+                          title="查看说明"
+                        >
+                          {id}
+                        </button>
+                      ) : (
+                        "—"
+                      )}
                     </td>
                     <td className="px-2 py-2 text-[var(--desk-mist)]">{row.engine ?? "—"}</td>
                     <td className="px-2 py-2 font-mono text-[var(--desk-mist)]">
@@ -703,7 +1180,7 @@ function RegisteredModelsPanel({
                           <button
                             type="button"
                             className="text-xs text-[var(--desk-text)] underline-offset-2 hover:underline disabled:opacity-50"
-                            disabled={!id || busy}
+                            disabled={!id || rowBusy}
                             onClick={() => void setAsFactor(id, false)}
                           >
                             移出因子列表
@@ -712,7 +1189,7 @@ function RegisteredModelsPanel({
                           <button
                             type="button"
                             className="text-xs text-[var(--desk-text)] underline-offset-2 hover:underline disabled:opacity-50"
-                            disabled={!id || busy}
+                            disabled={!id || rowBusy}
                             onClick={() => void setAsFactor(id, true)}
                           >
                             放入因子列表
@@ -721,7 +1198,7 @@ function RegisteredModelsPanel({
                         <button
                           type="button"
                           className="text-xs text-[var(--desk-mist)] underline-offset-2 hover:underline disabled:opacity-50"
-                          disabled={!id || busy}
+                          disabled={!id || rowBusy}
                           onClick={() => void deleteModel(id)}
                         >
                           删除

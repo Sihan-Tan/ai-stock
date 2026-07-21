@@ -30,6 +30,11 @@ export type FactorCatalogProps = {
   selected: Set<string>;
   /** 切换勾选 */
   onToggle: (name: string) => void;
+  /**
+   * 查看登记/ML 因子说明（仅 category=ml 时出现入口）。
+   * @param factor 因子元数据
+   */
+  onExplain?: (factor: FactorMeta) => void;
   /** 搜索关键字 */
   query: string;
   /** 更新搜索关键字 */
@@ -48,6 +53,7 @@ export function FactorCatalog({
   factors,
   selected,
   onToggle,
+  onExplain,
   query,
   onQuery,
   panelLimit,
@@ -103,6 +109,7 @@ export function FactorCatalog({
                 checked
                 disabled={false}
                 onToggle={onToggle}
+                onExplain={onExplain}
               />
             ))}
           </ul>
@@ -133,6 +140,7 @@ export function FactorCatalog({
                     checked={selected.has(factor.name)}
                     disabled={isToggleDisabled(factor)}
                     onToggle={onToggle}
+                    onExplain={onExplain}
                   />
                 ))}
               </ul>
@@ -149,45 +157,65 @@ type FactorCheckRowProps = {
   checked: boolean;
   disabled: boolean;
   onToggle: (name: string) => void;
+  onExplain?: (factor: FactorMeta) => void;
 };
 
 /**
  * 单个因子勾选行。
  * @param props 因子元数据与勾选状态
  */
-function FactorCheckRow({ factor, checked, disabled, onToggle }: FactorCheckRowProps) {
+function FactorCheckRow({ factor, checked, disabled, onToggle, onExplain }: FactorCheckRowProps) {
   const title =
     disabled && factor.plot === "panel"
       ? "副图已满，请先取消部分已选副图"
       : undefined;
+  const canExplain =
+    Boolean(onExplain) && (factor.category === "ml" || factor.name.startsWith("ml:"));
 
   return (
     <li>
-      <label
+      <div
         title={title}
         className={`flex items-start gap-2 rounded px-1 py-0.5 text-sm ${
-          disabled
-            ? "cursor-not-allowed opacity-45"
-            : "cursor-pointer text-[var(--desk-text)] hover:bg-[var(--desk-ink)]/60"
+          disabled ? "opacity-45" : "text-[var(--desk-text)] hover:bg-[var(--desk-ink)]/60"
         }`}
       >
-        <input
-          type="checkbox"
-          checked={checked}
-          disabled={disabled}
-          onChange={() => {
-            if (!disabled) onToggle(factor.name);
-          }}
-          className="mt-0.5 accent-[var(--desk-accent)] disabled:cursor-not-allowed"
-        />
-        <span className="min-w-0 leading-snug">
-          <span className="block truncate">{factor.label}</span>
-          <span className="block truncate text-[10px] text-[var(--desk-mist)]">
-            {factor.name}
-            {factor.plot === "panel" ? " · 副图" : " · 主图"}
+        <label
+          className={`flex min-w-0 flex-1 items-start gap-2 ${
+            disabled ? "cursor-not-allowed" : "cursor-pointer"
+          }`}
+        >
+          <input
+            type="checkbox"
+            checked={checked}
+            disabled={disabled}
+            onChange={() => {
+              if (!disabled) onToggle(factor.name);
+            }}
+            className="mt-0.5 accent-[var(--desk-accent)] disabled:cursor-not-allowed"
+          />
+          <span className="min-w-0 leading-snug">
+            <span className="block truncate">{factor.label}</span>
+            <span className="block truncate text-[10px] text-[var(--desk-mist)]">
+              {factor.name}
+              {factor.plot === "panel" ? " · 副图" : " · 主图"}
+            </span>
           </span>
-        </span>
-      </label>
+        </label>
+        {canExplain ? (
+          <button
+            type="button"
+            className="mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[10px] text-[var(--desk-mist)] underline-offset-2 hover:text-[var(--desk-accent)] hover:underline"
+            onClick={(event) => {
+              event.preventDefault();
+              onExplain?.(factor);
+            }}
+            aria-label={`说明 ${factor.label}`}
+          >
+            说明
+          </button>
+        ) : null}
+      </div>
     </li>
   );
 }
