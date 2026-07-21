@@ -129,8 +129,8 @@ npm run dev
 ### 4. 分开启动（可选）
 
 ```powershell
-# API（仓库根目录，已激活 venv）
-python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000 --app-dir apps/api
+# API（仓库根目录，已激活 venv；监视 apps/api + packages）
+python -m uvicorn app.main:app --reload --reload-dir apps/api --reload-dir packages --host 127.0.0.1 --port 8000 --app-dir apps/api
 
 # 前端
 cd apps/web

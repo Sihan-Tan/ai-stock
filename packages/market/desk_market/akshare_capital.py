@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
+import warnings
 from datetime import date, timedelta
 from io import BytesIO
 from typing import Any
@@ -372,7 +373,15 @@ class AkshareCapitalClient:
                 timeout=self._timeout,
             )
             response.raise_for_status()
-            frame = pd.read_excel(BytesIO(response.content), dtype=str)
+            # 深交所导出的 xlsx 常无默认样式，openpyxl 会刷 UserWarning
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore",
+                    message="Workbook contains no default style",
+                    category=UserWarning,
+                    module="openpyxl",
+                )
+                frame = pd.read_excel(BytesIO(response.content), dtype=str)
         except Exception as exc:  # noqa: BLE001
             logger.debug("szse margin %s %s failed: %s", code, day, exc)
             return None

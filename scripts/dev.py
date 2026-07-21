@@ -153,13 +153,27 @@ def main() -> int:
         signal.signal(signal.SIGTERM, _on_signal)
 
     env = os.environ.copy()
-    # 保证可从仓库根导入 app（uvicorn --app-dir）
+    # 监视 apps/api + packages，改业务代码即可自动重载（无需手动重启）
     api_cmd = [
         python_exe,
         "-m",
         "uvicorn",
         "app.main:app",
         "--reload",
+        "--reload-dir",
+        str(API_DIR),
+        "--reload-dir",
+        str(ROOT / "packages"),
+        "--reload-exclude",
+        ".venv",
+        "--reload-exclude",
+        "node_modules",
+        "--reload-exclude",
+        "__pycache__",
+        "--reload-exclude",
+        "data",
+        "--reload-exclude",
+        ".git",
         "--host",
         API_HOST,
         "--port",
@@ -174,6 +188,7 @@ def main() -> int:
 
     print(f"[dev] API  → http://{API_HOST}:{API_PORT}/health  (docs: /docs)")
     print(f"[dev] Web → http://{API_HOST}:{WEB_PORT}/")
+    print("[dev] 改 apps/api 或 packages 下 Python 代码会自动重载")
     print("[dev] Ctrl+C 同时停止两者\n")
 
     creationflags = 0
