@@ -717,7 +717,15 @@ class StrategyRegistry:
 
     @staticmethod
     def _yaml_on_bar(data: dict[str, Any], ctx: Any) -> list[Signal]:
-        """极简 YAML 规则：当 sma_fast > sma_slow 买入，反之卖出。"""
+        """YAML 规则：factor_rules 通用求值；否则兼容旧 sma_fast/sma_slow。"""
+        kind = str(data.get("kind") or "").strip().lower()
+        if kind == "factor_rules" or (
+            isinstance(data.get("buy"), dict) and "conditions" in (data.get("buy") or {})
+        ):
+            from desk_strategy.factor_rules import eval_factor_rules
+
+            return eval_factor_rules(data, ctx)
+
         row = ctx.get("row") if isinstance(ctx, dict) else getattr(ctx, "row", {})
         when = data.get("when") or {}
         fast = int((when.get("sma_fast") or {}).get("period", 5))

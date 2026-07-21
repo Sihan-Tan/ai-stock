@@ -287,6 +287,9 @@ export default function Strategies({ setLog }: PageLogProps) {
             <Button size="sm" variant="primary" isDisabled={busy} onPress={() => void evaluate()}>
               {busy ? "评估中…" : "评估并迁移"}
             </Button>
+            <Button size="sm" variant="secondary" onPress={() => navigate("/strategies/new/rules")}>
+              新建规则策略
+            </Button>
             <Button size="sm" variant="primary" onPress={() => navigate("/strategies/new")}>
               新增策略
             </Button>
@@ -454,7 +457,14 @@ export default function Strategies({ setLog }: PageLogProps) {
                                 aria-label={`${row.id} 操作菜单`}
                                 onAction={(key) => {
                                   if (key === "edit") {
-                                    navigate(`/strategies/${encodeURIComponent(row.id)}/edit`);
+                                    const isRules =
+                                      typeof row.yaml_body === "string" &&
+                                      /kind:\s*factor_rules/.test(row.yaml_body);
+                                    navigate(
+                                      isRules
+                                        ? `/strategies/${encodeURIComponent(row.id)}/edit/rules`
+                                        : `/strategies/${encodeURIComponent(row.id)}/edit`
+                                    );
                                   } else if (key === "delete") {
                                     void remove(row);
                                   }

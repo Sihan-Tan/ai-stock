@@ -19,6 +19,7 @@ import StockDetail from "./pages/StockDetail";
 import Backtest from "./pages/Backtest";
 import Strategies from "./pages/Strategies";
 import StrategyEdit from "./pages/StrategyEdit";
+import StrategyRuleBuilder from "./pages/StrategyRuleBuilder";
 import Watchlist from "./pages/Watchlist";
 import { readStoredTheme } from "./theme/theme";
 
@@ -75,9 +76,14 @@ export default function App() {
         <Route path="/calendar" element={<Calendar setLog={setLog} />} />
         <Route path="/strategies" element={<Strategies setLog={setLog} />} />
         <Route path="/strategies/new" element={<StrategyEdit setLog={setLog} />} />
+        <Route path="/strategies/new/rules" element={<StrategyRuleBuilder setLog={setLog} />} />
         <Route
           path="/strategies/:strategyId/edit"
           element={<StrategyEdit setLog={setLog} />}
+        />
+        <Route
+          path="/strategies/:strategyId/edit/rules"
+          element={<StrategyRuleBuilder setLog={setLog} />}
         />
         <Route path="/backtest" element={<Backtest setLog={setLog} />} />
         <Route path="/factors" element={<Factors setLog={setLog} />} />
