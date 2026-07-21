@@ -12,6 +12,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   price: "价格变换",
   statistic: "统计",
   math: "数学",
+  ml: "机器学习",
   other: "其他",
 };
 

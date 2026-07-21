@@ -122,6 +122,32 @@ def _ensure_position_strategy_columns() -> None:
         )
 
 
+def _ensure_lhb_pct_chg_column() -> None:
+    """已有库补列：lhb_daily.pct_chg（上榜日涨跌幅）。"""
+    engine = get_engine()
+    dialect = engine.dialect.name
+    if dialect == "sqlite":
+        _ensure_sqlite_column("lhb_daily", "pct_chg", "FLOAT")
+        return
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE lhb_daily ADD COLUMN IF NOT EXISTS pct_chg FLOAT"))
+
+
+def _ensure_ml_as_factor_column() -> None:
+    """已有库补列：ml_models.as_factor（是否已纳入因子目录）。"""
+    engine = get_engine()
+    dialect = engine.dialect.name
+    if dialect == "sqlite":
+        _ensure_sqlite_column("ml_models", "as_factor", "BOOLEAN DEFAULT 0")
+        return
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "ALTER TABLE ml_models ADD COLUMN IF NOT EXISTS as_factor BOOLEAN NOT NULL DEFAULT FALSE"
+            )
+        )
+
+
 def try_ensure_schema() -> bool:
     """
     尝试 create_all；失败只记日志，不抛出。
@@ -134,6 +160,14 @@ def try_ensure_schema() -> bool:
             _ensure_position_strategy_columns()
         except Exception as exc:  # noqa: BLE001
             logger.warning("补齐 positions.strategy_id 失败：%s", exc)
+        try:
+            _ensure_lhb_pct_chg_column()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("补齐 lhb_daily.pct_chg 失败：%s", exc)
+        try:
+            _ensure_ml_as_factor_column()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("补齐 ml_models.as_factor 失败：%s", exc)
         return True
     except Exception as exc:  # noqa: BLE001
         logger.warning("数据库不可达或建表失败，服务仍继续启动：%s", exc)

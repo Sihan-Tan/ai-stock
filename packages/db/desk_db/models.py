@@ -228,6 +228,8 @@ class LhbDaily(Base):
     name: Mapped[str] = mapped_column(String(64), default="")
     reason: Mapped[str] = mapped_column(String(128), default="")
     net_buy: Mapped[float] = mapped_column(Float, default=0.0)
+    # 上榜日涨跌幅（百分数，如 5.2 表示 +5.2%）
+    pct_chg: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
 class LhbSeat(Base):
@@ -414,6 +416,7 @@ class MlModel(Base):
     path: Mapped[str] = mapped_column(String(256))
     metrics_json: Mapped[str] = mapped_column(Text, default="{}")
     features_json: Mapped[str] = mapped_column(Text, default="[]")
+    as_factor: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 

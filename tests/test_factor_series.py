@@ -62,6 +62,53 @@ def test_compute_series_unknown_name():
         FactorService().compute_series_from_df(_bars(30), ["NOPE"])
 
 
+def test_warmup_calendar_days_covers_sma60():
+    from desk_factor import warmup_calendar_days
+
+    days = warmup_calendar_days(["SMA_60", "MACD"])
+    assert days >= 120
+
+
+def test_slice_series_result_keeps_visible_window():
+    from desk_factor import slice_series_result
+
+    raw = FactorService().compute_series_from_df(_bars(80), ["SMA_20"])
+    # _bars 从 2024-01-02 起连续日历日
+    trimmed = slice_series_result(raw, date(2024, 2, 1), date(2024, 2, 20))
+    dates = [b["date"] for b in trimmed["bars"]]
+    assert dates[0] >= "2024-02-01"
+    assert dates[-1] <= "2024-02-20"
+    assert len(trimmed["series"]["SMA_20"]["outputs"]["sma_20"]) == len(dates)
+
+
+def test_compute_series_warmup_left_edge_valid(_db):
+    """可见窗口左端 SMA_20 应已有值（预热段已裁掉）。"""
+    symbol = "600519.SH"
+    end = date.today()
+    visible_start = end - timedelta(days=40)
+    # 写入足够长历史，含预热
+    n = 200
+    rows = [
+        _full_bar_row(end - timedelta(days=n - 1 - i), close=100.0 + i * 0.5)
+        for i in range(n)
+    ]
+    assert _seed_daily_bars(symbol, rows) == n
+
+    db = get_session_factory()()
+    try:
+        out = FactorService(db).compute_series(
+            symbol, ["SMA_20"], start=visible_start, end=end
+        )
+    finally:
+        db.close()
+
+    assert out["bars"]
+    assert out["bars"][0]["date"] >= visible_start.isoformat()
+    left = out["series"]["SMA_20"]["outputs"]["sma_20"][0]["v"]
+    assert left is not None
+    assert isinstance(left, float)
+
+
 # --- API tests ---
 
 from fastapi.testclient import TestClient
