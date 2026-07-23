@@ -175,6 +175,46 @@ def test_seed_paper_position_api(client):
     assert any(p["symbol"] == "600519.SH" and p["qty"] == 100 for p in paper["positions"])
 
 
+def test_sell_paper_position_api(client):
+    """POST /api/broker/paper/sell 可全平持仓。"""
+    seed = client.post(
+        "/api/broker/paper/seed",
+        json={"symbol": "600000", "price": 10.0, "qty": 200},
+    )
+    assert seed.status_code == 200, seed.text
+    assert seed.json()["status"] == "filled", seed.json()
+
+    sell = client.post(
+        "/api/broker/paper/sell",
+        json={"symbol": "600000", "price": 10.5, "qty": 200},
+    )
+    assert sell.status_code == 200, sell.text
+    body = sell.json()
+    assert body["status"] == "filled", body
+    assert body["symbol"] == "600000.SH"
+    assert body["qty"] == 200
+
+    paper = client.get("/api/broker/paper").json()
+    assert not any(p["symbol"] == "600000.SH" and p["qty"] > 0 for p in paper["positions"])
+
+
+def test_sell_paper_partial_qty(client):
+    """卖出可指定部分数量。"""
+    seed = client.post(
+        "/api/broker/paper/seed",
+        json={"symbol": "601318", "price": 50.0, "qty": 300},
+    )
+    assert seed.json()["status"] == "filled", seed.json()
+    sell = client.post(
+        "/api/broker/paper/sell",
+        json={"symbol": "601318", "price": 51.0, "qty": 100},
+    )
+    assert sell.json()["status"] == "filled", sell.json()
+    paper = client.get("/api/broker/paper").json()
+    held = next(p for p in paper["positions"] if p["symbol"] == "601318.SH")
+    assert held["qty"] == 200
+
+
 def test_max_positions_blocks_new_symbol(db: Session, monkeypatch):
     """达到最多持仓只数后，买入新标的被拒；加仓已有标的仍可通过。"""
     monkeypatch.setenv("RISK_MAX_POSITIONS", "1")

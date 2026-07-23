@@ -117,6 +117,13 @@ export default function Paper({ setLog }: PageLogProps) {
   const [seedQtyMode, setSeedQtyMode] = useState<"shares" | "pct">("shares");
   const [seedQty, setSeedQty] = useState("100");
   const [seedPct, setSeedPct] = useState("10");
+  const [sellOpen, setSellOpen] = useState<{
+    symbol: string;
+    name: string;
+    qty: number;
+    last: number;
+  } | null>(null);
+  const [sellQty, setSellQty] = useState("");
   const [stratModal, setStratModal] = useState<{
     symbol: string;
     name: string;
@@ -201,16 +208,17 @@ export default function Paper({ setLog }: PageLogProps) {
   }, []);
 
   useEffect(() => {
-    if (!seedOpen && !stratModal) return;
+    if (!seedOpen && !stratModal && !sellOpen) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         if (seedOpen) setSeedOpen(false);
         if (stratModal) setStratModal(null);
+        if (sellOpen) setSellOpen(null);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [seedOpen, stratModal]);
+  }, [seedOpen, stratModal, sellOpen]);
 
   useEffect(() => {
     if (!stratModal) return;
@@ -593,6 +601,78 @@ export default function Paper({ setLog }: PageLogProps) {
     }
   };
 
+  /**
+   * 打开卖出弹框（默认全平）。
+   * @param row 持仓行
+   */
+  const openSellModal = (row: {
+    symbol: string;
+    name: string;
+    qty: number;
+    last: number;
+    pending?: boolean;
+  }) => {
+    if (row.pending || row.qty <= 0) {
+      setLog("无可卖持仓");
+      return;
+    }
+    setSellOpen({
+      symbol: row.symbol,
+      name: row.name,
+      qty: row.qty,
+      last: row.last,
+    });
+    setSellQty(String(row.qty));
+  };
+
+  /**
+   * 确认卖出：调用 /api/broker/paper/sell。
+   */
+  const confirmSell = async () => {
+    if (!sellOpen) return;
+    const qty = Number(sellQty);
+    if (!Number.isFinite(qty) || qty <= 0) {
+      setLog("请填写有效卖出数量");
+      return;
+    }
+    if (qty > sellOpen.qty) {
+      setLog(`卖出数量不能超过持仓 ${sellOpen.qty}`);
+      return;
+    }
+    setBusy(true);
+    try {
+      const result = await api<{
+        status: string;
+        symbol?: string;
+        qty?: number;
+        price?: number;
+        message?: string;
+      }>("/api/broker/paper/sell", {
+        method: "POST",
+        body: JSON.stringify({
+          symbol: sellOpen.symbol,
+          qty,
+          price: sellOpen.last > 0 ? sellOpen.last : undefined,
+        }),
+      });
+      if (result.status === "filled") {
+        setSellOpen(null);
+        setLog(
+          `已卖出 ${result.symbol || sellOpen.symbol} × ${result.qty ?? qty} @ ${
+            result.price != null ? Number(result.price).toFixed(2) : "—"
+          }`
+        );
+      } else {
+        setLog(`卖出失败: ${result.message || result.status}`);
+      }
+      await refresh();
+    } catch (error) {
+      setLog(String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const resetPaper = async () => {
     setBusy(true);
     try {
@@ -952,6 +1032,7 @@ export default function Paper({ setLog }: PageLogProps) {
                           "市值",
                           "浮盈/亏",
                           "盈亏%",
+                          "操作",
                         ].map((h) => (
                           <th key={h} className="px-2 py-2 font-medium">
                             {h}
@@ -962,7 +1043,7 @@ export default function Paper({ setLog }: PageLogProps) {
                     <tbody>
                       {positions.length === 0 && (
                         <tr>
-                          <td colSpan={9} className="px-2 py-8 text-center text-[var(--desk-mist)]">
+                          <td colSpan={10} className="px-2 py-8 text-center text-[var(--desk-mist)]">
                             暂无持仓，点击「添加股票」建仓
                           </td>
                         </tr>
@@ -1026,6 +1107,20 @@ export default function Paper({ setLog }: PageLogProps) {
                           </td>
                           <td className={`px-2 py-2.5 font-mono ${pnlClass(p.pnlPct)}`}>
                             {p.pending ? "—" : `${fmtSigned(p.pnlPct, 2)}%`}
+                          </td>
+                          <td className="px-2 py-2.5">
+                            {!p.pending && p.qty > 0 ? (
+                              <button
+                                type="button"
+                                className="text-xs text-[var(--danger)] underline-offset-2 hover:underline disabled:opacity-50"
+                                disabled={busy}
+                                onClick={() => openSellModal(p)}
+                              >
+                                卖出
+                              </button>
+                            ) : (
+                              <span className="text-xs text-[var(--desk-mist)]">—</span>
+                            )}
                           </td>
                         </tr>
                       ))}
@@ -1611,6 +1706,80 @@ export default function Paper({ setLog }: PageLogProps) {
               </Button>
               <Button size="sm" variant="primary" isDisabled={busy} onPress={() => void confirmSeed()}>
                 {busy ? "提交中…" : "确认建仓"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {sellOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <button
+            type="button"
+            className="absolute inset-0 cursor-default bg-black/50"
+            aria-label="关闭卖出"
+            onClick={() => setSellOpen(null)}
+          />
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="卖出持仓"
+            className="relative z-10 w-full max-w-md rounded-xl border border-[var(--desk-line)] bg-[var(--desk-panel)] p-5 shadow-2xl"
+          >
+            <div className="mb-4 flex items-start justify-between gap-3">
+              <div>
+                <h2 className="text-base font-medium text-[var(--desk-text)]">卖出持仓</h2>
+                <p className="mt-1 text-xs text-[var(--desk-mist)]">
+                  {sellOpen.name} · {sellOpen.symbol} · 持仓 {fmtNum(sellOpen.qty, 0)} 股 · 参考价{" "}
+                  {fmtNum(sellOpen.last)}
+                </p>
+              </div>
+              <Button size="sm" variant="ghost" onPress={() => setSellOpen(null)}>
+                关闭
+              </Button>
+            </div>
+            <div className="space-y-3">
+              <label className="block space-y-1 text-xs text-[var(--desk-mist)]">
+                卖出数量
+                <input
+                  type="number"
+                  min={1}
+                  step={1}
+                  max={sellOpen.qty}
+                  value={sellQty}
+                  onChange={(e) => setSellQty(e.target.value)}
+                  className={symbolInputClass}
+                  aria-label="卖出股数"
+                />
+              </label>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onPress={() => setSellQty(String(sellOpen.qty))}
+                >
+                  全部卖出
+                </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onPress={() =>
+                    setSellQty(String(Math.max(1, Math.floor(sellOpen.qty / 2))))
+                  }
+                >
+                  卖一半
+                </Button>
+              </div>
+              <p className="text-[10px] text-[var(--desk-mist)]">
+                按当前参考价市价成交；卖出不受单笔限额与策略阶段限制
+              </p>
+            </div>
+            <div className="mt-5 flex justify-end gap-2">
+              <Button size="sm" variant="secondary" onPress={() => setSellOpen(null)}>
+                取消
+              </Button>
+              <Button size="sm" variant="primary" isDisabled={busy} onPress={() => void confirmSell()}>
+                {busy ? "提交中…" : "确认卖出"}
               </Button>
             </div>
           </div>

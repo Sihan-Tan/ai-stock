@@ -62,6 +62,14 @@ class PaperPositionStrategyIn(BaseModel):
     strategy_id: str
 
 
+class PaperSellIn(BaseModel):
+    """模拟盘手动卖出。"""
+
+    symbol: str
+    qty: float | None = None
+    price: float | None = None
+
+
 class RiskIn(BaseModel):
     armed: bool | None = None
     kill_switch: bool | None = None
@@ -129,6 +137,31 @@ def paper_seed(body: PaperSeedIn, db: Session = Depends(get_db)):
         strategy_id=body.strategy_id,
         capital_pct=body.capital_pct,
     )
+
+
+@router.post("/paper/sell")
+def paper_sell(body: PaperSellIn, db: Session = Depends(get_db)):
+    """
+    模拟盘手动卖出持仓（默认全平；可指定数量）。
+
+    价格优先用请求值，否则盘中快照 / 日线 / 成本价。
+    """
+    from desk_common.symbols import normalize_symbol
+
+    sym = normalize_symbol(body.symbol)
+    price = body.price
+    if price is None or float(price) <= 0:
+        try:
+            from app.routes.market import get_market_data
+
+            snap = (get_market_data().get_snapshots([sym]) or {}).get(sym) or {}
+            last = snap.get("last")
+            if last is not None and float(last) > 0:
+                price = float(last)
+        except Exception:  # noqa: BLE001
+            price = None
+
+    return get_gate(db).sell_paper_position(sym, qty=body.qty, price=price)
 
 
 @router.post("/paper/positions/{symbol}/strategy")

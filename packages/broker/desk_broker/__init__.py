@@ -838,8 +838,13 @@ class BrokerGateway:
         is_seed_paper = intent.mode == "paper" and (intent.client_order_id or "").startswith(
             "seed|"
         )
+        is_close_paper = intent.mode == "paper" and (intent.client_order_id or "").startswith(
+            "close|"
+        )
         is_manual_paper = intent.mode == "paper" and (
-            (intent.strategy_id or "").strip() == MANUAL_PAPER_STRATEGY_ID or is_seed_paper
+            (intent.strategy_id or "").strip() == MANUAL_PAPER_STRATEGY_ID
+            or is_seed_paper
+            or is_close_paper
         )
         pos_reason = self.risk.check_max_positions(
             intent, held_symbols=self._held_symbols(intent.mode)
@@ -1047,6 +1052,82 @@ class BrokerGateway:
             "qty": final_qty,
             "price": px,
             "strategy_id": sid,
+            "client_order_id": result.client_order_id,
+            "filled_qty": result.filled_qty,
+            "avg_price": result.avg_price,
+            "message": result.message,
+        }
+
+    def sell_paper_position(
+        self,
+        symbol: str,
+        *,
+        qty: float | None = None,
+        price: float | None = None,
+    ) -> dict:
+        """
+        监控页手动卖出：按持仓数量（默认全平）市价卖出。
+
+        ``client_order_id`` 以 ``close|`` 开头，豁免单笔金额限额；卖出不受生命周期闸门约束。
+
+        @param symbol: 原始代码
+        @param qty: 卖出股数；None 或超限则全平
+        @param price: 成交价；None 则取快照/日线/成本
+        @returns: 含 order 结果的字典
+        """
+        from desk_common.symbols import normalize_symbol
+
+        sym = normalize_symbol(symbol)
+        acc = self.paper._ensure_account()
+        pos = self.db.scalar(
+            select(PaperPosition).where(
+                PaperPosition.account_id == acc.id, PaperPosition.symbol == sym
+            )
+        )
+        held = float(pos.qty) if pos else 0.0
+        if held <= 0:
+            return {
+                "status": "rejected",
+                "symbol": sym,
+                "message": "无可用持仓",
+            }
+
+        want = float(qty) if qty is not None and float(qty) > 0 else held
+        sell_qty = min(want, held)
+        if sell_qty <= 0:
+            return {
+                "status": "rejected",
+                "symbol": sym,
+                "message": "卖出数量无效",
+            }
+
+        px = price if price is not None and float(price) > 0 else None
+        if px is None:
+            px = self.paper._last_price(sym, fallback=float(pos.cost) if pos else 10.0)
+        px = float(px or (pos.cost if pos else 10.0) or 10.0)
+        if px <= 0:
+            return {
+                "status": "rejected",
+                "symbol": sym,
+                "message": "无法解析价格，请手动指定 price",
+            }
+
+        result = self.place_order(
+            OrderIntent(
+                symbol=sym,
+                side=Side.SELL,
+                qty=sell_qty,
+                price=px,
+                client_order_id=f"close|manual|{sym}|{uuid4().hex[:10]}",
+                strategy_id=MANUAL_PAPER_STRATEGY_ID,
+                mode="paper",
+            )
+        )
+        return {
+            "status": result.status,
+            "symbol": sym,
+            "qty": sell_qty,
+            "price": px,
             "client_order_id": result.client_order_id,
             "filled_qty": result.filled_qty,
             "avg_price": result.avg_price,
