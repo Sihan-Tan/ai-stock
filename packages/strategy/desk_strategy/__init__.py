@@ -152,6 +152,12 @@ class StrategyRegistry:
         """
         data = yaml.safe_load(doc) if isinstance(doc, str) else doc
         sid = str(data["id"])
+        # 字符串入参保留原文，避免 safe_dump 重排键导致前端规则构建器解析丢条件
+        body_text = (
+            doc
+            if isinstance(doc, str)
+            else yaml.safe_dump(data, allow_unicode=True, sort_keys=False)
+        )
         meta = StrategyMeta(
             id=sid,
             name=data.get("name", sid),
@@ -159,7 +165,7 @@ class StrategyRegistry:
             version=str(data.get("version", "v0.1")),
             status=status,  # type: ignore[arg-type]
             lifecycle_stage="incubating",
-            yaml_body=yaml.safe_dump(data, allow_unicode=True),
+            yaml_body=body_text,
             params=data.get("params") or {},
         )
         self._upsert_row(meta, reset_lifecycle=reset_lifecycle)

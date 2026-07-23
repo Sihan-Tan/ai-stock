@@ -11,6 +11,8 @@ export type FactorMeta = {
   enabled: boolean;
   /** 对应 TA-Lib 函数名 */
   talib?: string;
+  /** 中文说明（展示用） */
+  description?: string;
 };
 
 export type FactorPoint = { date: string; v: number | null };

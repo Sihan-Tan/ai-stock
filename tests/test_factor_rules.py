@@ -153,3 +153,51 @@ def test_yaml_on_bar_dispatches_factor_rules():
         data, {"row": {"symbol": "UT.SH"}, "history": _ohlcv(closes)}
     )
     assert len(out) == 1 and out[0].side == Side.BUY
+
+
+def test_near_pct_close_within_sma20():
+    """收盘贴近预置 SMA_20 列 ±3% 时触发买。"""
+    hist = _ohlcv([10.0] * 40)
+    # 末根收盘 10.2，SMA_20=10 → 偏离 2% ≤ 3%
+    hist.loc[hist.index[-1], "close"] = 10.2
+    hist["sma_20"] = 10.0
+    data = {
+        "kind": "factor_rules",
+        "buy": {
+            "combine": "all",
+            "conditions": [
+                {
+                    "op": "near_pct",
+                    "left": {"factor": "CLOSE"},
+                    "right": {"factor": "SMA_20"},
+                    "pct": 3,
+                },
+            ],
+        },
+        "sell": {"combine": "all", "conditions": []},
+    }
+    out = eval_factor_rules(data, {"row": {"symbol": "UT.SH"}, "history": hist})
+    assert len(out) == 1 and out[0].side == Side.BUY
+
+
+def test_near_pct_outside_band_no_signal():
+    """偏离超过 pct 时不触发。"""
+    hist = _ohlcv([10.0] * 40)
+    hist.loc[hist.index[-1], "close"] = 11.0  # 10%
+    hist["sma_20"] = 10.0
+    data = {
+        "kind": "factor_rules",
+        "buy": {
+            "combine": "all",
+            "conditions": [
+                {
+                    "op": "near_pct",
+                    "left": {"factor": "CLOSE"},
+                    "right": {"factor": "SMA_20"},
+                    "pct": 3,
+                },
+            ],
+        },
+        "sell": {"combine": "all", "conditions": []},
+    }
+    assert eval_factor_rules(data, {"row": {"symbol": "UT.SH"}, "history": hist}) == []

@@ -13,6 +13,8 @@ type RuleCondition = {
   op: string;
   left: Operand;
   right: Operand;
+  /** near_pct 专用：±百分比，默认 3 */
+  pct?: number;
 };
 
 type RuleSide = {
@@ -37,6 +39,7 @@ const OPS: ReadonlyArray<{ value: string; label: string }> = [
   { value: "eq", label: "=" },
   { value: "cross_up", label: "上穿" },
   { value: "cross_down", label: "下穿" },
+  { value: "near_pct", label: "贴近(±%)" },
 ];
 
 const controlClass =
@@ -47,9 +50,10 @@ const controlClass =
  */
 function emptyCondition(): RuleCondition {
   return {
-    op: "gt",
-    left: { kind: "factor", factor: "SMA_5" },
+    op: "near_pct",
+    left: { kind: "factor", factor: "CLOSE" },
     right: { kind: "factor", factor: "SMA_20" },
+    pct: 3,
   };
 }
 
@@ -127,6 +131,10 @@ export function dumpFactorRulesYaml(doc: RuleDoc): string {
       lines.push(dumpOperand(cond.left, "        "));
       lines.push(`      right:`);
       lines.push(dumpOperand(cond.right, "        "));
+      if (cond.op === "near_pct") {
+        const pct = Number.isFinite(cond.pct) ? Number(cond.pct) : 3;
+        lines.push(`      pct: ${pct}`);
+      }
     }
   };
 
@@ -136,7 +144,7 @@ export function dumpFactorRulesYaml(doc: RuleDoc): string {
 }
 
 /**
- * 从 YAML 文本尽力解析规则文档（仅支持本构建器产出格式）。
+ * 从 YAML 文本尽力解析规则文档（兼容构建器产出与 PyYAML safe_dump）。
  * @param text YAML
  */
 export function parseFactorRulesYaml(text: string): RuleDoc | null {
@@ -153,26 +161,30 @@ export function parseFactorRulesYaml(text: string): RuleDoc | null {
    * @param section buy|sell
    */
   const parseSide = (section: "buy" | "sell"): RuleSide => {
-    const side = section === "buy" ? { ...base.buy, conditions: [] as RuleCondition[] } : { ...base.sell, conditions: [] as RuleCondition[] };
-    const blockRe = new RegExp(`(?:^|\\n)${section}:\\n([\\s\\S]*?)(?=\\n(?:buy|sell):|\\s*$)`);
+    const side =
+      section === "buy"
+        ? { ...base.buy, conditions: [] as RuleCondition[] }
+        : { ...base.sell, conditions: [] as RuleCondition[] };
+    const blockRe = new RegExp(`(?:^|\\n)${section}:\\n([\\s\\S]*?)(?=\\n(?:buy|sell|id|name|version|kind|params):|\\s*$)`);
     const block = text.match(blockRe)?.[1] ?? "";
     const combineM = block.match(/combine:\s*(all|any)/);
     if (combineM) side.combine = combineM[1] as "all" | "any";
-    const condBlocks = block.split(/\n\s*-\s+op:\s*/).slice(1);
+    if (/conditions:\s*\[\s*\]/.test(block)) {
+      return side;
+    }
+    // 兼容「- op:」与 PyYAML 键序「- left:」等：按列表项切分
+    const condBlocks = block.split(/\n\s*-\s+/).slice(1);
     for (const raw of condBlocks) {
-      const opM = raw.match(/^([a-z_]+)/);
-      const leftFactor = raw.match(/left:\s*\n\s+factor:\s*(.+)/);
-      const leftConst = raw.match(/left:\s*\n\s+const:\s*([-\d.]+)/);
-      const rightFactor = raw.match(/right:\s*\n\s+factor:\s*(.+)/);
-      const rightConst = raw.match(/right:\s*\n\s+const:\s*([-\d.]+)/);
+      const opM = raw.match(/(?:^|\n)\s*op:\s*([a-z_]+)/) || raw.match(/^op:\s*([a-z_]+)/m);
+      const left = parseOperand(raw, "left") ?? { kind: "factor" as const, factor: "SMA_5" };
+      const right = parseOperand(raw, "right") ?? { kind: "factor" as const, factor: "SMA_20" };
       const op = opM?.[1] || "gt";
-      const left: Operand = leftConst
-        ? { kind: "const", const: Number(leftConst[1]) }
-        : { kind: "factor", factor: unquote(leftFactor?.[1] || "SMA_5") };
-      const right: Operand = rightConst
-        ? { kind: "const", const: Number(rightConst[1]) }
-        : { kind: "factor", factor: unquote(rightFactor?.[1] || "SMA_20") };
-      side.conditions.push({ op, left, right });
+      const pctM = raw.match(/(?:^|\n)\s*pct:\s*([-\d.]+)/);
+      const cond: RuleCondition = { op, left, right };
+      if (op === "near_pct") {
+        cond.pct = pctM ? Number(pctM[1]) : 3;
+      }
+      side.conditions.push(cond);
     }
     return side;
   };
@@ -180,6 +192,35 @@ export function parseFactorRulesYaml(text: string): RuleDoc | null {
   base.buy = parseSide("buy");
   base.sell = parseSide("sell");
   return base;
+}
+
+/**
+ * 解析条件中的 left/right 操作数（支持多行与 {factor|const: ...} 流式写法）。
+ * @param raw 单条条件文本
+ * @param side left|right
+ */
+function parseOperand(raw: string, side: "left" | "right"): Operand | null {
+  const flowFactor = raw.match(
+    new RegExp(`${side}:\\s*\\{\\s*factor:\\s*([^,}]+)\\s*\\}`)
+  );
+  if (flowFactor) {
+    return { kind: "factor", factor: unquote(flowFactor[1]) };
+  }
+  const flowConst = raw.match(
+    new RegExp(`${side}:\\s*\\{\\s*const:\\s*([-\\d.]+)\\s*\\}`)
+  );
+  if (flowConst) {
+    return { kind: "const", const: Number(flowConst[1]) };
+  }
+  const factorM = raw.match(new RegExp(`${side}:\\s*\\n\\s+factor:\\s*(.+)`));
+  if (factorM) {
+    return { kind: "factor", factor: unquote(factorM[1]) };
+  }
+  const constM = raw.match(new RegExp(`${side}:\\s*\\n\\s+const:\\s*([-\\d.]+)`));
+  if (constM) {
+    return { kind: "const", const: Number(constM[1]) };
+  }
+  return null;
 }
 
 /**
@@ -195,12 +236,17 @@ function unquote(raw: string): string {
 }
 
 /**
- * 规则构建器因子下拉文案：因子名（说明）。
+ * 规则构建器因子下拉文案：因子名（中文说明）。
  * @param name 因子名
- * @param label 说明（API label）
+ * @param label 短标签
+ * @param description 中文说明（优先）
  */
-export function formatFactorOptionLabel(name: string, label: string): string {
-  const tip = (label || "").trim();
+export function formatFactorOptionLabel(
+  name: string,
+  label: string,
+  description?: string
+): string {
+  const tip = (description || label || "").trim();
   if (!tip || tip === name) return name;
   return `${name}（${tip}）`;
 }
@@ -224,7 +270,7 @@ export default function StrategyRuleBuilder({ setLog }: PageLogProps) {
         .filter((f) => f.enabled)
         .map((f) => ({
           value: f.name,
-          label: formatFactorOptionLabel(f.name, f.label),
+          label: formatFactorOptionLabel(f.name, f.label, f.description),
         })),
     [factors]
   );
@@ -417,8 +463,19 @@ function RuleSideEditor({
                 className={controlClass}
                 value={cond.op}
                 onChange={(e) => {
+                  const op = e.target.value;
                   const conditions = [...side.conditions];
-                  conditions[index] = { ...cond, op: e.target.value };
+                  const next: RuleCondition = { ...cond, op };
+                  if (op === "near_pct") {
+                    next.pct = Number.isFinite(cond.pct) ? Number(cond.pct) : 3;
+                    if (next.right.kind === "const") {
+                      next.right = { kind: "factor", factor: "SMA_20" };
+                    }
+                    if (next.left.kind === "const") {
+                      next.left = { kind: "factor", factor: "CLOSE" };
+                    }
+                  }
+                  conditions[index] = next;
                   onChange({ ...side, conditions });
                 }}
                 aria-label="算子"
@@ -432,12 +489,32 @@ function RuleSideEditor({
               <OperandEditor
                 value={cond.right}
                 factorOptions={factorOptions}
+                forceFactor={cond.op === "near_pct"}
                 onChange={(right) => {
                   const conditions = [...side.conditions];
                   conditions[index] = { ...cond, right };
                   onChange({ ...side, conditions });
                 }}
               />
+              {cond.op === "near_pct" ? (
+                <label className="flex items-center gap-1 text-xs text-[var(--desk-mist)]">
+                  ±
+                  <input
+                    type="number"
+                    min={0}
+                    step={0.1}
+                    className={`${controlClass} w-20 font-mono`}
+                    value={Number.isFinite(cond.pct) ? cond.pct : 3}
+                    onChange={(e) => {
+                      const conditions = [...side.conditions];
+                      conditions[index] = { ...cond, pct: Number(e.target.value) };
+                      onChange({ ...side, conditions });
+                    }}
+                    aria-label="贴近百分比"
+                  />
+                  %
+                </label>
+              ) : null}
               <button
                 type="button"
                 className="text-xs text-[var(--desk-mist)] hover:text-[var(--danger)]"
@@ -471,32 +548,38 @@ function OperandEditor({
   value,
   factorOptions,
   onChange,
+  forceFactor = false,
 }: {
   value: Operand;
   factorOptions: Array<{ value: string; label: string }>;
   onChange: (next: Operand) => void;
+  /** near_pct 右侧强制因子 */
+  forceFactor?: boolean;
 }) {
+  const kind = forceFactor ? "factor" : value.kind;
   return (
     <div className="flex min-w-[140px] flex-1 flex-wrap items-center gap-1.5">
-      <select
-        className={controlClass}
-        value={value.kind}
-        onChange={(e) => {
-          if (e.target.value === "const") {
-            onChange({ kind: "const", const: value.kind === "const" ? value.const : 30 });
-          } else {
-            onChange({
-              kind: "factor",
-              factor: value.kind === "factor" ? value.factor : "SMA_5",
-            });
-          }
-        }}
-        aria-label="操作数类型"
-      >
-        <option value="factor">因子</option>
-        <option value="const">常数</option>
-      </select>
-      {value.kind === "const" ? (
+      {forceFactor ? null : (
+        <select
+          className={controlClass}
+          value={value.kind}
+          onChange={(e) => {
+            if (e.target.value === "const") {
+              onChange({ kind: "const", const: value.kind === "const" ? value.const : 30 });
+            } else {
+              onChange({
+                kind: "factor",
+                factor: value.kind === "factor" ? value.factor : "SMA_5",
+              });
+            }
+          }}
+          aria-label="操作数类型"
+        >
+          <option value="factor">因子</option>
+          <option value="const">常数</option>
+        </select>
+      )}
+      {kind === "const" && value.kind === "const" ? (
         <input
           type="number"
           className={`${controlClass} w-24 font-mono`}
@@ -506,10 +589,10 @@ function OperandEditor({
       ) : (
         <select
           className={`${controlClass} min-w-[120px] flex-1`}
-          value={value.factor}
+          value={value.kind === "factor" ? value.factor : "SMA_20"}
           onChange={(e) => onChange({ kind: "factor", factor: e.target.value })}
         >
-          {!factorOptions.some((o) => o.value === value.factor) ? (
+          {value.kind === "factor" && !factorOptions.some((o) => o.value === value.factor) ? (
             <option value={value.factor}>{value.factor}</option>
           ) : null}
           {factorOptions.map((opt) => (

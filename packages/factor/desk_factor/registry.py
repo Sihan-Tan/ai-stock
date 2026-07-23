@@ -22,6 +22,8 @@ class FactorMeta(TypedDict):
     enabled: bool
     # 对应的 TA-Lib 函数名（周期别名会指向真实函数）
     talib: str
+    # 中文说明（展示用；替代 TA-Lib 英文 display_name）
+    description: str
 
 
 # 分组 → 左栏分类 / 主副图
@@ -127,10 +129,14 @@ def _f(
     outputs: list[str] | None = None,
     plot: PlotKind,
     default_enabled: bool = False,
+    description: str | None = None,
 ) -> FactorMeta:
+    from desk_factor.zh_desc import zh_desc_for_talib
+
+    desc = (description or "").strip() or zh_desc_for_talib(talib or name)
     return {
         "name": name,
-        "label": label or name,
+        "label": label or desc or name,
         "category": category,
         "params": params or {},
         "outputs": outputs or [name.lower()],
@@ -138,6 +144,7 @@ def _f(
         "default_enabled": default_enabled,
         "enabled": True,
         "talib": talib,
+        "description": desc,
     }
 
 
@@ -262,6 +269,29 @@ def _build_period_aliases() -> list[FactorMeta]:
     return aliases
 
 
+def _build_price_factors() -> list[FactorMeta]:
+    """OHLCV 伪因子（规则 near_pct 等用；不走 TA-Lib）。"""
+    rows: list[FactorMeta] = []
+    for name, col in (
+        ("CLOSE", "close"),
+        ("OPEN", "open"),
+        ("HIGH", "high"),
+        ("LOW", "low"),
+    ):
+        rows.append(
+            _f(
+                name,
+                talib="",
+                category="price",
+                params={},
+                outputs=[col],
+                plot="overlay",
+                default_enabled=False,
+            )
+        )
+    return rows
+
+
 def _merge_registry() -> list[FactorMeta]:
     by_name: dict[str, FactorMeta] = {}
     for row in _build_canonical():
@@ -276,6 +306,8 @@ def _merge_registry() -> list[FactorMeta]:
         merged = dict(row)
         merged["default_enabled"] = bool(row["default_enabled"] or existing["default_enabled"])
         by_name[row["name"]] = merged  # type: ignore[assignment]
+    for row in _build_price_factors():
+        by_name[row["name"]] = row
     # MACD/STOCH/OBV 正名也要 default_enabled
     for name in ("MACD", "STOCH", "OBV"):
         if name in by_name and name in _DEFAULT_ALIAS_NAMES:

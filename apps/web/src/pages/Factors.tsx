@@ -162,6 +162,8 @@ export default function Factors({ setLog }: PageLogProps) {
   const [trainAddSymbol, setTrainAddSymbol] = useState("");
   /** 登记因子 / 模型说明弹框 */
   const [explainModel, setExplainModel] = useState<RegisteredModel | null>(null);
+  /** TA 因子中文说明弹框 */
+  const [explainFactor, setExplainFactor] = useState<FactorMeta | null>(null);
   const catalogReady = useRef(false);
   /** 序列请求序号，用于丢弃过期响应 */
   const seriesRequestIdRef = useRef(0);
@@ -430,6 +432,12 @@ export default function Factors({ setLog }: PageLogProps) {
                     selected={selected}
                     onToggle={onToggle}
                     onExplain={(factor) => {
+                      const isMl =
+                        factor.category === "ml" || factor.name.startsWith("ml:");
+                      if (!isMl) {
+                        setExplainFactor(factor);
+                        return;
+                      }
                       const mid =
                         typeof factor.params?.model_id === "string"
                           ? factor.params.model_id
@@ -660,6 +668,7 @@ export default function Factors({ setLog }: PageLogProps) {
       </Card>
 
       <RegisteredFactorExplainDialog model={explainModel} onClose={() => setExplainModel(null)} />
+      <TaFactorExplainDialog factor={explainFactor} onClose={() => setExplainFactor(null)} />
     </div>
   );
 }
@@ -794,6 +803,69 @@ function TrainComparisonPanel({ comparison }: { comparison: unknown }) {
         训练集准确率仅作引擎对比参考，存在过拟合可能；上线前请结合回测与样本外验证。
       </p>
     </section>
+  );
+}
+
+/**
+ * TA 因子中文说明弹框。
+ * @param props 因子元数据与关闭回调
+ */
+function TaFactorExplainDialog({
+  factor,
+  onClose,
+}: {
+  factor: FactorMeta | null;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    if (!factor) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [factor, onClose]);
+
+  if (!factor) return null;
+
+  const desc = (factor.description || factor.label || "").trim() || "暂无说明";
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <button
+        type="button"
+        className="absolute inset-0 cursor-default bg-black/50"
+        aria-label="关闭说明"
+        onClick={onClose}
+      />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="ta-factor-explain-title"
+        className="relative z-10 w-full max-w-md rounded-xl border border-[var(--desk-line)] bg-[var(--desk-panel)] shadow-2xl"
+      >
+        <div className="flex items-start justify-between gap-3 border-b border-[var(--desk-line)] px-5 py-4">
+          <div className="min-w-0">
+            <h2
+              id="ta-factor-explain-title"
+              className="text-base font-medium text-[var(--desk-text)]"
+            >
+              因子说明
+            </h2>
+            <p className="mt-1 truncate font-mono text-xs text-[var(--desk-mist)]">{factor.name}</p>
+          </div>
+          <Button size="sm" variant="ghost" onPress={onClose}>
+            关闭
+          </Button>
+        </div>
+        <div className="space-y-3 px-5 py-4 text-sm text-[var(--desk-text)]">
+          <p className="leading-relaxed">{desc}</p>
+          {factor.talib ? (
+            <p className="text-xs text-[var(--desk-mist)]">TA-Lib：{factor.talib}</p>
+          ) : null}
+        </div>
+      </div>
+    </div>
   );
 }
 

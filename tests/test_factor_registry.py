@@ -36,13 +36,18 @@ def test_registry_has_required_fields_and_plots():
     assert by_name["STOCH"]["label"]
     assert by_name["CDLDOJI"]["category"] == "pattern"
     assert by_name["SMA"]["talib"] == "SMA"
+    assert "相对强弱" in by_name["RSI_14"]["description"]
+    assert "简单移动平均" in by_name["SMA_20"]["description"]
+    assert by_name["CLOSE"]["outputs"] == ["close"]
+    assert by_name["CLOSE"]["category"] == "price"
     for f in FACTOR_REGISTRY:
         assert f["enabled"] is True
         assert f["category"]
         assert isinstance(f["params"], dict)
         assert isinstance(f["outputs"], list) and f["outputs"]
         assert f["plot"] in ("overlay", "panel")
-        assert f["talib"]
+        assert "talib" in f
+        assert isinstance(f.get("description"), str) and f["description"]
 
 
 def test_extra_registered_but_disabled_by_default():

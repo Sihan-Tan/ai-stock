@@ -148,6 +148,7 @@ class FactorService:
                     "default_enabled": False,
                     "enabled": True,
                     "talib": "",
+                    "description": f"已登记 ML 模型打分（引擎 {r.engine}）",
                 }
             )
         return rows
@@ -204,13 +205,40 @@ class FactorService:
         series: dict[str, Any] = {}
         engine = last_engine()
         bars = _bars_from_ohlcv(ohlcv)
+        price_names = [n for n in ta_names if str(n).strip().upper() in {"CLOSE", "OPEN", "HIGH", "LOW"}]
+        ta_only = [n for n in ta_names if n not in price_names]
 
-        if ta_names:
-            resolved = []
-            for raw in ta_names:
+        if price_names:
+            df_px = ohlcv.copy()
+            rename = {}
+            for col in list(df_px.columns):
+                low = str(col).lower()
+                if low in {"open", "high", "low", "close", "volume"} and col != low:
+                    rename[col] = low
+            if rename:
+                df_px = df_px.rename(columns=rename)
+            for raw in price_names:
                 meta = get_factor(raw)
                 if meta is None:
                     raise ValueError(f"unknown factor: {raw}")
+                outputs: dict[str, list[dict[str, Any]]] = {}
+                for col in meta["outputs"]:
+                    points = []
+                    for _, r in df_px.iterrows():
+                        d = str(r["date"])[:10]
+                        val = r[col] if col in df_px.columns else None
+                        points.append({"date": d, "v": None if val is None or pd.isna(val) else float(val)})
+                    outputs[col] = points
+                series[meta["name"]] = {"outputs": outputs}
+
+        if ta_only:
+            resolved = []
+            for raw in ta_only:
+                meta = get_factor(raw)
+                if meta is None:
+                    raise ValueError(f"unknown factor: {raw}")
+                if not str(meta.get("talib") or "").strip():
+                    raise ValueError(f"factor has no talib binding: {raw}")
                 resolved.append(meta)
 
             specs = [
@@ -221,7 +249,7 @@ class FactorService:
             engine = last_engine()
             bars = _bars_from_ohlcv(df)
             for meta in resolved:
-                outputs: dict[str, list[dict[str, Any]]] = {}
+                outputs = {}
                 for col in meta["outputs"]:
                     points = []
                     for _, r in df.iterrows():

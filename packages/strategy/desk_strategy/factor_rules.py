@@ -13,8 +13,17 @@ from desk_indicators import apply_factor_specs
 
 COMPARE_OPS = frozenset({"gt", "gte", "lt", "lte", "eq"})
 CROSS_OPS = frozenset({"cross_up", "cross_down"})
-ALL_OPS = COMPARE_OPS | CROSS_OPS
+NEAR_OPS = frozenset({"near_pct"})
+ALL_OPS = COMPARE_OPS | CROSS_OPS | NEAR_OPS
 _ML_PREFIX = "ml:"
+# 价格伪因子 → OHLCV 列名（不走 TA-Lib）
+_PRICE_FACTOR_COLS: dict[str, str] = {
+    "CLOSE": "close",
+    "OPEN": "open",
+    "HIGH": "high",
+    "LOW": "low",
+}
+_DEFAULT_NEAR_PCT = 3.0
 
 
 def _as_float(value: Any) -> float | None:
@@ -53,10 +62,14 @@ def collect_factor_names(data: dict[str, Any]) -> list[str]:
 
 
 def _primary_output(factor_name: str) -> str | None:
-    """因子主输出列名；ml: 列名即因子名。"""
-    if factor_name.startswith(_ML_PREFIX):
-        return factor_name
-    meta = get_factor(factor_name)
+    """因子主输出列名；ml: / 价格伪因子列名即约定名。"""
+    key = factor_name.strip()
+    if key.startswith(_ML_PREFIX):
+        return key
+    price_col = _PRICE_FACTOR_COLS.get(key.upper())
+    if price_col is not None:
+        return price_col
+    meta = get_factor(key)
     if meta is None:
         return None
     outs = meta.get("outputs") or []
@@ -121,22 +134,7 @@ def enrich_history_with_factors(
     if history is None or getattr(history, "empty", True):
         return history
     out = attach_ml_factor_columns(history, factor_names, db)
-    ta_names = [n for n in factor_names if not str(n).startswith(_ML_PREFIX)]
-    specs: list[dict[str, Any]] = []
-    for raw in ta_names:
-        meta = get_factor(raw)
-        if meta is None:
-            continue
-        specs.append(
-            {
-                "talib": meta["talib"],
-                "params": dict(meta.get("params") or {}),
-                "outputs": list(meta.get("outputs") or []),
-            }
-        )
-    if not specs:
-        return out
-    # 保证列名小写 OHLCV
+    # 保证列名小写 OHLCV（CLOSE 等伪因子依赖 close 列）
     rename = {}
     for col in list(out.columns):
         low = str(col).lower()
@@ -144,6 +142,30 @@ def enrich_history_with_factors(
             rename[col] = low
     if rename:
         out = out.rename(columns=rename)
+
+    ta_names = [
+        n
+        for n in factor_names
+        if not str(n).startswith(_ML_PREFIX)
+        and str(n).strip().upper() not in _PRICE_FACTOR_COLS
+    ]
+    specs: list[dict[str, Any]] = []
+    for raw in ta_names:
+        meta = get_factor(raw)
+        if meta is None:
+            continue
+        talib_name = str(meta.get("talib") or "").strip()
+        if not talib_name:
+            continue
+        specs.append(
+            {
+                "talib": talib_name,
+                "params": dict(meta.get("params") or {}),
+                "outputs": list(meta.get("outputs") or []),
+            }
+        )
+    if not specs:
+        return out
     return apply_factor_specs(out, specs)
 
 
@@ -197,6 +219,16 @@ def eval_condition(cond: dict[str, Any], cur: pd.Series, prev: pd.Series) -> boo
         if op == "cross_up":
             return l1 <= r1 and l0 > r0
         return l1 >= r1 and l0 < r0
+
+    if op == "near_pct":
+        lv = _resolve_operand(left, cur, prev)
+        rv = _resolve_operand(right, cur, prev)
+        pct = _as_float(cond.get("pct"))
+        if pct is None:
+            pct = _DEFAULT_NEAR_PCT
+        if lv is None or rv is None or rv == 0 or pct < 0:
+            return False
+        return abs(lv / rv - 1.0) * 100.0 <= pct
 
     lv = _resolve_operand(left, cur, prev)
     rv = _resolve_operand(right, cur, prev)

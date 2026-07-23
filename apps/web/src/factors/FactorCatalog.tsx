@@ -9,7 +9,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   volume: "成交量",
   pattern: "K线形态",
   cycle: "周期",
-  price: "价格变换",
+  price: "价格",
   statistic: "统计",
   math: "数学",
   ml: "机器学习",
@@ -31,7 +31,7 @@ export type FactorCatalogProps = {
   /** 切换勾选 */
   onToggle: (name: string) => void;
   /**
-   * 查看登记/ML 因子说明（仅 category=ml 时出现入口）。
+   * 查看因子说明（TA 中文释义 / ML 模型特征）。
    * @param factor 因子元数据
    */
   onExplain?: (factor: FactorMeta) => void;
@@ -62,7 +62,10 @@ export function FactorCatalog({
   const q = query.trim().toLowerCase();
   const filtered = q
     ? factors.filter(
-        (f) => f.label.toLowerCase().includes(q) || f.name.toLowerCase().includes(q)
+        (f) =>
+          f.label.toLowerCase().includes(q) ||
+          f.name.toLowerCase().includes(q) ||
+          (f.description || "").toLowerCase().includes(q)
       )
     : factors;
   const { selected: selectedRows, collapsedCategories } = groupFactorCatalog(filtered, selected);
@@ -169,13 +172,13 @@ function FactorCheckRow({ factor, checked, disabled, onToggle, onExplain }: Fact
     disabled && factor.plot === "panel"
       ? "副图已满，请先取消部分已选副图"
       : undefined;
-  const canExplain =
-    Boolean(onExplain) && (factor.category === "ml" || factor.name.startsWith("ml:"));
+  const tip = (factor.description || "").trim();
+  const canExplain = Boolean(onExplain) && (Boolean(tip) || factor.category === "ml" || factor.name.startsWith("ml:"));
 
   return (
     <li>
       <div
-        title={title}
+        title={title ?? (tip || undefined)}
         className={`flex items-start gap-2 rounded px-1 py-0.5 text-sm ${
           disabled ? "opacity-45" : "text-[var(--desk-text)] hover:bg-[var(--desk-ink)]/60"
         }`}
