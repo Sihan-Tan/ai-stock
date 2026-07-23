@@ -419,6 +419,73 @@ def test_sequence_three_steps_needs_earlier_middle():
     assert len(out) == 1 and out[0].side == Side.BUY
 
 
+def test_sequence_stages_ab_same_day_then_c():
+    """阶段1：CLOSE>9 且 VOLUME>0 同日；阶段2：≤3 日后 CLOSE<9。"""
+    hist = _ohlcv([10.0] * 20)
+    hist["volume"] = 1_000_000.0
+    # T-2: close=10（>9）；今日 close=8（<9）
+    hist.loc[hist.index[-1], "close"] = 8.0
+    data = {
+        "kind": "factor_rules",
+        "buy": {
+            "combine": "sequence",
+            "within_bars": 5,
+            "stages": [
+                {
+                    "combine": "all",
+                    "conditions": [
+                        {"op": "gt", "left": {"factor": "CLOSE"}, "right": {"const": 9}},
+                        {"op": "gt", "left": {"factor": "VOLUME"}, "right": {"const": 0}},
+                    ],
+                },
+                {
+                    "combine": "all",
+                    "within_bars": 3,
+                    "conditions": [
+                        {"op": "lt", "left": {"factor": "CLOSE"}, "right": {"const": 9}},
+                    ],
+                },
+            ],
+        },
+        "sell": {"combine": "all", "conditions": []},
+    }
+    out = eval_factor_rules(data, {"row": {"symbol": "UT.SH"}, "history": hist})
+    assert len(out) == 1 and out[0].side == Side.BUY
+
+
+def test_sequence_stages_gap_too_large_no_signal():
+    """两阶段间隔超过 within_bars → 不触发。"""
+    hist = _ohlcv([10.0] * 20)
+    hist["volume"] = 1_000_000.0
+    # 仅首根 close>9，今日 close<9，中间间隔很大且中间日不满足阶段1
+    hist["close"] = 8.0
+    hist.loc[hist.index[0], "close"] = 10.0
+    hist.loc[hist.index[-1], "close"] = 8.0
+    data = {
+        "kind": "factor_rules",
+        "buy": {
+            "combine": "sequence",
+            "stages": [
+                {
+                    "combine": "all",
+                    "conditions": [
+                        {"op": "gt", "left": {"factor": "CLOSE"}, "right": {"const": 9}},
+                    ],
+                },
+                {
+                    "combine": "all",
+                    "within_bars": 2,
+                    "conditions": [
+                        {"op": "lt", "left": {"factor": "CLOSE"}, "right": {"const": 9}},
+                    ],
+                },
+            ],
+        },
+        "sell": {"combine": "all", "conditions": []},
+    }
+    assert eval_factor_rules(data, {"row": {"symbol": "UT.SH"}, "history": hist}) == []
+
+
 def test_combine_all_unchanged_regression():
     """all 仍只看当日：昨日曾 >11、今日 =10 不触发 gt 11。"""
     hist = _ohlcv([10.0] * 30)

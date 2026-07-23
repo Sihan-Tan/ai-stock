@@ -191,6 +191,8 @@ describe("factor rules yaml roundtrip", () => {
     const parsed = parseFactorRulesYaml(yaml);
     expect(parsed?.buy.combine).toBe("sequence");
     expect(parsed?.buy.within_bars).toBe(5);
+    // 扁平 sequence 解析后升为 stages
+    expect(parsed?.buy.stages?.length ?? 0).toBe(2);
     expect(parsed?.sell.combine).toBe("within");
     expect(parsed?.sell.within_bars).toBe(10);
   });
@@ -214,7 +216,7 @@ describe("factor rules yaml roundtrip", () => {
       },
       sell: { combine: "any", conditions: [] },
     });
-    expect(yaml).toContain("factor: \"VOLUME\"");
+    expect(yaml).toContain('factor: "VOLUME"');
     expect(yaml).toContain("lag: 1");
     expect(yaml).toContain("mult: 2");
     const parsed = parseFactorRulesYaml(yaml);
@@ -225,5 +227,56 @@ describe("factor rules yaml roundtrip", () => {
       factor: "VOLUME",
       lag: 1,
     });
+  });
+
+  it("dumps and parses sequence stages", () => {
+    const yaml = dumpFactorRulesYaml({
+      id: "rule_st",
+      name: "分阶段",
+      version: "v1.0",
+      kind: "factor_rules",
+      buy: {
+        combine: "sequence",
+        within_bars: 5,
+        conditions: [],
+        stages: [
+          {
+            combine: "all",
+            conditions: [
+              {
+                op: "gt",
+                left: { kind: "factor", factor: "VOLUME" },
+                right: { kind: "const", const: 0 },
+              },
+              {
+                op: "gt",
+                left: { kind: "factor", factor: "CLOSE" },
+                right: { kind: "const", const: 9 },
+              },
+            ],
+          },
+          {
+            combine: "all",
+            within_bars: 3,
+            conditions: [
+              {
+                op: "lt",
+                left: { kind: "factor", factor: "CLOSE" },
+                right: { kind: "const", const: 9 },
+              },
+            ],
+          },
+        ],
+      },
+      sell: { combine: "any", conditions: [] },
+    });
+    expect(yaml).toContain("stages:");
+    expect(yaml).toContain("within_bars: 3");
+    const parsed = parseFactorRulesYaml(yaml);
+    expect(parsed?.buy.combine).toBe("sequence");
+    expect(parsed?.buy.stages).toHaveLength(2);
+    expect(parsed?.buy.stages?.[0]?.conditions).toHaveLength(2);
+    expect(parsed?.buy.stages?.[1]?.within_bars).toBe(3);
+    expect(parsed?.buy.stages?.[1]?.conditions[0]?.op).toBe("lt");
   });
 });

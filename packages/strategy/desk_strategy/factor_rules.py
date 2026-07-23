@@ -53,24 +53,35 @@ def _as_float(value: Any) -> float | None:
 
 
 def collect_factor_names(data: dict[str, Any]) -> list[str]:
-    """从 buy/sell 条件收集因子名（去重保序）。"""
+    """从 buy/sell 的 conditions 与 stages 收集因子名（去重保序）。"""
     seen: set[str] = set()
     ordered: list[str] = []
+
+    def add_from_cond(cond: Any) -> None:
+        if not isinstance(cond, dict):
+            return
+        for side in ("left", "right"):
+            operand = cond.get(side)
+            if not isinstance(operand, dict):
+                continue
+            name = operand.get("factor")
+            if isinstance(name, str) and name.strip():
+                key = name.strip()
+                if key not in seen:
+                    seen.add(key)
+                    ordered.append(key)
+
     for side_key in ("buy", "sell"):
         block = data.get(side_key) or {}
+        if not isinstance(block, dict):
+            continue
         for cond in block.get("conditions") or []:
-            if not isinstance(cond, dict):
+            add_from_cond(cond)
+        for stage in block.get("stages") or []:
+            if not isinstance(stage, dict):
                 continue
-            for side in ("left", "right"):
-                operand = cond.get(side)
-                if not isinstance(operand, dict):
-                    continue
-                name = operand.get("factor")
-                if isinstance(name, str) and name.strip():
-                    key = name.strip()
-                    if key not in seen:
-                        seen.add(key)
-                        ordered.append(key)
+            for cond in stage.get("conditions") or []:
+                add_from_cond(cond)
     return ordered
 
 
@@ -296,34 +307,78 @@ def eval_condition_at(cond: dict[str, Any], enriched: pd.DataFrame, i: int) -> b
     return eval_condition(cond, enriched, i)
 
 
-def _sequence_triggered(
-    conditions: list[Any], enriched: pd.DataFrame, today_i: int, within_bars: int
-) -> bool:
-    """有序间隔：末步须在 today_i；相邻下标差 ∈ [0, within_bars]（存在性，非贪心）。"""
-    if within_bars < 0 or not conditions:
-        return False
-    conds = [c for c in conditions if isinstance(c, dict)]
-    if len(conds) != len(conditions):
-        return False
+def _stage_within_bars(stage: dict[str, Any], default_wb: int) -> int:
+    """后段相对前段的间隔；未写则用侧级默认。"""
+    if "within_bars" not in stage or stage.get("within_bars") in (None, ""):
+        return default_wb
+    return _parse_within_bars(stage)
+
+
+def _stage_true_at(stage: dict[str, Any], enriched: pd.DataFrame, bar_i: int) -> bool:
+    """阶段在 bar_i 上是否触发（阶段内 all/any，同日）。"""
+    conds = [c for c in (stage.get("conditions") or []) if isinstance(c, dict)]
     if not conds:
         return False
-    if not eval_condition_at(conds[-1], enriched, today_i):
+    combine = str(stage.get("combine") or "all").strip().lower()
+    results = [eval_condition(c, enriched, bar_i) for c in conds]
+    if combine == "any":
+        return any(results)
+    return all(results)
+
+
+def _normalize_sequence_stages(block: dict[str, Any]) -> list[dict[str, Any]]:
+    """
+    规范化 sequence 阶段。
+
+    优先用 stages；否则扁平 conditions 每条各成一段（兼容旧 YAML）。
+    """
+    raw_stages = block.get("stages")
+    if isinstance(raw_stages, list) and len(raw_stages) > 0:
+        return [s for s in raw_stages if isinstance(s, dict)]
+    default_wb = _parse_within_bars(block)
+    conds = [c for c in (block.get("conditions") or []) if isinstance(c, dict)]
+    stages: list[dict[str, Any]] = []
+    for i, cond in enumerate(conds):
+        stages.append(
+            {
+                "combine": "all",
+                "within_bars": default_wb if i > 0 else 0,
+                "conditions": [cond],
+            }
+        )
+    return stages
+
+
+def _sequence_triggered(
+    stages: list[dict[str, Any]],
+    enriched: pd.DataFrame,
+    today_i: int,
+    default_within_bars: int,
+) -> bool:
+    """
+    有序阶段：末段须在 today_i；相邻段下标差 ∈ [0, 后段.within_bars]（存在性回溯）。
+    """
+    if default_within_bars < 0 or not stages:
+        return False
+    if not _stage_true_at(stages[-1], enriched, today_i):
         return False
 
     def can_place(step: int, cursor: int) -> bool:
-        """Place conditions[0..step] ending at cursor for step's condition; step goes backward."""
         if step < 0:
             return True
-        lo = max(0, cursor - within_bars)
+        wb = _stage_within_bars(stages[step + 1], default_within_bars)
+        if wb < 0:
+            return False
+        lo = max(0, cursor - wb)
         for i in range(cursor, lo - 1, -1):
-            if eval_condition_at(conds[step], enriched, i):
+            if _stage_true_at(stages[step], enriched, i):
                 if can_place(step - 1, i):
                     return True
         return False
 
-    if len(conds) == 1:
+    if len(stages) == 1:
         return True
-    return can_place(len(conds) - 2, today_i)
+    return can_place(len(stages) - 2, today_i)
 
 
 def _within_triggered(
@@ -349,12 +404,17 @@ def _within_triggered(
 def _side_triggered(block: Any, enriched: pd.DataFrame, today_i: int) -> bool:
     if not isinstance(block, dict):
         return False
+    combine = str(block.get("combine") or "all").strip().lower()
+    if combine == "sequence":
+        stages = _normalize_sequence_stages(block)
+        if not stages:
+            return False
+        return _sequence_triggered(
+            stages, enriched, today_i, _parse_within_bars(block)
+        )
     conditions = block.get("conditions") or []
     if not conditions:
         return False
-    combine = str(block.get("combine") or "all").strip().lower()
-    if combine == "sequence":
-        return _sequence_triggered(conditions, enriched, today_i, _parse_within_bars(block))
     if combine == "within":
         return _within_triggered(conditions, enriched, today_i, _parse_within_bars(block))
     results: list[bool] = []

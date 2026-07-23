@@ -21,11 +21,21 @@ type RuleCondition = {
 
 type RuleCombine = "all" | "any" | "sequence" | "within";
 
-type RuleSide = {
-  combine: RuleCombine;
-  /** sequence/within：间隔或窗口（交易日），默认 5 */
+/** sequence 下的一个阶段（阶段内同日 all/any）。 */
+type RuleStage = {
+  combine: "all" | "any";
+  /** 距上一阶段完成日的最大间隔；首段忽略 */
   within_bars?: number;
   conditions: RuleCondition[];
+};
+
+type RuleSide = {
+  combine: RuleCombine;
+  /** sequence 默认段间隔 / within 窗口（交易日），默认 5 */
+  within_bars?: number;
+  conditions: RuleCondition[];
+  /** sequence 分阶段；优先于扁平 conditions */
+  stages?: RuleStage[];
 };
 
 type RuleDoc = {
@@ -61,6 +71,64 @@ function emptyCondition(): RuleCondition {
     right: { kind: "factor", factor: "SMA_20" },
     pct: 3,
   };
+}
+
+/**
+ * 默认空阶段。
+ * @param withinBars 距上一段间隔（首段可不传）
+ */
+function emptyStage(withinBars?: number): RuleStage {
+  return {
+    combine: "all",
+    within_bars: withinBars,
+    conditions: [emptyCondition()],
+  };
+}
+
+/**
+ * 序列化单条条件。
+ * @param cond 条件
+ * @param itemIndent 列表项缩进（含 `- ` 前空格）
+ * @param fieldIndent 字段缩进
+ */
+function dumpConditionLines(
+  cond: RuleCondition,
+  itemIndent: string,
+  fieldIndent: string
+): string[] {
+  const lines: string[] = [`${itemIndent}- op: ${cond.op}`];
+  lines.push(`${fieldIndent}left:`);
+  lines.push(dumpOperand(cond.left, `${fieldIndent}  `));
+  lines.push(`${fieldIndent}right:`);
+  lines.push(dumpOperand(cond.right, `${fieldIndent}  `));
+  if (cond.op === "near_pct") {
+    const pct = Number.isFinite(cond.pct) ? Number(cond.pct) : 3;
+    lines.push(`${fieldIndent}pct: ${pct}`);
+  } else if (["gt", "gte", "lt", "lte", "eq"].includes(cond.op)) {
+    const mult = Number.isFinite(cond.mult) ? Number(cond.mult) : 1;
+    if (mult !== 1) lines.push(`${fieldIndent}mult: ${mult}`);
+  }
+  return lines;
+}
+
+/**
+ * 从条件文本块解析一条条件。
+ * @param raw 条件片段
+ */
+function parseConditionBlock(raw: string): RuleCondition {
+  const opM = raw.match(/(?:^|\n)\s*op:\s*([a-z_]+)/) || raw.match(/^op:\s*([a-z_]+)/m);
+  const left = parseOperand(raw, "left") ?? { kind: "factor" as const, factor: "SMA_5" };
+  const right = parseOperand(raw, "right") ?? { kind: "factor" as const, factor: "SMA_20" };
+  const op = opM?.[1] || "gt";
+  const pctM = raw.match(/(?:^|\n)\s*pct:\s*([-\d.]+)/);
+  const multM = raw.match(/(?:^|\n)\s*mult:\s*([-\d.]+)/);
+  const cond: RuleCondition = { op, left, right };
+  if (op === "near_pct") {
+    cond.pct = pctM ? Number(pctM[1]) : 3;
+  } else if (["gt", "gte", "lt", "lte", "eq"].includes(op) && multM) {
+    cond.mult = Number(multM[1]);
+  }
+  return cond;
 }
 
 /**
@@ -143,32 +211,36 @@ export function dumpFactorRulesYaml(doc: RuleDoc): string {
       const n = Number.isFinite(side.within_bars) ? Number(side.within_bars) : 5;
       lines.push(`  within_bars: ${Math.max(0, Math.floor(n))}`);
     }
+    if (combine === "sequence" && side.stages && side.stages.length > 0) {
+      lines.push(`  stages:`);
+      side.stages.forEach((stage, stageIndex) => {
+        lines.push(`    - combine: ${stage.combine === "any" ? "any" : "all"}`);
+        if (stageIndex > 0) {
+          const wb = Number.isFinite(stage.within_bars)
+            ? Number(stage.within_bars)
+            : Number.isFinite(side.within_bars)
+              ? Number(side.within_bars)
+              : 5;
+          lines.push(`      within_bars: ${Math.max(0, Math.floor(wb))}`);
+        }
+        lines.push(`      conditions:`);
+        if (stage.conditions.length === 0) {
+          lines.push(`        []`);
+          return;
+        }
+        for (const cond of stage.conditions) {
+          lines.push(...dumpConditionLines(cond, "        ", "          "));
+        }
+      });
+      return;
+    }
     lines.push(`  conditions:`);
     if (side.conditions.length === 0) {
       lines.push(`    []`);
       return;
     }
     for (const cond of side.conditions) {
-      lines.push(`    - op: ${cond.op}`);
-      lines.push(`      left:`);
-      lines.push(dumpOperand(cond.left, "        "));
-      lines.push(`      right:`);
-      lines.push(dumpOperand(cond.right, "        "));
-      if (cond.op === "near_pct") {
-        const pct = Number.isFinite(cond.pct) ? Number(cond.pct) : 3;
-        lines.push(`      pct: ${pct}`);
-      } else if (
-        cond.op === "gt" ||
-        cond.op === "gte" ||
-        cond.op === "lt" ||
-        cond.op === "lte" ||
-        cond.op === "eq"
-      ) {
-        const mult = Number.isFinite(cond.mult) ? Number(cond.mult) : 1;
-        if (mult !== 1) {
-          lines.push(`      mult: ${mult}`);
-        }
-      }
+      lines.push(...dumpConditionLines(cond, "    ", "      "));
     }
   };
 
@@ -197,34 +269,44 @@ export function parseFactorRulesYaml(text: string): RuleDoc | null {
   const parseSide = (section: "buy" | "sell"): RuleSide => {
     const side =
       section === "buy"
-        ? { ...base.buy, conditions: [] as RuleCondition[] }
-        : { ...base.sell, conditions: [] as RuleCondition[] };
-    const blockRe = new RegExp(`(?:^|\\n)${section}:\\n([\\s\\S]*?)(?=\\n(?:buy|sell|id|name|version|kind|params):|\\s*$)`);
+        ? { ...base.buy, conditions: [] as RuleCondition[], stages: undefined }
+        : { ...base.sell, conditions: [] as RuleCondition[], stages: undefined };
+    const blockRe = new RegExp(
+      `(?:^|\\r?\\n)${section}:\\r?\\n([\\s\\S]*?)(?=\\r?\\n(?:buy|sell|id|name|version|kind|params):|\\s*$)`
+    );
     const block = text.match(blockRe)?.[1] ?? "";
     const combineM = block.match(/combine:\s*(all|any|sequence|within)/);
     if (combineM) side.combine = combineM[1] as RuleCombine;
-    const wbM = block.match(/within_bars:\s*(\d+)/);
+    const wbM = block.match(/(?:^|\r?\n)  within_bars:\s*(\d+)/);
     if (wbM) side.within_bars = Number(wbM[1]);
     else if (side.combine === "sequence" || side.combine === "within") side.within_bars = 5;
+
+    if (side.combine === "sequence" && /stages:/.test(block)) {
+      side.stages = parseStagesYaml(block);
+      side.conditions = [];
+      return side;
+    }
+
     if (/conditions:\s*\[\s*\]/.test(block)) {
       return side;
     }
-    // 兼容「- op:」与 PyYAML 键序「- left:」等：按列表项切分
     const condBlocks = block.split(/\n\s*-\s+/).slice(1);
     for (const raw of condBlocks) {
-      const opM = raw.match(/(?:^|\n)\s*op:\s*([a-z_]+)/) || raw.match(/^op:\s*([a-z_]+)/m);
-      const left = parseOperand(raw, "left") ?? { kind: "factor" as const, factor: "SMA_5" };
-      const right = parseOperand(raw, "right") ?? { kind: "factor" as const, factor: "SMA_20" };
-      const op = opM?.[1] || "gt";
-      const pctM = raw.match(/(?:^|\n)\s*pct:\s*([-\d.]+)/);
-      const multM = raw.match(/(?:^|\n)\s*mult:\s*([-\d.]+)/);
-      const cond: RuleCondition = { op, left, right };
-      if (op === "near_pct") {
-        cond.pct = pctM ? Number(pctM[1]) : 3;
-      } else if (["gt", "gte", "lt", "lte", "eq"].includes(op) && multM) {
-        cond.mult = Number(multM[1]);
+      // 跳过 stages 误切（旧路径不应含 stages）
+      if (/^\s*combine:\s*(all|any)/.test(raw) && /conditions:/.test(raw) && !/\bop:/.test(raw)) {
+        continue;
       }
-      side.conditions.push(cond);
+      side.conditions.push(parseConditionBlock(raw));
+    }
+    // 扁平 sequence → 升为 stages，便于 UI
+    if (side.combine === "sequence" && side.conditions.length > 0 && !side.stages?.length) {
+      const defWb = side.within_bars ?? 5;
+      side.stages = side.conditions.map((c, i) => ({
+        combine: "all" as const,
+        within_bars: i > 0 ? defWb : undefined,
+        conditions: [c],
+      }));
+      side.conditions = [];
     }
     return side;
   };
@@ -280,6 +362,68 @@ function parseOperand(raw: string, side: "left" | "right"): Operand | null {
     return { kind: "const", const: Number(constM[1]) };
   }
   return null;
+}
+
+/**
+ * 从 buy/sell 块中解析 stages 列表（行扫描，避免条件项误切）。
+ * @param block YAML 侧块文本
+ */
+function parseStagesYaml(block: string): RuleStage[] {
+  const lines = block.split(/\r?\n/);
+  let i = lines.findIndex((l) => /^\s*stages:\s*$/.test(l));
+  if (i < 0) return [];
+  i += 1;
+  const stages: RuleStage[] = [];
+  let cur: RuleStage | null = null;
+  let inConditions = false;
+  let condBuf: string[] = [];
+
+  const flushCond = () => {
+    if (condBuf.length && cur) {
+      cur.conditions.push(parseConditionBlock(condBuf.join("\n")));
+      condBuf = [];
+    }
+  };
+
+  for (; i < lines.length; i++) {
+    const line = lines[i];
+    if (/^(buy|sell|id|name|version|kind|params):/.test(line)) break;
+
+    const stageStart = line.match(/^\s{4}-\s+combine:\s*(all|any)\s*$/);
+    if (stageStart) {
+      flushCond();
+      if (cur) stages.push(cur);
+      cur = { combine: stageStart[1] === "any" ? "any" : "all", conditions: [] };
+      inConditions = false;
+      continue;
+    }
+    if (!cur) continue;
+
+    const wb = line.match(/^\s+within_bars:\s*(\d+)\s*$/);
+    if (wb) {
+      cur.within_bars = Number(wb[1]);
+      continue;
+    }
+    if (/^\s+conditions:\s*\[\s*\]\s*$/.test(line)) {
+      inConditions = true;
+      continue;
+    }
+    if (/^\s+conditions:\s*$/.test(line)) {
+      inConditions = true;
+      continue;
+    }
+    if (inConditions) {
+      if (/^\s{8}-\s+/.test(line)) {
+        flushCond();
+        condBuf = [line.replace(/^\s{8}-\s+/, "")];
+      } else if (condBuf.length > 0) {
+        condBuf.push(line);
+      }
+    }
+  }
+  flushCond();
+  if (cur) stages.push(cur);
+  return stages.filter((s) => s.conditions.length > 0);
 }
 
 /**
@@ -398,8 +542,16 @@ export default function StrategyRuleBuilder({ setLog }: PageLogProps) {
       return;
     }
     if (doc.buy.conditions.length === 0 && doc.sell.conditions.length === 0) {
-      setLog("买卖条件不能都为空");
-      return;
+      const buyOk =
+        doc.buy.combine === "sequence" &&
+        (doc.buy.stages || []).some((s) => s.conditions.length > 0);
+      const sellOk =
+        doc.sell.combine === "sequence" &&
+        (doc.sell.stages || []).some((s) => s.conditions.length > 0);
+      if (!buyOk && !sellOk) {
+        setLog("买卖条件不能都为空");
+        return;
+      }
     }
     setBusy(true);
     try {
@@ -511,6 +663,49 @@ function RuleSideEditor({
   factorOptions: FactorOption[];
   onChange: (next: RuleSide) => void;
 }) {
+  const isSequence = side.combine === "sequence";
+  const stages = side.stages?.length ? side.stages : [];
+
+  /**
+   * 切换组合方式时在扁平条件与 stages 间迁移。
+   * @param value 新 combine
+   */
+  const onCombineChange = (value: RuleCombine) => {
+    const next: RuleSide = { ...side, combine: value };
+    if (value === "sequence") {
+      next.within_bars = next.within_bars ?? 5;
+      if (!next.stages?.length) {
+        next.stages =
+          next.conditions.length > 0
+            ? next.conditions.map((c, i) => ({
+                combine: "all" as const,
+                within_bars: i > 0 ? next.within_bars : undefined,
+                conditions: [c],
+              }))
+            : [emptyStage()];
+        next.conditions = [];
+      }
+    } else if (side.combine === "sequence" && side.stages?.length) {
+      next.conditions = side.stages.flatMap((s) => s.conditions);
+      next.stages = undefined;
+      if (value === "within") next.within_bars = next.within_bars ?? 5;
+    } else if (value === "within" && next.within_bars === undefined) {
+      next.within_bars = 5;
+    }
+    onChange(next);
+  };
+
+  /**
+   * 更新某一阶段。
+   * @param stageIndex 阶段下标
+   * @param stage 新阶段
+   */
+  const patchStage = (stageIndex: number, stage: RuleStage) => {
+    const nextStages = [...stages];
+    nextStages[stageIndex] = stage;
+    onChange({ ...side, stages: nextStages, conditions: [] });
+  };
+
   return (
     <section className="space-y-3 rounded-lg border border-[var(--desk-line)] bg-[var(--desk-ink)]/30 p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -519,27 +714,17 @@ function RuleSideEditor({
           <select
             className={controlClass}
             value={side.combine}
-            onChange={(e) => {
-              const value = e.target.value as RuleCombine;
-              const next: RuleSide = { ...side, combine: value };
-              if (
-                (value === "sequence" || value === "within") &&
-                next.within_bars === undefined
-              ) {
-                next.within_bars = 5;
-              }
-              onChange(next);
-            }}
+            onChange={(e) => onCombineChange(e.target.value as RuleCombine)}
             aria-label={`${title}组合方式`}
           >
             <option value="all">全部满足 (AND)</option>
             <option value="any">任一满足 (OR)</option>
-            <option value="sequence">有序间隔</option>
+            <option value="sequence">有序间隔（分阶段）</option>
             <option value="within">近N日均曾成立</option>
           </select>
-          {side.combine === "sequence" || side.combine === "within" ? (
+          {side.combine === "within" ? (
             <label className="flex items-center gap-1 text-xs text-[var(--desk-mist)]">
-              {side.combine === "sequence" ? "相邻间隔≤（交易日）" : "近窗（交易日）"}
+              近窗（交易日）
               <input
                 type="number"
                 min={0}
@@ -552,16 +737,147 @@ function RuleSideEditor({
                     within_bars: Math.max(0, Math.floor(Number(e.target.value))),
                   })
                 }
-                aria-label={
-                  side.combine === "sequence" ? "相邻间隔交易日" : "近窗交易日"
+                aria-label="近窗交易日"
+              />
+            </label>
+          ) : null}
+          {isSequence ? (
+            <label className="flex items-center gap-1 text-xs text-[var(--desk-mist)]">
+              默认段间隔≤
+              <input
+                type="number"
+                min={0}
+                step={1}
+                className={`${controlClass} w-20 font-mono`}
+                value={Number.isFinite(side.within_bars) ? side.within_bars : 5}
+                onChange={(e) =>
+                  onChange({
+                    ...side,
+                    within_bars: Math.max(0, Math.floor(Number(e.target.value))),
+                  })
                 }
+                aria-label="默认段间隔"
               />
             </label>
           ) : null}
         </div>
       </div>
+
+      {isSequence ? (
+        <div className="space-y-3">
+          {stages.map((stage, stageIndex) => (
+            <div
+              key={stageIndex}
+              className="space-y-2 rounded-lg border border-[var(--desk-line)] bg-[var(--desk-panel)]/50 p-3"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs font-medium text-[var(--desk-text)]">
+                    阶段 {stageIndex + 1}
+                  </span>
+                  <select
+                    className={controlClass}
+                    value={stage.combine}
+                    onChange={(e) =>
+                      patchStage(stageIndex, {
+                        ...stage,
+                        combine: e.target.value === "any" ? "any" : "all",
+                      })
+                    }
+                    aria-label={`阶段${stageIndex + 1}组内组合`}
+                  >
+                    <option value="all">同日全部</option>
+                    <option value="any">同日任一</option>
+                  </select>
+                  {stageIndex > 0 ? (
+                    <label className="flex items-center gap-1 text-xs text-[var(--desk-mist)]">
+                      距上阶段≤
+                      <input
+                        type="number"
+                        min={0}
+                        step={1}
+                        className={`${controlClass} w-16 font-mono`}
+                        value={
+                          Number.isFinite(stage.within_bars)
+                            ? stage.within_bars
+                            : side.within_bars ?? 5
+                        }
+                        onChange={(e) =>
+                          patchStage(stageIndex, {
+                            ...stage,
+                            within_bars: Math.max(0, Math.floor(Number(e.target.value))),
+                          })
+                        }
+                        aria-label={`阶段${stageIndex + 1}间隔`}
+                      />
+                      日
+                    </label>
+                  ) : (
+                    <span className="text-xs text-[var(--desk-mist)]">（起点，同日满足组内条件）</span>
+                  )}
+                </div>
+                {stages.length > 1 ? (
+                  <button
+                    type="button"
+                    className="text-xs text-[var(--desk-mist)] hover:text-[var(--danger)]"
+                    onClick={() => {
+                      const nextStages = stages.filter((_, i) => i !== stageIndex);
+                      onChange({ ...side, stages: nextStages, conditions: [] });
+                    }}
+                  >
+                    删除阶段
+                  </button>
+                ) : null}
+              </div>
+              <ConditionList
+                conditions={stage.conditions}
+                factorOptions={factorOptions}
+                onChange={(conditions) => patchStage(stageIndex, { ...stage, conditions })}
+              />
+            </div>
+          ))}
+          <Button
+            size="sm"
+            variant="secondary"
+            onPress={() =>
+              onChange({
+                ...side,
+                stages: [...stages, emptyStage(side.within_bars ?? 5)],
+                conditions: [],
+              })
+            }
+          >
+            添加阶段
+          </Button>
+        </div>
+      ) : (
+        <ConditionList
+          conditions={side.conditions}
+          factorOptions={factorOptions}
+          onChange={(conditions) => onChange({ ...side, conditions })}
+        />
+      )}
+    </section>
+  );
+}
+
+/**
+ * 条件列表（扁平或阶段内）。
+ * @param props 条件与回调
+ */
+function ConditionList({
+  conditions,
+  factorOptions,
+  onChange,
+}: {
+  conditions: RuleCondition[];
+  factorOptions: FactorOption[];
+  onChange: (next: RuleCondition[]) => void;
+}) {
+  return (
+    <>
       <ul className="space-y-2">
-        {side.conditions.map((cond, index) => (
+        {conditions.map((cond, index) => (
           <li
             key={index}
             className="space-y-2 rounded-md border border-[var(--desk-line)] bg-[var(--desk-panel)]/40 p-2.5"
@@ -571,9 +887,9 @@ function RuleSideEditor({
                 value={cond.left}
                 factorOptions={factorOptions}
                 onChange={(left) => {
-                  const conditions = [...side.conditions];
-                  conditions[index] = { ...cond, left };
-                  onChange({ ...side, conditions });
+                  const next = [...conditions];
+                  next[index] = { ...cond, left };
+                  onChange(next);
                 }}
               />
               <select
@@ -581,19 +897,19 @@ function RuleSideEditor({
                 value={cond.op}
                 onChange={(e) => {
                   const op = e.target.value;
-                  const conditions = [...side.conditions];
-                  const next: RuleCondition = { ...cond, op };
+                  const nextCond: RuleCondition = { ...cond, op };
                   if (op === "near_pct") {
-                    next.pct = Number.isFinite(cond.pct) ? Number(cond.pct) : 3;
-                    if (next.right.kind === "const") {
-                      next.right = { kind: "factor", factor: "SMA_20" };
+                    nextCond.pct = Number.isFinite(cond.pct) ? Number(cond.pct) : 3;
+                    if (nextCond.right.kind === "const") {
+                      nextCond.right = { kind: "factor", factor: "SMA_20" };
                     }
-                    if (next.left.kind === "const") {
-                      next.left = { kind: "factor", factor: "CLOSE" };
+                    if (nextCond.left.kind === "const") {
+                      nextCond.left = { kind: "factor", factor: "CLOSE" };
                     }
                   }
-                  conditions[index] = next;
-                  onChange({ ...side, conditions });
+                  const next = [...conditions];
+                  next[index] = nextCond;
+                  onChange(next);
                 }}
                 aria-label="算子"
               >
@@ -608,9 +924,9 @@ function RuleSideEditor({
                 factorOptions={factorOptions}
                 forceFactor={cond.op === "near_pct"}
                 onChange={(right) => {
-                  const conditions = [...side.conditions];
-                  conditions[index] = { ...cond, right };
-                  onChange({ ...side, conditions });
+                  const next = [...conditions];
+                  next[index] = { ...cond, right };
+                  onChange(next);
                 }}
               />
               {cond.op === "near_pct" ? (
@@ -623,9 +939,9 @@ function RuleSideEditor({
                     className={`${controlClass} w-20 font-mono`}
                     value={Number.isFinite(cond.pct) ? cond.pct : 3}
                     onChange={(e) => {
-                      const conditions = [...side.conditions];
-                      conditions[index] = { ...cond, pct: Number(e.target.value) };
-                      onChange({ ...side, conditions });
+                      const next = [...conditions];
+                      next[index] = { ...cond, pct: Number(e.target.value) };
+                      onChange(next);
                     }}
                     aria-label="贴近百分比"
                   />
@@ -641,13 +957,13 @@ function RuleSideEditor({
                     className={`${controlClass} w-20 font-mono`}
                     value={Number.isFinite(cond.mult) ? cond.mult : 1}
                     onChange={(e) => {
-                      const conditions = [...side.conditions];
                       const mult = Number(e.target.value);
-                      conditions[index] = {
+                      const next = [...conditions];
+                      next[index] = {
                         ...cond,
                         mult: Number.isFinite(mult) ? mult : 1,
                       };
-                      onChange({ ...side, conditions });
+                      onChange(next);
                     }}
                     aria-label="右端倍数"
                   />
@@ -656,10 +972,7 @@ function RuleSideEditor({
               <button
                 type="button"
                 className="text-xs text-[var(--desk-mist)] hover:text-[var(--danger)]"
-                onClick={() => {
-                  const conditions = side.conditions.filter((_, i) => i !== index);
-                  onChange({ ...side, conditions });
-                }}
+                onClick={() => onChange(conditions.filter((_, i) => i !== index))}
               >
                 删除
               </button>
@@ -670,11 +983,12 @@ function RuleSideEditor({
       <Button
         size="sm"
         variant="secondary"
-        onPress={() => onChange({ ...side, conditions: [...side.conditions, emptyCondition()] })}
+        className="mt-2"
+        onPress={() => onChange([...conditions, emptyCondition()])}
       >
         添加条件
       </Button>
-    </section>
+    </>
   );
 }
 
