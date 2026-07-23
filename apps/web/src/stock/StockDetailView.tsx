@@ -5,6 +5,7 @@ import { summarizeIntradayBars, buildMacdSeries, buildSmaSeries, DAILY_MA_LINES,
 import { calcPctChg, detectLimitTag } from "./limitStatus";
 import { StockChart } from "./StockChart";
 import type { ChartPeriod, OhlcvBar, PositionContext } from "./types";
+import { chgToneClass } from "../ui/chgTone";
 
 type Props = {
   symbol: string;
@@ -351,10 +352,16 @@ export function StockDetailView({
             <p className="mt-3 text-sm text-[var(--danger)]">报价加载失败：{quote.error}</p>
           ) : (
             <div className="mt-3 flex flex-wrap items-end gap-3">
-              <span className="font-mono text-3xl font-semibold text-[var(--desk-text)]">
+              <span
+                className={`font-mono text-3xl font-semibold ${
+                  quoteChange == null || quoteChange === 0
+                    ? "text-[var(--desk-text)]"
+                    : chgToneClass(quoteChange)
+                }`}
+              >
                 {formatNumber(lastPrice)}
               </span>
-              <span className={`font-mono text-sm ${valueClass(quoteChange)}`}>
+              <span className={`font-mono text-sm ${chgToneClass(quoteChange)}`}>
                 {formatSigned(quoteChange)}%
               </span>
               {preClose != null && (
@@ -703,7 +710,7 @@ function Metric({ label, value, tone }: { label: string; value: string; tone?: n
   return (
     <div className="rounded-md bg-[var(--desk-ink)] p-3">
       <p className="text-xs text-[var(--desk-mist)]">{label}</p>
-      <p className={`mt-1 font-mono text-sm ${tone == null ? "text-[var(--desk-text)]" : valueClass(tone)}`}>{value}</p>
+      <p className={`mt-1 font-mono text-sm ${tone == null ? "text-[var(--desk-text)]" : chgToneClass(tone)}`}>{value}</p>
     </div>
   );
 }
@@ -876,16 +883,6 @@ function formatPercent(value: number | undefined | null, digits = 2): string {
 function formatSignedPercent(value: number | undefined | null, digits = 2): string {
   if (value == null || Number.isNaN(value)) return "—";
   return `${formatSigned(value, digits)}%`;
-}
-
-/**
- * 按涨跌返回 Desk 主题文本颜色。
- * @param value 数值
- */
-function valueClass(value: number): string {
-  if (value > 0) return "text-[var(--danger)]";
-  if (value < 0) return "text-[var(--success)]";
-  return "text-[var(--desk-mist)]";
 }
 
 /**

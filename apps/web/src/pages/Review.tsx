@@ -1,6 +1,7 @@
 import { Button, Card, CardContent, CardHeader, CardTitle, Chip } from "@heroui/react";
 import { useEffect, useState } from "react";
 import { api, beijingToday, formatBeijingTime } from "../api";
+import { chgToneClass } from "../ui/chgTone";
 import type { PageLogProps } from "./types";
 
 type ReviewRow = {
@@ -323,13 +324,9 @@ function Metric({
   tone?: number | null;
 }) {
   const color =
-    tone == null
+    tone == null || tone === 0
       ? "text-[var(--desk-text)]"
-      : tone > 0
-        ? "text-[var(--danger)]"
-        : tone < 0
-          ? "text-[var(--success)]"
-          : "text-[var(--desk-text)]";
+      : chgToneClass(tone);
   return (
     <div className="rounded-lg border border-[var(--desk-line)] bg-[var(--desk-ink)] px-3 py-2">
       <div className="text-xs text-[var(--desk-mist)]">{label}</div>

@@ -12,6 +12,7 @@ import { StockDetailDrawer } from "../stock/StockDetailDrawer";
 import { getStrategyProfile } from "../stock/strategyProfiles";
 import { SymbolSearchField } from "../stock/SymbolSearchField";
 import type { PositionContext } from "../stock/types";
+import { chgToneClass } from "../ui/chgTone";
 import type { PageLogProps } from "./types";
 
 type PaperPosition = {
@@ -1804,10 +1805,11 @@ function SideTag({ side }: { side: string }) {
     <span
       className={[
         "inline-flex rounded px-1.5 py-0.5 text-[10px] font-semibold tracking-wide",
+        // A 股习惯：买红卖绿
         buy
-          ? "bg-[color-mix(in_srgb,var(--success)_25%,transparent)] text-[var(--success)]"
+          ? "bg-[color-mix(in_srgb,var(--danger)_25%,transparent)] text-[var(--danger)]"
           : sell
-            ? "bg-[color-mix(in_srgb,var(--danger)_25%,transparent)] text-[var(--danger)]"
+            ? "bg-[color-mix(in_srgb,var(--success)_25%,transparent)] text-[var(--success)]"
             : "bg-[var(--desk-line)] text-[var(--desk-mist)]",
       ].join(" ")}
     >
@@ -1924,8 +1926,6 @@ function fmtSigned(n: number, digits = 2): string {
 }
 
 function pnlClass(n: number): string {
-  if (n > 0) return "text-[var(--success)]";
-  if (n < 0) return "text-[var(--danger)]";
-  return "text-[var(--desk-mist)]";
+  return chgToneClass(n);
 }
 

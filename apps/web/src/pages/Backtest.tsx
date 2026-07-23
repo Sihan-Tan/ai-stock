@@ -4,6 +4,7 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api, beijingToday } from "../api";
 import { parseSearchSymbol } from "../stock/parseSearchSymbol";
 import { SymbolSearchField } from "../stock/SymbolSearchField";
+import { chgToneClass } from "../ui/chgTone";
 import { EquityCurveChart } from "./EquityCurveChart";
 import type { PageLogProps } from "./types";
 
@@ -353,37 +354,13 @@ export default function Backtest({ setLog }: PageLogProps) {
                             <td className="px-3 py-2 font-mono">
                               {formatMoney(t.fee_total ?? t.commission)}
                             </td>
-                            <td
-                              className={`px-3 py-2 font-mono ${
-                                (grossRet ?? 0) > 0
-                                  ? "text-[var(--danger)]"
-                                  : (grossRet ?? 0) < 0
-                                    ? "text-[var(--success)]"
-                                    : ""
-                              }`}
-                            >
+                            <td className={`px-3 py-2 font-mono ${chgToneClass(grossRet)}`}>
                               {grossRet != null ? formatPct(grossRet) : "—"}
                             </td>
-                            <td
-                              className={`px-3 py-2 font-mono ${
-                                (netRet ?? 0) > 0
-                                  ? "text-[var(--danger)]"
-                                  : (netRet ?? 0) < 0
-                                    ? "text-[var(--success)]"
-                                    : ""
-                              }`}
-                            >
+                            <td className={`px-3 py-2 font-mono ${chgToneClass(netRet)}`}>
                               {netRet != null ? formatPct(netRet) : "—"}
                             </td>
-                            <td
-                              className={`px-3 py-2 font-mono ${
-                                (t.pnlcomm ?? 0) > 0
-                                  ? "text-[var(--danger)]"
-                                  : (t.pnlcomm ?? 0) < 0
-                                    ? "text-[var(--success)]"
-                                    : ""
-                              }`}
-                            >
+                            <td className={`px-3 py-2 font-mono ${chgToneClass(t.pnlcomm)}`}>
                               {t.pnlcomm != null ? t.pnlcomm.toFixed(2) : "—"}
                             </td>
                           </tr>
@@ -432,11 +409,7 @@ function Metric({
   tone?: number;
 }) {
   const color =
-    tone == null || tone === 0
-      ? "text-[var(--desk-text)]"
-      : tone > 0
-        ? "text-[var(--danger)]"
-        : "text-[var(--success)]";
+    tone == null || tone === 0 ? "text-[var(--desk-text)]" : chgToneClass(tone);
   return (
     <div className="rounded-lg border border-[var(--desk-line)] bg-[var(--desk-ink)] px-4 py-3">
       <div className="text-xs text-[var(--desk-mist)]">{label}</div>

@@ -2,6 +2,7 @@ import { Button, Card, CardContent, CardHeader, CardTitle, Chip } from "@heroui/
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { StockDetailDrawer } from "../stock/StockDetailDrawer";
+import { chgToneClass } from "../ui/chgTone";
 import type { PageLogProps } from "./types";
 
 type MorningLatest = {
@@ -161,7 +162,7 @@ export default function Morning({ setLog }: PageLogProps) {
                     className="border-b border-[var(--desk-line)] last:border-0"
                   >
                     <td className="px-3 py-3">{board.board || board.name || board.code || "—"}</td>
-                    <td className="px-3 py-3 font-mono text-[var(--danger)]">
+                    <td className={`px-3 py-3 font-mono ${chgToneClass(board.avg_pct)}`}>
                       {formatAuctionPct(board.avg_pct)}
                     </td>
                     <td className="px-3 py-3 font-mono">{board.count ?? "—"}</td>
@@ -222,7 +223,7 @@ export default function Morning({ setLog }: PageLogProps) {
                     >
                       <td className="px-3 py-3 font-mono">{symbol || "—"}</td>
                       <td className="px-3 py-3">{stock.name || "—"}</td>
-                      <td className="px-3 py-3 font-mono text-[var(--danger)]">
+                      <td className={`px-3 py-3 font-mono ${chgToneClass(stock.auction_pct)}`}>
                         {formatAuctionPct(stock.auction_pct)}
                       </td>
                       <td className="px-3 py-3 font-mono">

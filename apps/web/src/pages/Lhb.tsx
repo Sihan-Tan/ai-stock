@@ -2,6 +2,7 @@ import { Button, Card, CardContent, CardHeader, CardTitle, Chip } from "@heroui/
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { StockDetailDrawer } from "../stock/StockDetailDrawer";
+import { chgToneClass } from "../ui/chgTone";
 import type { PageLogProps } from "./types";
 
 type LhbSeat = {
@@ -136,8 +137,7 @@ export default function Lhb({ setLog }: PageLogProps) {
  * @param value 净买额
  */
 function netClass(value: number | null | undefined): string {
-  if (value == null || Number.isNaN(value) || value === 0) return "text-[var(--desk-mist)]";
-  return value > 0 ? "text-[var(--danger)]" : "text-[var(--success)]";
+  return chgToneClass(value);
 }
 
 /**
@@ -145,10 +145,7 @@ function netClass(value: number | null | undefined): string {
  * @param value 百分数
  */
 function pctClass(value: number | null | undefined): string {
-  if (value == null || Number.isNaN(value)) return "text-[var(--desk-mist)]";
-  if (value > 0) return "text-[var(--danger)]";
-  if (value < 0) return "text-[var(--success)]";
-  return "text-[var(--desk-mist)]";
+  return chgToneClass(value);
 }
 
 /**

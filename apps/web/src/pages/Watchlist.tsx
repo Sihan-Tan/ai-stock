@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import { detectLimitTag } from "../stock/limitStatus";
 import { StockDetailDrawer } from "../stock/StockDetailDrawer";
+import { chgToneClass } from "../ui/chgTone";
 import type { PageLogProps } from "./types";
 
 type WatchBoard = {
@@ -149,10 +150,10 @@ export default function Watchlist({ setLog }: PageLogProps) {
                       <td className="px-3 py-3 font-mono">{row.symbol}</td>
                       <td className="px-3 py-3">{row.name || "—"}</td>
                       <td className="px-3 py-3 font-mono">{formatNumber(row.last)}</td>
-                      <td className={`px-3 py-3 font-mono ${valueClass(pct)}`}>
+                      <td className={`px-3 py-3 font-mono ${chgToneClass(pct)}`}>
                         {formatSignedPercent(pct)}
                       </td>
-                      <td className={`px-3 py-3 font-mono ${valueClass(change)}`}>
+                      <td className={`px-3 py-3 font-mono ${chgToneClass(change)}`}>
                         {formatSigned(change)}
                       </td>
                       <td className="px-3 py-3 font-mono">{formatCompactNumber(row.volume)}</td>
@@ -292,15 +293,4 @@ function formatCompactNumber(value: number | null | undefined): string {
   if (Math.abs(value) >= 100_000_000) return `${(value / 100_000_000).toFixed(2)}亿`;
   if (Math.abs(value) >= 10_000) return `${(value / 10_000).toFixed(2)}万`;
   return formatNumber(value, 0);
-}
-
-/**
- * 按涨跌返回主题色。
- * @param value 数值
- */
-function valueClass(value: number | null): string {
-  if (value == null) return "text-[var(--desk-mist)]";
-  if (value > 0) return "text-[var(--danger)]";
-  if (value < 0) return "text-[var(--success)]";
-  return "text-[var(--desk-mist)]";
 }

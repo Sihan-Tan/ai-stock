@@ -96,10 +96,10 @@ export default function Sentiment({ setLog }: PageLogProps) {
                 {data.asof}
               </Chip>
             ) : null}
-            <Chip variant="soft" color="success">
+            <Chip variant="soft" color="danger">
               涨停 {data.limit_up_count ?? 0}
             </Chip>
-            <Chip variant="soft" color="danger">
+            <Chip variant="soft" color="success">
               跌停 {data.limit_down_count ?? 0}
             </Chip>
             <Chip variant="soft" color="accent">
