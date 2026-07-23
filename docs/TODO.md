@@ -7,7 +7,7 @@
   - 计划：`docs/superpowers/plans/2026-07-22-factor-rule-strategy-builder.md`  
   - 入口：策略页「新建规则策略」→ `/strategies/new/rules`
 
-- [ ] **规则策略支持 ML 因子（as_factor）**  
+- [x] **规则策略支持 ML 因子（as_factor）**  
   - 设计：`docs/superpowers/specs/2026-07-23-ml-factor-in-rule-strategy-design.md`  
   - 计划：`docs/superpowers/plans/2026-07-23-ml-factor-in-rule-strategy.md`  
   - 范围：`ml:` 进 factor_rules；下拉 `名（说明）`；回测预打分
