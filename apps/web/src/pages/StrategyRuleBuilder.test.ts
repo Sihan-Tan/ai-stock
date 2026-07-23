@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import {
   dumpFactorRulesYaml,
+  filterFactorOptions,
   formatFactorOptionLabel,
   parseFactorRulesYaml,
 } from "../pages/StrategyRuleBuilder";
@@ -23,6 +24,38 @@ describe("formatFactorOptionLabel", () => {
 
   it("returns name when tip equals name", () => {
     expect(formatFactorOptionLabel("SMA_20", "SMA_20")).toBe("SMA_20");
+  });
+});
+
+describe("filterFactorOptions", () => {
+  const opts = [
+    {
+      value: "RSI_14",
+      label: "RSI_14（相对强弱）",
+      searchText: "rsi_14 rsi 相对强弱",
+    },
+    {
+      value: "SMA_20",
+      label: "SMA_20（简单移动平均）",
+      searchText: "sma_20 sma 简单移动平均",
+    },
+    {
+      value: "ml:foo",
+      label: "ml:foo（模型）",
+      searchText: "ml:foo foo 模型 lightgbm",
+    },
+  ];
+
+  it("returns all when query empty", () => {
+    expect(filterFactorOptions(opts, "  ")).toHaveLength(3);
+  });
+
+  it("matches name", () => {
+    expect(filterFactorOptions(opts, "sma").map((o) => o.value)).toEqual(["SMA_20"]);
+  });
+
+  it("matches description in searchText", () => {
+    expect(filterFactorOptions(opts, "相对强弱").map((o) => o.value)).toEqual(["RSI_14"]);
   });
 });
 
@@ -160,5 +193,37 @@ describe("factor rules yaml roundtrip", () => {
     expect(parsed?.buy.within_bars).toBe(5);
     expect(parsed?.sell.combine).toBe("within");
     expect(parsed?.sell.within_bars).toBe(10);
+  });
+
+  it("dumps and parses lag and mult for volume compare", () => {
+    const yaml = dumpFactorRulesYaml({
+      id: "rule_vol",
+      name: "放量",
+      version: "v1.0",
+      kind: "factor_rules",
+      buy: {
+        combine: "all",
+        conditions: [
+          {
+            op: "gte",
+            left: { kind: "factor", factor: "VOLUME" },
+            right: { kind: "factor", factor: "VOLUME", lag: 1 },
+            mult: 2,
+          },
+        ],
+      },
+      sell: { combine: "any", conditions: [] },
+    });
+    expect(yaml).toContain("factor: \"VOLUME\"");
+    expect(yaml).toContain("lag: 1");
+    expect(yaml).toContain("mult: 2");
+    const parsed = parseFactorRulesYaml(yaml);
+    expect(parsed?.buy.conditions[0]?.op).toBe("gte");
+    expect(parsed?.buy.conditions[0]?.mult).toBe(2);
+    expect(parsed?.buy.conditions[0]?.right).toEqual({
+      kind: "factor",
+      factor: "VOLUME",
+      lag: 1,
+    });
   });
 });

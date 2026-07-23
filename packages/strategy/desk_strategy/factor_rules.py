@@ -22,6 +22,7 @@ _PRICE_FACTOR_COLS: dict[str, str] = {
     "OPEN": "open",
     "HIGH": "high",
     "LOW": "low",
+    "VOLUME": "volume",
 }
 _DEFAULT_NEAR_PCT = 3.0
 _DEFAULT_WITHIN_BARS = 5
@@ -181,14 +182,29 @@ def enrich_history_with_factors(
     return apply_factor_specs(out, specs)
 
 
-def _resolve_operand(
+def _parse_lag(operand: dict[str, Any]) -> int:
+    """操作数 lag（交易日）；非法/缺失 → 0。"""
+    raw = operand.get("lag")
+    if raw is None or raw == "":
+        return 0
+    v = _as_float(raw)
+    if v is None or v < 0 or int(v) != v:
+        return 0
+    return int(v)
+
+
+def _resolve_operand_at(
     operand: Any,
-    cur: pd.Series,
-    prev: pd.Series,
+    enriched: pd.DataFrame,
+    bar_i: int,
     *,
-    use_prev: bool = False,
+    cross_prev: bool = False,
 ) -> float | None:
-    """解析操作数：常数或因子列。"""
+    """
+    在 bar_i 上解析操作数；因子支持 lag（再往前推 N 根）。
+
+    cross_prev=True 时再额外往前 1 根（交叉用前一日）。
+    """
     if not isinstance(operand, dict):
         return None
     if "const" in operand:
@@ -199,9 +215,13 @@ def _resolve_operand(
     col = _primary_output(name.strip())
     if col is None:
         return None
-    row = prev if use_prev else cur
+    lag = _parse_lag(operand)
+    extra = 1 if cross_prev else 0
+    target = bar_i - extra - lag
+    if target < 0 or target >= len(enriched):
+        return None
+    row = enriched.iloc[target]
     if col not in row.index:
-        # 尝试小写
         col_l = col.lower()
         if col_l in row.index:
             col = col_l
@@ -210,11 +230,13 @@ def _resolve_operand(
     return _as_float(row.get(col))
 
 
-def eval_condition(cond: dict[str, Any], cur: pd.Series, prev: pd.Series) -> bool:
+def eval_condition(cond: dict[str, Any], enriched: pd.DataFrame, bar_i: int) -> bool:
     """
-    单条件求值。
+    在指定 bar 上求单条条件。
 
-    未知因子 / 缺值 → False。
+    未知因子 / 缺值 / lag 越界 → False。
+    比较类：left 与 right×mult（mult 默认 1；≤0 则假）。
+    交叉 / near_pct：可读操作数 lag，不读 mult。
     """
     op = str(cond.get("op") or "").strip().lower()
     if op not in ALL_OPS:
@@ -222,10 +244,12 @@ def eval_condition(cond: dict[str, Any], cur: pd.Series, prev: pd.Series) -> boo
     left = cond.get("left")
     right = cond.get("right")
     if op in CROSS_OPS:
-        l0 = _resolve_operand(left, cur, prev, use_prev=False)
-        r0 = _resolve_operand(right, cur, prev, use_prev=False)
-        l1 = _resolve_operand(left, cur, prev, use_prev=True)
-        r1 = _resolve_operand(right, cur, prev, use_prev=True)
+        if bar_i < 1:
+            return False
+        l0 = _resolve_operand_at(left, enriched, bar_i, cross_prev=False)
+        r0 = _resolve_operand_at(right, enriched, bar_i, cross_prev=False)
+        l1 = _resolve_operand_at(left, enriched, bar_i, cross_prev=True)
+        r1 = _resolve_operand_at(right, enriched, bar_i, cross_prev=True)
         if None in (l0, r0, l1, r1):
             return False
         if op == "cross_up":
@@ -233,8 +257,8 @@ def eval_condition(cond: dict[str, Any], cur: pd.Series, prev: pd.Series) -> boo
         return l1 >= r1 and l0 < r0
 
     if op == "near_pct":
-        lv = _resolve_operand(left, cur, prev)
-        rv = _resolve_operand(right, cur, prev)
+        lv = _resolve_operand_at(left, enriched, bar_i)
+        rv = _resolve_operand_at(right, enriched, bar_i)
         pct = _as_float(cond.get("pct"))
         if pct is None:
             pct = _DEFAULT_NEAR_PCT
@@ -242,20 +266,26 @@ def eval_condition(cond: dict[str, Any], cur: pd.Series, prev: pd.Series) -> boo
             return False
         return abs(lv / rv - 1.0) * 100.0 <= pct
 
-    lv = _resolve_operand(left, cur, prev)
-    rv = _resolve_operand(right, cur, prev)
+    lv = _resolve_operand_at(left, enriched, bar_i)
+    rv = _resolve_operand_at(right, enriched, bar_i)
     if lv is None or rv is None:
         return False
+    mult = _as_float(cond.get("mult"))
+    if mult is None:
+        mult = 1.0
+    if mult <= 0:
+        return False
+    rv_eff = rv * mult
     if op == "gt":
-        return lv > rv
+        return lv > rv_eff
     if op == "gte":
-        return lv >= rv
+        return lv >= rv_eff
     if op == "lt":
-        return lv < rv
+        return lv < rv_eff
     if op == "lte":
-        return lv <= rv
+        return lv <= rv_eff
     if op == "eq":
-        return abs(lv - rv) < 1e-9
+        return abs(lv - rv_eff) < 1e-9
     return False
 
 
@@ -263,12 +293,7 @@ def eval_condition_at(cond: dict[str, Any], enriched: pd.DataFrame, i: int) -> b
     """在 bar 下标 i 上求单条条件；交叉需要 i>=1。"""
     if i < 0 or i >= len(enriched):
         return False
-    op = str(cond.get("op") or "").strip().lower()
-    if op in CROSS_OPS and i < 1:
-        return False
-    cur = enriched.iloc[i]
-    prev = enriched.iloc[i - 1] if i >= 1 else cur
-    return eval_condition(cond, cur, prev)
+    return eval_condition(cond, enriched, i)
 
 
 def _sequence_triggered(
@@ -332,12 +357,10 @@ def _side_triggered(block: Any, enriched: pd.DataFrame, today_i: int) -> bool:
         return _sequence_triggered(conditions, enriched, today_i, _parse_within_bars(block))
     if combine == "within":
         return _within_triggered(conditions, enriched, today_i, _parse_within_bars(block))
-    cur = enriched.iloc[today_i]
-    prev = enriched.iloc[today_i - 1] if today_i >= 1 else cur
     results: list[bool] = []
     for cond in conditions:
         if isinstance(cond, dict):
-            results.append(eval_condition(cond, cur, prev))
+            results.append(eval_condition(cond, enriched, today_i))
         else:
             results.append(False)
     if not results:

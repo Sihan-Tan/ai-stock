@@ -40,6 +40,8 @@ def test_registry_has_required_fields_and_plots():
     assert "简单移动平均" in by_name["SMA_20"]["description"]
     assert by_name["CLOSE"]["outputs"] == ["close"]
     assert by_name["CLOSE"]["category"] == "price"
+    assert by_name["VOLUME"]["outputs"] == ["volume"]
+    assert by_name["VOLUME"]["plot"] == "panel"
     for f in FACTOR_REGISTRY:
         assert f["enabled"] is True
         assert f["category"]

@@ -205,7 +205,11 @@ class FactorService:
         series: dict[str, Any] = {}
         engine = last_engine()
         bars = _bars_from_ohlcv(ohlcv)
-        price_names = [n for n in ta_names if str(n).strip().upper() in {"CLOSE", "OPEN", "HIGH", "LOW"}]
+        price_names = [
+            n
+            for n in ta_names
+            if str(n).strip().upper() in {"CLOSE", "OPEN", "HIGH", "LOW", "VOLUME"}
+        ]
         ta_only = [n for n in ta_names if n not in price_names]
 
         if price_names:

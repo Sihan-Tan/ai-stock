@@ -1,12 +1,12 @@
 import { Button, Card, CardContent, CardHeader, CardTitle, Chip } from "@heroui/react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
 import type { FactorMeta } from "../factors/types";
 import type { PageLogProps } from "./types";
 
 type Operand =
-  | { kind: "factor"; factor: string }
+  | { kind: "factor"; factor: string; /** 滞后天数，默认 0 */ lag?: number }
   | { kind: "const"; const: number };
 
 type RuleCondition = {
@@ -15,6 +15,8 @@ type RuleCondition = {
   right: Operand;
   /** near_pct 专用：±百分比，默认 3 */
   pct?: number;
+  /** 比较类：右端倍数，默认 1（left 与 right×mult 比较） */
+  mult?: number;
 };
 
 type RuleCombine = "all" | "any" | "sequence" | "within";
@@ -102,7 +104,12 @@ function dumpOperand(op: Operand, indent: string): string {
   if (op.kind === "const") {
     return `${indent}const: ${Number.isFinite(op.const) ? op.const : 0}`;
   }
-  return `${indent}factor: ${JSON.stringify(op.factor || "SMA_5")}`;
+  const lines = [`${indent}factor: ${JSON.stringify(op.factor || "SMA_5")}`];
+  const lag = Number.isFinite(op.lag) ? Math.max(0, Math.floor(Number(op.lag))) : 0;
+  if (lag > 0) {
+    lines.push(`${indent}lag: ${lag}`);
+  }
+  return lines.join("\n");
 }
 
 /**
@@ -150,6 +157,17 @@ export function dumpFactorRulesYaml(doc: RuleDoc): string {
       if (cond.op === "near_pct") {
         const pct = Number.isFinite(cond.pct) ? Number(cond.pct) : 3;
         lines.push(`      pct: ${pct}`);
+      } else if (
+        cond.op === "gt" ||
+        cond.op === "gte" ||
+        cond.op === "lt" ||
+        cond.op === "lte" ||
+        cond.op === "eq"
+      ) {
+        const mult = Number.isFinite(cond.mult) ? Number(cond.mult) : 1;
+        if (mult !== 1) {
+          lines.push(`      mult: ${mult}`);
+        }
       }
     }
   };
@@ -199,9 +217,12 @@ export function parseFactorRulesYaml(text: string): RuleDoc | null {
       const right = parseOperand(raw, "right") ?? { kind: "factor" as const, factor: "SMA_20" };
       const op = opM?.[1] || "gt";
       const pctM = raw.match(/(?:^|\n)\s*pct:\s*([-\d.]+)/);
+      const multM = raw.match(/(?:^|\n)\s*mult:\s*([-\d.]+)/);
       const cond: RuleCondition = { op, left, right };
       if (op === "near_pct") {
         cond.pct = pctM ? Number(pctM[1]) : 3;
+      } else if (["gt", "gte", "lt", "lte", "eq"].includes(op) && multM) {
+        cond.mult = Number(multM[1]);
       }
       side.conditions.push(cond);
     }
@@ -220,16 +241,35 @@ export function parseFactorRulesYaml(text: string): RuleDoc | null {
  */
 function parseOperand(raw: string, side: "left" | "right"): Operand | null {
   const flowFactor = raw.match(
-    new RegExp(`${side}:\\s*\\{\\s*factor:\\s*([^,}]+)\\s*\\}`)
+    new RegExp(`${side}:\\s*\\{\\s*factor:\\s*([^,}]+)(?:,\\s*lag:\\s*(\\d+))?\\s*\\}`)
   );
   if (flowFactor) {
-    return { kind: "factor", factor: unquote(flowFactor[1]) };
+    const op: Operand = { kind: "factor", factor: unquote(flowFactor[1]) };
+    if (flowFactor[2]) op.lag = Number(flowFactor[2]);
+    return op;
   }
   const flowConst = raw.match(
     new RegExp(`${side}:\\s*\\{\\s*const:\\s*([-\\d.]+)\\s*\\}`)
   );
   if (flowConst) {
     return { kind: "const", const: Number(flowConst[1]) };
+  }
+  const block = raw.match(
+    new RegExp(`${side}:\\s*\\n((?:\\s{2,}[^\\n]+\\n?)*)`)
+  );
+  if (block) {
+    const body = block[1];
+    const factorM = body.match(/^\s*factor:\s*(.+)$/m);
+    if (factorM) {
+      const op: Operand = { kind: "factor", factor: unquote(factorM[1]) };
+      const lagM = body.match(/^\s*lag:\s*(\d+)\s*$/m);
+      if (lagM) op.lag = Number(lagM[1]);
+      return op;
+    }
+    const constM = body.match(/^\s*const:\s*([-\\d.]+)\s*$/m);
+    if (constM) {
+      return { kind: "const", const: Number(constM[1]) };
+    }
   }
   const factorM = raw.match(new RegExp(`${side}:\\s*\\n\\s+factor:\\s*(.+)`));
   if (factorM) {
@@ -270,6 +310,30 @@ export function formatFactorOptionLabel(
   return `${name}（${tip}）`;
 }
 
+/** 规则条件因子下拉选项。 */
+export type FactorOption = {
+  value: string;
+  label: string;
+  /** 小写检索串：name + label + description */
+  searchText: string;
+};
+
+/**
+ * 按关键字过滤因子选项（name / label / description 包含匹配）。
+ * @param options 全量选项
+ * @param query 用户输入
+ */
+export function filterFactorOptions(options: FactorOption[], query: string): FactorOption[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return options;
+  return options.filter(
+    (o) =>
+      o.searchText.includes(q) ||
+      o.value.toLowerCase().includes(q) ||
+      o.label.toLowerCase().includes(q)
+  );
+}
+
 /**
  * 策略规则构建器：因子比较 / 交叉 → factor_rules YAML。
  * @param props 页面日志
@@ -290,6 +354,7 @@ export default function StrategyRuleBuilder({ setLog }: PageLogProps) {
         .map((f) => ({
           value: f.name,
           label: formatFactorOptionLabel(f.name, f.label, f.description),
+          searchText: `${f.name} ${f.label || ""} ${f.description || ""}`.toLowerCase(),
         })),
     [factors]
   );
@@ -411,7 +476,7 @@ export default function StrategyRuleBuilder({ setLog }: PageLogProps) {
           <p className="text-xs text-[var(--desk-mist)]">
             买/卖各一组条件；同 bar 同时满足时卖优先。保存后可在回测页选用。
           </p>
-          <div className="grid gap-4 lg:grid-cols-2">
+          <div className="flex flex-col gap-4">
             <RuleSideEditor
               title="买入条件"
               side={doc.buy}
@@ -443,7 +508,7 @@ function RuleSideEditor({
 }: {
   title: string;
   side: RuleSide;
-  factorOptions: Array<{ value: string; label: string }>;
+  factorOptions: FactorOption[];
   onChange: (next: RuleSide) => void;
 }) {
   return (
@@ -566,6 +631,27 @@ function RuleSideEditor({
                   />
                   %
                 </label>
+              ) : ["gt", "gte", "lt", "lte", "eq"].includes(cond.op) ? (
+                <label className="flex items-center gap-1 text-xs text-[var(--desk-mist)]">
+                  ×
+                  <input
+                    type="number"
+                    min={0}
+                    step={0.1}
+                    className={`${controlClass} w-20 font-mono`}
+                    value={Number.isFinite(cond.mult) ? cond.mult : 1}
+                    onChange={(e) => {
+                      const conditions = [...side.conditions];
+                      const mult = Number(e.target.value);
+                      conditions[index] = {
+                        ...cond,
+                        mult: Number.isFinite(mult) ? mult : 1,
+                      };
+                      onChange({ ...side, conditions });
+                    }}
+                    aria-label="右端倍数"
+                  />
+                </label>
               ) : null}
               <button
                 type="button"
@@ -603,7 +689,7 @@ function OperandEditor({
   forceFactor = false,
 }: {
   value: Operand;
-  factorOptions: Array<{ value: string; label: string }>;
+  factorOptions: FactorOption[];
   onChange: (next: Operand) => void;
   /** near_pct 右侧强制因子 */
   forceFactor?: boolean;
@@ -639,21 +725,183 @@ function OperandEditor({
           onChange={(e) => onChange({ kind: "const", const: Number(e.target.value) })}
         />
       ) : (
-        <select
-          className={`${controlClass} min-w-[120px] flex-1`}
-          value={value.kind === "factor" ? value.factor : "SMA_20"}
-          onChange={(e) => onChange({ kind: "factor", factor: e.target.value })}
-        >
-          {value.kind === "factor" && !factorOptions.some((o) => o.value === value.factor) ? (
-            <option value={value.factor}>{value.factor}</option>
-          ) : null}
-          {factorOptions.map((opt) => (
-            <option key={opt.value} value={opt.value}>
-              {opt.label}
-            </option>
-          ))}
-        </select>
+        <>
+          <FactorOperandCombobox
+            value={value.kind === "factor" ? value.factor : "SMA_20"}
+            options={factorOptions}
+            onChange={(factor) =>
+              onChange({
+                kind: "factor",
+                factor,
+                lag: value.kind === "factor" && value.lag ? value.lag : undefined,
+              })
+            }
+          />
+          <label className="flex items-center gap-1 text-xs text-[var(--desk-mist)]">
+            滞后
+            <input
+              type="number"
+              min={0}
+              step={1}
+              className={`${controlClass} w-14 font-mono`}
+              value={value.kind === "factor" && Number.isFinite(value.lag) ? value.lag : 0}
+              onChange={(e) => {
+                const lag = Math.max(0, Math.floor(Number(e.target.value) || 0));
+                onChange({
+                  kind: "factor",
+                  factor: value.kind === "factor" ? value.factor : "SMA_20",
+                  lag: lag > 0 ? lag : undefined,
+                });
+              }}
+              aria-label="滞后天数"
+            />
+          </label>
+        </>
       )}
+    </div>
+  );
+}
+
+/**
+ * 可搜索的因子选择（Combobox）。
+ * @param props 当前因子名、选项与回调
+ */
+function FactorOperandCombobox({
+  value,
+  options,
+  onChange,
+}: {
+  value: string;
+  options: FactorOption[];
+  onChange: (factor: string) => void;
+}) {
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [highlight, setHighlight] = useState(0);
+
+  const selected = options.find((o) => o.value === value);
+  const displayLabel = selected?.label ?? value;
+  const filtered = useMemo(
+    () => filterFactorOptions(options, open ? query : ""),
+    [options, open, query]
+  );
+
+  useEffect(() => {
+    const onDoc = (event: MouseEvent) => {
+      if (!wrapRef.current?.contains(event.target as Node)) {
+        setOpen(false);
+        setQuery("");
+      }
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, []);
+
+  useEffect(() => {
+    setHighlight(0);
+  }, [query, open]);
+
+  /**
+   * 确认选中某一因子。
+   * @param factor 因子名
+   */
+  const commit = (factor: string) => {
+    onChange(factor);
+    setOpen(false);
+    setQuery("");
+  };
+
+  return (
+    <div ref={wrapRef} className="relative min-w-[120px] flex-1">
+      <input
+        type="text"
+        role="combobox"
+        aria-expanded={open}
+        aria-autocomplete="list"
+        aria-label="搜索并选择因子"
+        className={`${controlClass} w-full font-mono`}
+        value={open ? query : displayLabel}
+        placeholder="搜索因子"
+        autoComplete="off"
+        onFocus={() => {
+          setOpen(true);
+          setQuery("");
+        }}
+        onChange={(e) => {
+          setOpen(true);
+          setQuery(e.target.value);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            setOpen(false);
+            setQuery("");
+            (e.target as HTMLInputElement).blur();
+            return;
+          }
+          if (!open) {
+            if (e.key === "ArrowDown" || e.key === "Enter") {
+              e.preventDefault();
+              setOpen(true);
+              setQuery("");
+            }
+            return;
+          }
+          if (e.key === "ArrowDown") {
+            e.preventDefault();
+            setHighlight((h) => Math.min(h + 1, Math.max(filtered.length - 1, 0)));
+            return;
+          }
+          if (e.key === "ArrowUp") {
+            e.preventDefault();
+            setHighlight((h) => Math.max(h - 1, 0));
+            return;
+          }
+          if (e.key === "Enter") {
+            e.preventDefault();
+            const hit = filtered[highlight] ?? filtered[0];
+            if (hit) commit(hit.value);
+          }
+        }}
+      />
+      {open ? (
+        <ul
+          className="absolute left-0 top-full z-30 mt-1 max-h-56 w-full min-w-[14rem] overflow-auto rounded-lg border border-[var(--desk-line)] bg-[var(--desk-panel)] shadow-lg"
+          role="listbox"
+        >
+          {value && !options.some((o) => o.value === value) ? (
+            <li>
+              <button
+                type="button"
+                className="w-full px-3 py-2 text-left font-mono text-xs text-[var(--desk-mist)] hover:bg-[var(--desk-line)]"
+                onMouseDown={(ev) => ev.preventDefault()}
+                onClick={() => commit(value)}
+              >
+                {value}（未在目录）
+              </button>
+            </li>
+          ) : null}
+          {filtered.length === 0 ? (
+            <li className="px-3 py-2 text-sm text-[var(--desk-mist)]">无匹配因子</li>
+          ) : (
+            filtered.map((opt, index) => (
+              <li key={opt.value} role="option" aria-selected={opt.value === value}>
+                <button
+                  type="button"
+                  className={`w-full truncate px-3 py-2 text-left text-sm hover:bg-[var(--desk-line)] ${
+                    index === highlight ? "bg-[var(--desk-line)]" : ""
+                  } ${opt.value === value ? "text-[var(--desk-accent)]" : "text-[var(--desk-text)]"}`}
+                  onMouseDown={(ev) => ev.preventDefault()}
+                  onMouseEnter={() => setHighlight(index)}
+                  onClick={() => commit(opt.value)}
+                >
+                  {opt.label}
+                </button>
+              </li>
+            ))
+          )}
+        </ul>
+      ) : null}
     </div>
   );
 }

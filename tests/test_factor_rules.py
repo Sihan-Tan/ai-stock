@@ -203,6 +203,73 @@ def test_near_pct_outside_band_no_signal():
     assert eval_factor_rules(data, {"row": {"symbol": "UT.SH"}, "history": hist}) == []
 
 
+def test_volume_gte_prev_times_mult():
+    """今日 VOLUME >= 昨日 VOLUME × 2。"""
+    hist = _ohlcv([10.0] * 20)
+    hist["volume"] = 1_000_000.0
+    hist.loc[hist.index[-1], "volume"] = 2_000_000.0
+    data = {
+        "kind": "factor_rules",
+        "buy": {
+            "combine": "all",
+            "conditions": [
+                {
+                    "op": "gte",
+                    "left": {"factor": "VOLUME"},
+                    "right": {"factor": "VOLUME", "lag": 1},
+                    "mult": 2,
+                },
+            ],
+        },
+        "sell": {"combine": "all", "conditions": []},
+    }
+    out = eval_factor_rules(data, {"row": {"symbol": "UT.SH"}, "history": hist})
+    assert len(out) == 1 and out[0].side == Side.BUY
+
+
+def test_volume_mult_below_threshold_no_signal():
+    """今日仅 1.5 倍昨日，mult=2 不触发。"""
+    hist = _ohlcv([10.0] * 20)
+    hist["volume"] = 1_000_000.0
+    hist.loc[hist.index[-1], "volume"] = 1_500_000.0
+    data = {
+        "kind": "factor_rules",
+        "buy": {
+            "combine": "all",
+            "conditions": [
+                {
+                    "op": "gte",
+                    "left": {"factor": "VOLUME"},
+                    "right": {"factor": "VOLUME", "lag": 1},
+                    "mult": 2,
+                },
+            ],
+        },
+        "sell": {"combine": "all", "conditions": []},
+    }
+    assert eval_factor_rules(data, {"row": {"symbol": "UT.SH"}, "history": hist}) == []
+
+
+def test_lag_beyond_history_no_signal():
+    """lag 越界 → 条件假。"""
+    hist = _ohlcv([10.0] * 5)
+    data = {
+        "kind": "factor_rules",
+        "buy": {
+            "combine": "all",
+            "conditions": [
+                {
+                    "op": "gt",
+                    "left": {"factor": "CLOSE"},
+                    "right": {"factor": "CLOSE", "lag": 10},
+                },
+            ],
+        },
+        "sell": {"combine": "all", "conditions": []},
+    }
+    assert eval_factor_rules(data, {"row": {"symbol": "UT.SH"}, "history": hist}) == []
+
+
 def test_sequence_same_day_two_steps():
     """sequence 允许同日两步；末步在今日（CLOSE 同时 >5 且 <20）。"""
     hist = _ohlcv([10.0] * 30)

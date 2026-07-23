@@ -158,6 +158,7 @@ TALIB_ZH_DESC: dict[str, str] = {
     "OPEN": "开盘价",
     "HIGH": "最高价",
     "LOW": "最低价",
+    "VOLUME": "成交量",
     # Statistic
     "BETA": "贝塔系数 Beta",
     "CORREL": "皮尔逊相关系数",

@@ -270,13 +270,14 @@ def _build_period_aliases() -> list[FactorMeta]:
 
 
 def _build_price_factors() -> list[FactorMeta]:
-    """OHLCV 伪因子（规则 near_pct 等用；不走 TA-Lib）。"""
+    """OHLCV 伪因子（规则 near_pct / lag 等用；不走 TA-Lib）。"""
     rows: list[FactorMeta] = []
-    for name, col in (
-        ("CLOSE", "close"),
-        ("OPEN", "open"),
-        ("HIGH", "high"),
-        ("LOW", "low"),
+    for name, col, plot in (
+        ("CLOSE", "close", "overlay"),
+        ("OPEN", "open", "overlay"),
+        ("HIGH", "high", "overlay"),
+        ("LOW", "low", "overlay"),
+        ("VOLUME", "volume", "panel"),
     ):
         rows.append(
             _f(
@@ -285,7 +286,7 @@ def _build_price_factors() -> list[FactorMeta]:
                 category="price",
                 params={},
                 outputs=[col],
-                plot="overlay",
+                plot=plot,  # type: ignore[arg-type]
                 default_enabled=False,
             )
         )
