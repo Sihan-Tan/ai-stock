@@ -65,7 +65,7 @@ def _bar_dt_str(strategy: bt.Strategy) -> str:
 class _SignalStrategy(bt.Strategy):
     """将 Desk 策略 on_bar 适配到 backtrader。"""
 
-    params = (("desk_on_bar", None), ("symbol", ""), ("history_df", None))
+    params = (("desk_on_bar", None), ("symbol", ""), ("history_df", None), ("db", None))
 
     def __init__(self):
         self._order = None
@@ -111,7 +111,9 @@ class _SignalStrategy(bt.Strategy):
         if hist_df is not None and not getattr(hist_df, "empty", True):
             history = hist_df.iloc[: idx + 1].copy()
 
-        signals = self.p.desk_on_bar({"row": row, "history": history}) or []
+        signals = self.p.desk_on_bar(
+            {"row": row, "history": history, "db": self.p.db}
+        ) or []
         for sig in signals:
             if sig.side.value == "buy" and not self.position:
                 self._order = self.buy()
@@ -394,6 +396,7 @@ class BacktraderRunner:
             desk_on_bar=reg.on_bar,
             symbol=req.symbol,
             history_df=history_df,
+            db=self.db,
         )
         cerebro.addsizer(_ASharePercentSizer, percents=95.0)
         cerebro.broker.setcash(req.initial_cash)
