@@ -17,8 +17,12 @@ type RuleCondition = {
   pct?: number;
 };
 
+type RuleCombine = "all" | "any" | "sequence" | "within";
+
 type RuleSide = {
-  combine: "all" | "any";
+  combine: RuleCombine;
+  /** sequence/within：间隔或窗口（交易日），默认 5 */
+  within_bars?: number;
   conditions: RuleCondition[];
 };
 
@@ -119,7 +123,19 @@ export function dumpFactorRulesYaml(doc: RuleDoc): string {
    */
   const dumpSide = (key: "buy" | "sell", side: RuleSide) => {
     lines.push(`${key}:`);
-    lines.push(`  combine: ${side.combine === "any" ? "any" : "all"}`);
+    const combine =
+      side.combine === "any"
+        ? "any"
+        : side.combine === "sequence"
+          ? "sequence"
+          : side.combine === "within"
+            ? "within"
+            : "all";
+    lines.push(`  combine: ${combine}`);
+    if (combine === "sequence" || combine === "within") {
+      const n = Number.isFinite(side.within_bars) ? Number(side.within_bars) : 5;
+      lines.push(`  within_bars: ${Math.max(0, Math.floor(n))}`);
+    }
     lines.push(`  conditions:`);
     if (side.conditions.length === 0) {
       lines.push(`    []`);
@@ -167,8 +183,11 @@ export function parseFactorRulesYaml(text: string): RuleDoc | null {
         : { ...base.sell, conditions: [] as RuleCondition[] };
     const blockRe = new RegExp(`(?:^|\\n)${section}:\\n([\\s\\S]*?)(?=\\n(?:buy|sell|id|name|version|kind|params):|\\s*$)`);
     const block = text.match(blockRe)?.[1] ?? "";
-    const combineM = block.match(/combine:\s*(all|any)/);
-    if (combineM) side.combine = combineM[1] as "all" | "any";
+    const combineM = block.match(/combine:\s*(all|any|sequence|within)/);
+    if (combineM) side.combine = combineM[1] as RuleCombine;
+    const wbM = block.match(/within_bars:\s*(\d+)/);
+    if (wbM) side.within_bars = Number(wbM[1]);
+    else if (side.combine === "sequence" || side.combine === "within") side.within_bars = 5;
     if (/conditions:\s*\[\s*\]/.test(block)) {
       return side;
     }
@@ -431,17 +450,50 @@ function RuleSideEditor({
     <section className="space-y-3 rounded-lg border border-[var(--desk-line)] bg-[var(--desk-ink)]/30 p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-sm font-medium text-[var(--desk-text)]">{title}</h3>
-        <select
-          className={controlClass}
-          value={side.combine}
-          onChange={(e) =>
-            onChange({ ...side, combine: e.target.value === "any" ? "any" : "all" })
-          }
-          aria-label={`${title}组合方式`}
-        >
-          <option value="all">全部满足 (AND)</option>
-          <option value="any">任一满足 (OR)</option>
-        </select>
+        <div className="flex flex-wrap items-center gap-2">
+          <select
+            className={controlClass}
+            value={side.combine}
+            onChange={(e) => {
+              const value = e.target.value as RuleCombine;
+              const next: RuleSide = { ...side, combine: value };
+              if (
+                (value === "sequence" || value === "within") &&
+                next.within_bars === undefined
+              ) {
+                next.within_bars = 5;
+              }
+              onChange(next);
+            }}
+            aria-label={`${title}组合方式`}
+          >
+            <option value="all">全部满足 (AND)</option>
+            <option value="any">任一满足 (OR)</option>
+            <option value="sequence">有序间隔</option>
+            <option value="within">近N日均曾成立</option>
+          </select>
+          {side.combine === "sequence" || side.combine === "within" ? (
+            <label className="flex items-center gap-1 text-xs text-[var(--desk-mist)]">
+              {side.combine === "sequence" ? "相邻间隔≤（交易日）" : "近窗（交易日）"}
+              <input
+                type="number"
+                min={0}
+                step={1}
+                className={`${controlClass} w-20 font-mono`}
+                value={Number.isFinite(side.within_bars) ? side.within_bars : 5}
+                onChange={(e) =>
+                  onChange({
+                    ...side,
+                    within_bars: Math.max(0, Math.floor(Number(e.target.value))),
+                  })
+                }
+                aria-label={
+                  side.combine === "sequence" ? "相邻间隔交易日" : "近窗交易日"
+                }
+              />
+            </label>
+          ) : null}
+        </div>
       </div>
       <ul className="space-y-2">
         {side.conditions.map((cond, index) => (

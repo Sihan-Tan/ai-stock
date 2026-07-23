@@ -125,4 +125,40 @@ describe("factor rules yaml roundtrip", () => {
     expect(parsed?.buy.conditions[0]?.pct).toBe(3);
     expect(parsed?.buy.conditions[0]?.left).toEqual({ kind: "factor", factor: "CLOSE" });
   });
+
+  it("dumps and parses sequence with within_bars", () => {
+    const yaml = dumpFactorRulesYaml({
+      id: "rule_seq",
+      name: "跨日",
+      version: "v1.0",
+      kind: "factor_rules",
+      buy: {
+        combine: "sequence",
+        within_bars: 5,
+        conditions: [
+          {
+            op: "cross_up",
+            left: { kind: "factor", factor: "SMA_5" },
+            right: { kind: "factor", factor: "SMA_20" },
+          },
+          {
+            op: "near_pct",
+            left: { kind: "factor", factor: "CLOSE" },
+            right: { kind: "factor", factor: "SMA_20" },
+            pct: 3,
+          },
+        ],
+      },
+      sell: { combine: "within", within_bars: 10, conditions: [] },
+    });
+    expect(yaml).toContain("combine: sequence");
+    expect(yaml).toContain("within_bars: 5");
+    expect(yaml).toContain("combine: within");
+    expect(yaml).toContain("within_bars: 10");
+    const parsed = parseFactorRulesYaml(yaml);
+    expect(parsed?.buy.combine).toBe("sequence");
+    expect(parsed?.buy.within_bars).toBe(5);
+    expect(parsed?.sell.combine).toBe("within");
+    expect(parsed?.sell.within_bars).toBe(10);
+  });
 });

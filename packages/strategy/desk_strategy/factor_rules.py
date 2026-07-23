@@ -24,6 +24,18 @@ _PRICE_FACTOR_COLS: dict[str, str] = {
     "LOW": "low",
 }
 _DEFAULT_NEAR_PCT = 3.0
+_DEFAULT_WITHIN_BARS = 5
+
+
+def _parse_within_bars(block: dict[str, Any]) -> int:
+    """侧级 within_bars；非法/缺失 → 默认 5。"""
+    raw = block.get("within_bars")
+    if raw is None or raw == "":
+        return _DEFAULT_WITHIN_BARS
+    v = _as_float(raw)
+    if v is None or v < 0 or int(v) != v:
+        return _DEFAULT_WITHIN_BARS
+    return int(v)
 
 
 def _as_float(value: Any) -> float | None:
@@ -247,14 +259,81 @@ def eval_condition(cond: dict[str, Any], cur: pd.Series, prev: pd.Series) -> boo
     return False
 
 
-def _side_triggered(block: Any, cur: pd.Series, prev: pd.Series) -> bool:
-    """买卖侧是否触发。"""
+def eval_condition_at(cond: dict[str, Any], enriched: pd.DataFrame, i: int) -> bool:
+    """在 bar 下标 i 上求单条条件；交叉需要 i>=1。"""
+    if i < 0 or i >= len(enriched):
+        return False
+    op = str(cond.get("op") or "").strip().lower()
+    if op in CROSS_OPS and i < 1:
+        return False
+    cur = enriched.iloc[i]
+    prev = enriched.iloc[i - 1] if i >= 1 else cur
+    return eval_condition(cond, cur, prev)
+
+
+def _sequence_triggered(
+    conditions: list[Any], enriched: pd.DataFrame, today_i: int, within_bars: int
+) -> bool:
+    """有序间隔：末步须在 today_i；相邻下标差 ∈ [0, within_bars]（存在性，非贪心）。"""
+    if within_bars < 0 or not conditions:
+        return False
+    conds = [c for c in conditions if isinstance(c, dict)]
+    if len(conds) != len(conditions):
+        return False
+    if not conds:
+        return False
+    if not eval_condition_at(conds[-1], enriched, today_i):
+        return False
+
+    def can_place(step: int, cursor: int) -> bool:
+        """Place conditions[0..step] ending at cursor for step's condition; step goes backward."""
+        if step < 0:
+            return True
+        lo = max(0, cursor - within_bars)
+        for i in range(cursor, lo - 1, -1):
+            if eval_condition_at(conds[step], enriched, i):
+                if can_place(step - 1, i):
+                    return True
+        return False
+
+    if len(conds) == 1:
+        return True
+    return can_place(len(conds) - 2, today_i)
+
+
+def _within_triggered(
+    conditions: list[Any], enriched: pd.DataFrame, today_i: int, within_bars: int
+) -> bool:
+    """近窗内每条至少一日为真；允许同日；无序。"""
+    if within_bars < 0 or not conditions:
+        return False
+    lo = max(0, today_i - within_bars)
+    for cond in conditions:
+        if not isinstance(cond, dict):
+            return False
+        hit = False
+        for i in range(lo, today_i + 1):
+            if eval_condition_at(cond, enriched, i):
+                hit = True
+                break
+        if not hit:
+            return False
+    return True
+
+
+def _side_triggered(block: Any, enriched: pd.DataFrame, today_i: int) -> bool:
     if not isinstance(block, dict):
         return False
     conditions = block.get("conditions") or []
     if not conditions:
         return False
     combine = str(block.get("combine") or "all").strip().lower()
+    if combine == "sequence":
+        return _sequence_triggered(conditions, enriched, today_i, _parse_within_bars(block))
+    if combine == "within":
+        return _within_triggered(conditions, enriched, today_i, _parse_within_bars(block))
+    cur = enriched.iloc[today_i]
+    prev = enriched.iloc[today_i - 1] if today_i >= 1 else cur
     results: list[bool] = []
     for cond in conditions:
         if isinstance(cond, dict):
@@ -287,10 +366,9 @@ def eval_factor_rules(data: dict[str, Any], ctx: Any) -> list[Signal]:
     if enriched is None or len(enriched) < 2:
         return []
 
-    cur = enriched.iloc[-1]
-    prev = enriched.iloc[-2]
-    sell_on = _side_triggered(data.get("sell"), cur, prev)
-    buy_on = _side_triggered(data.get("buy"), cur, prev)
+    today_i = len(enriched) - 1
+    sell_on = _side_triggered(data.get("sell"), enriched, today_i)
+    buy_on = _side_triggered(data.get("buy"), enriched, today_i)
 
     if sell_on:
         return [Signal(symbol=symbol, side=Side.SELL, reason="factor_rules_sell")]

@@ -201,3 +201,170 @@ def test_near_pct_outside_band_no_signal():
         "sell": {"combine": "all", "conditions": []},
     }
     assert eval_factor_rules(data, {"row": {"symbol": "UT.SH"}, "history": hist}) == []
+
+
+def test_sequence_same_day_two_steps():
+    """sequence 允许同日两步；末步在今日（CLOSE 同时 >5 且 <20）。"""
+    hist = _ohlcv([10.0] * 30)
+    data = {
+        "kind": "factor_rules",
+        "buy": {
+            "combine": "sequence",
+            "within_bars": 5,
+            "conditions": [
+                {"op": "gt", "left": {"factor": "CLOSE"}, "right": {"const": 5}},
+                {"op": "lt", "left": {"factor": "CLOSE"}, "right": {"const": 20}},
+            ],
+        },
+        "sell": {"combine": "all", "conditions": []},
+    }
+    out = eval_factor_rules(data, {"row": {"symbol": "UT.SH"}, "history": hist})
+    assert len(out) == 1 and out[0].side == Side.BUY
+
+
+def test_sequence_gap_within_window():
+    """条件1 在 T-3 真、条件2 在今日真，within_bars=5 → 买。"""
+    hist = _ohlcv([10.0] * 30)
+    # T-3: close=12（>11），其余日 close=10（不满足 >11）；今日 close=9（<9.5）
+    hist.loc[hist.index[:-1], "close"] = 10.0
+    hist.loc[hist.index[-4], "close"] = 12.0
+    hist.loc[hist.index[-1], "close"] = 9.0
+    data = {
+        "kind": "factor_rules",
+        "buy": {
+            "combine": "sequence",
+            "within_bars": 5,
+            "conditions": [
+                {"op": "gt", "left": {"factor": "CLOSE"}, "right": {"const": 11}},
+                {"op": "lt", "left": {"factor": "CLOSE"}, "right": {"const": 9.5}},
+            ],
+        },
+        "sell": {"combine": "all", "conditions": []},
+    }
+    out = eval_factor_rules(data, {"row": {"symbol": "UT.SH"}, "history": hist})
+    assert len(out) == 1 and out[0].side == Side.BUY
+
+
+def test_sequence_gap_exceeds_window_no_signal():
+    """间隔超过 within_bars → 不触发。"""
+    hist = _ohlcv([10.0] * 30)
+    hist.loc[hist.index[:-1], "close"] = 10.0
+    hist.loc[hist.index[-10], "close"] = 12.0  # 距今 9 根
+    hist.loc[hist.index[-1], "close"] = 9.0
+    data = {
+        "kind": "factor_rules",
+        "buy": {
+            "combine": "sequence",
+            "within_bars": 5,
+            "conditions": [
+                {"op": "gt", "left": {"factor": "CLOSE"}, "right": {"const": 11}},
+                {"op": "lt", "left": {"factor": "CLOSE"}, "right": {"const": 9.5}},
+            ],
+        },
+        "sell": {"combine": "all", "conditions": []},
+    }
+    assert eval_factor_rules(data, {"row": {"symbol": "UT.SH"}, "history": hist}) == []
+
+
+def test_sequence_last_step_not_today_no_signal():
+    """末条件仅在昨日真、今日假 → 不触发。"""
+    hist = _ohlcv([10.0] * 30)
+    hist["close"] = 10.0
+    hist.loc[hist.index[-2], "close"] = 9.0  # 昨日 < 9.5
+    hist.loc[hist.index[-5], "close"] = 12.0
+    # 今日 close=10：不满足 lt 9.5
+    data = {
+        "kind": "factor_rules",
+        "buy": {
+            "combine": "sequence",
+            "within_bars": 5,
+            "conditions": [
+                {"op": "gt", "left": {"factor": "CLOSE"}, "right": {"const": 11}},
+                {"op": "lt", "left": {"factor": "CLOSE"}, "right": {"const": 9.5}},
+            ],
+        },
+        "sell": {"combine": "all", "conditions": []},
+    }
+    assert eval_factor_rules(data, {"row": {"symbol": "UT.SH"}, "history": hist}) == []
+
+
+def test_within_unordered_and_same_day():
+    """within：两条件不同日或同日均可；无序。"""
+    hist = _ohlcv([10.0] * 30)
+    hist["close"] = 10.0
+    hist.loc[hist.index[-3], "close"] = 12.0  # >11
+    hist.loc[hist.index[-1], "close"] = 9.0  # <9.5；同窗
+    data = {
+        "kind": "factor_rules",
+        "buy": {
+            "combine": "within",
+            "within_bars": 5,
+            "conditions": [
+                {"op": "lt", "left": {"factor": "CLOSE"}, "right": {"const": 9.5}},
+                {"op": "gt", "left": {"factor": "CLOSE"}, "right": {"const": 11}},
+            ],
+        },
+        "sell": {"combine": "all", "conditions": []},
+    }
+    out = eval_factor_rules(data, {"row": {"symbol": "UT.SH"}, "history": hist})
+    assert len(out) == 1 and out[0].side == Side.BUY
+
+    # 同日：gt 5 与 lt 20
+    hist2 = _ohlcv([10.0] * 30)
+    data2 = {
+        "kind": "factor_rules",
+        "buy": {
+            "combine": "within",
+            "within_bars": 5,
+            "conditions": [
+                {"op": "gt", "left": {"factor": "CLOSE"}, "right": {"const": 5}},
+                {"op": "lt", "left": {"factor": "CLOSE"}, "right": {"const": 20}},
+            ],
+        },
+        "sell": {"combine": "all", "conditions": []},
+    }
+    out2 = eval_factor_rules(data2, {"row": {"symbol": "UT.SH"}, "history": hist2})
+    assert len(out2) == 1 and out2[0].side == Side.BUY
+
+
+def test_sequence_three_steps_needs_earlier_middle():
+    """中间步有多个候选时须选较早 bar，贪心取最近会漏触发。"""
+    hist = _ohlcv([7.0] * 11)
+    hist["close"] = 7.0
+    hist.loc[hist.index[6], "close"] = 101.0
+    hist.loc[hist.index[8], "close"] = 50.0
+    hist.loc[hist.index[9], "close"] = 50.0
+    hist.loc[hist.index[10], "close"] = 5.0
+    data = {
+        "kind": "factor_rules",
+        "buy": {
+            "combine": "sequence",
+            "within_bars": 2,
+            "conditions": [
+                {"op": "gt", "left": {"factor": "CLOSE"}, "right": {"const": 100}},
+                {"op": "eq", "left": {"factor": "CLOSE"}, "right": {"const": 50}},
+                {"op": "lt", "left": {"factor": "CLOSE"}, "right": {"const": 8}},
+            ],
+        },
+        "sell": {"combine": "all", "conditions": []},
+    }
+    out = eval_factor_rules(data, {"row": {"symbol": "UT.SH"}, "history": hist})
+    assert len(out) == 1 and out[0].side == Side.BUY
+
+
+def test_combine_all_unchanged_regression():
+    """all 仍只看当日：昨日曾 >11、今日 =10 不触发 gt 11。"""
+    hist = _ohlcv([10.0] * 30)
+    hist["close"] = 10.0
+    hist.loc[hist.index[-2], "close"] = 12.0
+    data = {
+        "kind": "factor_rules",
+        "buy": {
+            "combine": "all",
+            "conditions": [
+                {"op": "gt", "left": {"factor": "CLOSE"}, "right": {"const": 11}},
+            ],
+        },
+        "sell": {"combine": "all", "conditions": []},
+    }
+    assert eval_factor_rules(data, {"row": {"symbol": "UT.SH"}, "history": hist}) == []
