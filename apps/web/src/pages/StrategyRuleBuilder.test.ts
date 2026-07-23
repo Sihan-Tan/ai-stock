@@ -1,6 +1,24 @@
 /** dumpFactorRulesYaml / parseFactorRulesYaml 轻量单测（纯函数）。 */
 import { describe, expect, it } from "vitest";
-import { dumpFactorRulesYaml, parseFactorRulesYaml } from "../pages/StrategyRuleBuilder";
+import {
+  dumpFactorRulesYaml,
+  formatFactorOptionLabel,
+  parseFactorRulesYaml,
+} from "../pages/StrategyRuleBuilder";
+
+describe("formatFactorOptionLabel", () => {
+  it("formats name with distinct tip", () => {
+    expect(formatFactorOptionLabel("RSI_14", "RSI")).toBe("RSI_14（RSI）");
+  });
+
+  it("keeps nested tip for ml factor", () => {
+    expect(formatFactorOptionLabel("ml:x", "x（lightgbm）")).toBe("ml:x（x（lightgbm））");
+  });
+
+  it("returns name when tip equals name", () => {
+    expect(formatFactorOptionLabel("SMA_20", "SMA_20")).toBe("SMA_20");
+  });
+});
 
 describe("factor rules yaml roundtrip", () => {
   it("dumps kind factor_rules and parses back", () => {

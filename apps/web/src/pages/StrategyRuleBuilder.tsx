@@ -195,6 +195,17 @@ function unquote(raw: string): string {
 }
 
 /**
+ * 规则构建器因子下拉文案：因子名（说明）。
+ * @param name 因子名
+ * @param label 说明（API label）
+ */
+export function formatFactorOptionLabel(name: string, label: string): string {
+  const tip = (label || "").trim();
+  if (!tip || tip === name) return name;
+  return `${name}（${tip}）`;
+}
+
+/**
  * 策略规则构建器：因子比较 / 交叉 → factor_rules YAML。
  * @param props 页面日志
  */
@@ -210,8 +221,11 @@ export default function StrategyRuleBuilder({ setLog }: PageLogProps) {
   const factorOptions = useMemo(
     () =>
       factors
-        .filter((f) => f.enabled && f.category !== "ml" && !f.name.startsWith("ml:"))
-        .map((f) => ({ value: f.name, label: `${f.label} (${f.name})` })),
+        .filter((f) => f.enabled)
+        .map((f) => ({
+          value: f.name,
+          label: formatFactorOptionLabel(f.name, f.label),
+        })),
     [factors]
   );
 
