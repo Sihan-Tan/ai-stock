@@ -373,6 +373,17 @@ class BacktraderRunner:
             raise ValueError(f"no bars for symbol/range{hint}")
         df = compute(df)
         history_df = df.copy()
+
+        import yaml
+        from desk_strategy.factor_rules import attach_ml_factor_columns, collect_factor_names
+
+        body = getattr(reg.meta, "yaml_body", None) or ""
+        parsed = yaml.safe_load(body) if body else None
+        if isinstance(parsed, dict):
+            history_df = attach_ml_factor_columns(
+                history_df, collect_factor_names(parsed), self.db
+            )
+
         df = df.set_index(pd.to_datetime(df["date"]))
 
         cerebro = bt.Cerebro()

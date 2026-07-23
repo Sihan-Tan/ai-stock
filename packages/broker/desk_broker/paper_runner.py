@@ -64,6 +64,17 @@ class PaperStrategyRunner:
             return base
 
         history = df.copy()
+
+        import yaml
+        from desk_strategy.factor_rules import attach_ml_factor_columns, collect_factor_names
+
+        body = getattr(reg.meta, "yaml_body", None) or ""
+        parsed = yaml.safe_load(body) if body else None
+        if isinstance(parsed, dict):
+            history = attach_ml_factor_columns(
+                history, collect_factor_names(parsed), self.db
+            )
+
         idx = len(df) - 1
         lookback = min(250, idx + 1)
         slice_df = df.iloc[idx + 1 - lookback : idx + 1]
@@ -75,7 +86,7 @@ class PaperStrategyRunner:
             opens=slice_df["open"].astype(float).tolist(),
             volumes=slice_df["volume"].astype(float).tolist(),
         )
-        signals = reg.on_bar({"row": row, "history": history}) or []
+        signals = reg.on_bar({"row": row, "history": history, "db": self.db}) or []
         sig_dump = [
             s.model_dump() if hasattr(s, "model_dump") else dict(s) for s in signals
         ]

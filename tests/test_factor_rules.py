@@ -147,7 +147,9 @@ def test_yaml_on_bar_dispatches_factor_rules():
         },
         "sell": {"combine": "all", "conditions": []},
     }
-    out = StrategyRegistry._yaml_on_bar(
+    reg = StrategyRegistry.__new__(StrategyRegistry)
+    reg.db = None
+    out = reg._yaml_on_bar(
         data, {"row": {"symbol": "UT.SH"}, "history": _ohlcv(closes)}
     )
     assert len(out) == 1 and out[0].side == Side.BUY

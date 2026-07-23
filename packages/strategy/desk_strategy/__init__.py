@@ -715,9 +715,10 @@ class StrategyRegistry:
         self.db.flush()
         return n
 
-    @staticmethod
-    def _yaml_on_bar(data: dict[str, Any], ctx: Any) -> list[Signal]:
+    def _yaml_on_bar(self, data: dict[str, Any], ctx: Any) -> list[Signal]:
         """YAML 规则：factor_rules 通用求值；否则兼容旧 sma_fast/sma_slow。"""
+        if isinstance(ctx, dict) and "db" not in ctx:
+            ctx = {**ctx, "db": self.db}
         kind = str(data.get("kind") or "").strip().lower()
         if kind == "factor_rules" or (
             isinstance(data.get("buy"), dict) and "conditions" in (data.get("buy") or {})
