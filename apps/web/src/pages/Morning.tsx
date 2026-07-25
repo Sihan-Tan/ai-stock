@@ -1,9 +1,24 @@
-import { Button, Card, CardContent, CardHeader, CardTitle, Chip } from "@heroui/react";
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { StockDetailDrawer } from "../stock/StockDetailDrawer";
 import { chgToneClass } from "../ui/chgTone";
 import type { PageLogProps } from "./types";
+import {
+  EmptyPickNotice,
+  EmptyRow,
+  formatCompact,
+  formatPct,
+  formatScore,
+  PrimaryAction,
+  SecondaryAction,
+  SessionBrief,
+  SessionHero,
+  SessionPanel,
+  SessionTable,
+  tdClass,
+  thClass,
+  trClickClass,
+} from "./sessionPick/shared";
 
 type MorningLatest = {
   asof: string;
@@ -28,16 +43,17 @@ type MorningLatest = {
 };
 
 /**
- * 晨会开盘前篇与竞价强势选拔。
+ * 早盘选股：开盘前摘要与竞价强势选拔。
  * @param props 页面日志写入方法
  */
 export default function Morning({ setLog }: PageLogProps) {
   const [data, setData] = useState<MorningLatest | null>(null);
   const [busy, setBusy] = useState(false);
   const [drawerSymbol, setDrawerSymbol] = useState<string | null>(null);
+  const [briefTab, setBriefTab] = useState<"preopen" | "post_auction">("post_auction");
 
   /**
-   * 加载当日晨会结果。
+   * 加载当日早盘结果。
    */
   const load = () =>
     api<MorningLatest>("/api/morning/latest")
@@ -56,8 +72,14 @@ export default function Morning({ setLog }: PageLogProps) {
     try {
       await api("/api/morning/preopen", { method: "POST" });
       await api("/api/morning/post-auction", { method: "POST" });
-      setLog("晨会开盘前 + 竞价选拔已完成");
-      await load();
+      const latest = await api<MorningLatest>("/api/morning/latest");
+      setData(latest);
+      const n = latest.stocks?.length ?? 0;
+      setLog(
+        n > 0
+          ? `早盘选股完成：强势个股 ${n} 只`
+          : "早盘选股完成：未选出符合条件的个股"
+      );
     } catch (error) {
       setLog(String(error));
     } finally {
@@ -72,8 +94,13 @@ export default function Morning({ setLog }: PageLogProps) {
     setBusy(true);
     try {
       await api("/api/morning/post-auction", { method: "POST" });
-      setLog("竞价选拔已完成");
-      await load();
+      const latest = await api<MorningLatest>("/api/morning/latest");
+      setData(latest);
+      setBriefTab("post_auction");
+      const n = latest.stocks?.length ?? 0;
+      setLog(
+        n > 0 ? `竞价选拔完成：强势个股 ${n} 只` : "竞价选拔完成：未选出符合条件的个股"
+      );
     } catch (error) {
       setLog(String(error));
     } finally {
@@ -101,151 +128,199 @@ export default function Morning({ setLog }: PageLogProps) {
 
   const pre = data?.briefs?.preopen;
   const post = data?.briefs?.post_auction;
+  const boards = data?.boards ?? [];
+  const stocks = data?.stocks ?? [];
+  const activeBrief = briefTab === "preopen" ? pre : post;
+  const hasRun = Boolean(pre?.content || post?.content);
+  const noStockPick = hasRun && stocks.length === 0;
 
   return (
     <div className="space-y-4">
-      <Card className="border border-[var(--desk-line)] bg-[var(--desk-panel)]">
-        <CardHeader className="flex w-full flex-row flex-nowrap items-center justify-between gap-3 p-5 pb-3">
-          <div className="flex min-w-0 items-center gap-3">
-            <CardTitle className="text-base text-[var(--desk-text)]">晨间选拔</CardTitle>
-            {data?.asof && (
-              <Chip size="sm" variant="soft">
-                {data.asof}
-              </Chip>
-            )}
-          </div>
-          <div className="flex shrink-0 flex-wrap gap-2">
-            <Button size="sm" variant="secondary" isDisabled={busy} onPress={() => void load()}>
+      <SessionHero
+        kind="morning"
+        asof={data?.asof}
+        busy={busy}
+        metrics={[
+          { label: "强势板块", value: boards.length },
+          { label: "强势个股", value: stocks.length },
+        ]}
+        actions={
+          <>
+            <SecondaryAction isDisabled={busy} onPress={() => void load()}>
               刷新
-            </Button>
-            <Button size="sm" variant="secondary" isDisabled={busy} onPress={() => void runAuction()}>
-              重跑竞价选拔
-            </Button>
-            <Button
-              size="sm"
-              variant="secondary"
-              isDisabled={busy || !(data?.stocks?.length)}
+            </SecondaryAction>
+            <SecondaryAction isDisabled={busy} onPress={() => void runAuction()}>
+              重跑竞价
+            </SecondaryAction>
+            <SecondaryAction
+              isDisabled={busy || !stocks.length}
               onPress={() => void bindWatchlist()}
             >
-              一键进自选
-            </Button>
-            <Button size="sm" variant="primary" isDisabled={busy} onPress={() => void runAll()}>
-              运行开盘前 + 竞价
-            </Button>
-          </div>
-        </CardHeader>
-        <CardContent className="grid gap-4 p-5 pt-2 md:grid-cols-2">
-          <BriefBlock title="开盘前篇" content={pre?.content} />
-          <BriefBlock title="竞价篇" content={post?.content} />
-        </CardContent>
-      </Card>
+              进自选
+            </SecondaryAction>
+            <PrimaryAction isDisabled={busy} onPress={() => void runAll()}>
+              运行早盘
+            </PrimaryAction>
+          </>
+        }
+      />
 
-      <Card className="border border-[var(--desk-line)] bg-[var(--desk-panel)]">
-        <CardHeader className="p-5 pb-3">
-          <CardTitle className="text-base text-[var(--desk-text)]">强势板块</CardTitle>
-        </CardHeader>
-        <CardContent className="p-5 pt-2">
-          <div className="overflow-x-auto">
-            <table className="w-full border-collapse text-left text-sm">
-              <thead className="border-b border-[var(--desk-line)] text-[var(--desk-mist)]">
+      {noStockPick && (
+        <EmptyPickNotice
+          title="本次未选出符合条件的个股"
+          tip="竞价选拔已跑完，但当前宇宙内没有进入强势名单的标的。可检查自选是否已加入、竞价快照是否齐全，或稍后再重跑竞价。"
+        />
+      )}
+
+      {!hasRun && (
+        <EmptyPickNotice
+          title="尚未运行早盘选股"
+          tip="点击右上角「运行早盘」生成开盘前摘要与竞价强势名单；若运行后仍无个股，页面会再次提示。"
+        />
+      )}
+
+      <SessionPanel
+        title="场次摘要"
+        hint="开盘前看情绪与日历；竞价后看强势板块与个股打分。"
+        action={
+          <div className="flex gap-1 rounded-lg border border-[var(--desk-line)] p-0.5">
+            {(
+              [
+                { key: "preopen" as const, label: "开盘前" },
+                { key: "post_auction" as const, label: "竞价" },
+              ] as const
+            ).map((tab) => (
+              <button
+                key={tab.key}
+                type="button"
+                onClick={() => setBriefTab(tab.key)}
+                className={[
+                  "rounded-md px-3 py-1.5 text-xs transition-colors",
+                  briefTab === tab.key
+                    ? "bg-[var(--desk-ink)] text-[var(--desk-text)]"
+                    : "text-[var(--desk-mist)] hover:text-[var(--desk-text)]",
+                ].join(" ")}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        }
+      >
+        <SessionBrief
+          title={briefTab === "preopen" ? "开盘前" : "竞价后"}
+          content={activeBrief?.content}
+          emptyHint="暂无摘要。点击「运行早盘」生成开盘前与竞价结果。"
+        />
+      </SessionPanel>
+
+      <div className="grid gap-4 xl:grid-cols-5">
+        <div className="xl:col-span-2">
+          <SessionPanel title="强势板块" hint="按竞价均涨与成分热度打分。">
+            <SessionTable>
+              <thead>
                 <tr>
-                  <th className="px-3 py-2 font-medium">板块</th>
-                  <th className="px-3 py-2 font-medium">竞价均涨</th>
-                  <th className="px-3 py-2 font-medium">成分数</th>
-                  <th className="px-3 py-2 font-medium">得分</th>
+                  <th className={thClass}>#</th>
+                  <th className={thClass}>板块</th>
+                  <th className={thClass}>竞价均涨</th>
+                  <th className={thClass}>成分</th>
+                  <th className={thClass}>得分</th>
                 </tr>
               </thead>
               <tbody>
-                {(data?.boards ?? []).map((board) => (
-                  <tr
-                    key={board.board || board.code || board.name}
-                    className="border-b border-[var(--desk-line)] last:border-0"
-                  >
-                    <td className="px-3 py-3">{board.board || board.name || board.code || "—"}</td>
-                    <td className={`px-3 py-3 font-mono ${chgToneClass(board.avg_pct)}`}>
-                      {formatAuctionPct(board.avg_pct)}
+                {boards.map((board, index) => (
+                  <tr key={board.board || board.code || board.name} className="border-t border-[var(--desk-line)]">
+                    <td className={`${tdClass} font-mono text-[var(--desk-mist)]`}>{index + 1}</td>
+                    <td className={`${tdClass} font-medium text-[var(--desk-text)]`}>
+                      {board.board || board.name || board.code || "—"}
                     </td>
-                    <td className="px-3 py-3 font-mono">{board.count ?? "—"}</td>
-                    <td className="px-3 py-3 font-mono">{formatScore(board.score)}</td>
+                    <td className={`${tdClass} font-mono ${chgToneClass(board.avg_pct)}`}>
+                      {formatPct(board.avg_pct)}
+                    </td>
+                    <td className={`${tdClass} font-mono`}>{board.count ?? "—"}</td>
+                    <td className={`${tdClass} font-mono`}>{formatScore(board.score)}</td>
                   </tr>
                 ))}
-                {!data?.boards?.length && (
-                  <tr>
-                    <td colSpan={4} className="px-3 py-8 text-center text-[var(--desk-mist)]">
-                      暂无强势板块（需先有竞价快照）
-                    </td>
-                  </tr>
+                {!boards.length && (
+                  <EmptyRow
+                    colSpan={5}
+                    message={
+                      hasRun
+                        ? "本次未选出符合条件的板块。"
+                        : "暂无板块。需先有竞价快照并完成选拔。"
+                    }
+                  />
                 )}
               </tbody>
-            </table>
-          </div>
-        </CardContent>
-      </Card>
+            </SessionTable>
+          </SessionPanel>
+        </div>
 
-      <Card className="border border-[var(--desk-line)] bg-[var(--desk-panel)]">
-        <CardHeader className="flex flex-wrap items-center justify-between gap-2 p-5 pb-3">
-          <div>
-            <CardTitle className="text-base text-[var(--desk-text)]">强势个股</CardTitle>
-            <p className="mt-1 text-xs text-[var(--desk-mist)]">
-              「一键进自选」写入监控池，可用策略 Runner 扫描
-            </p>
-          </div>
-          <Button
-            size="sm"
-            variant="primary"
-            isDisabled={busy || !(data?.stocks?.length)}
-            onPress={() => void bindWatchlist()}
+        <div className="xl:col-span-3">
+          <SessionPanel
+            title="强势个股"
+            hint="点击行打开详情；「进自选」写入监控池。"
+            action={
+              <PrimaryAction
+                isDisabled={busy || !stocks.length}
+                onPress={() => void bindWatchlist()}
+              >
+                一键进自选
+              </PrimaryAction>
+            }
           >
-            一键进自选
-          </Button>
-        </CardHeader>
-        <CardContent className="p-5 pt-2">
-          <div className="overflow-x-auto">
-            <table className="w-full border-collapse text-left text-sm">
-              <thead className="border-b border-[var(--desk-line)] text-[var(--desk-mist)]">
+            <SessionTable>
+              <thead>
                 <tr>
-                  <th className="px-3 py-2 font-medium">代码</th>
-                  <th className="px-3 py-2 font-medium">名称</th>
-                  <th className="px-3 py-2 font-medium">竞价涨幅</th>
-                  <th className="px-3 py-2 font-medium">竞价额</th>
-                  <th className="px-3 py-2 font-medium">板块</th>
-                  <th className="px-3 py-2 font-medium">得分</th>
+                  <th className={thClass}>#</th>
+                  <th className={thClass}>代码</th>
+                  <th className={thClass}>名称</th>
+                  <th className={thClass}>竞价涨幅</th>
+                  <th className={thClass}>竞价额</th>
+                  <th className={thClass}>板块</th>
+                  <th className={thClass}>得分</th>
                 </tr>
               </thead>
               <tbody>
-                {(data?.stocks ?? []).map((stock) => {
+                {stocks.map((stock, index) => {
                   const symbol = stock.symbol || stock.code || "";
                   return (
                     <tr
                       key={symbol}
-                      className="cursor-pointer border-b border-[var(--desk-line)] last:border-0 hover:bg-[var(--desk-ink)]"
+                      className={trClickClass}
                       onClick={() => symbol && setDrawerSymbol(symbol)}
                     >
-                      <td className="px-3 py-3 font-mono">{symbol || "—"}</td>
-                      <td className="px-3 py-3">{stock.name || "—"}</td>
-                      <td className={`px-3 py-3 font-mono ${chgToneClass(stock.auction_pct)}`}>
-                        {formatAuctionPct(stock.auction_pct)}
+                      <td className={`${tdClass} font-mono text-[var(--desk-mist)]`}>{index + 1}</td>
+                      <td className={`${tdClass} font-mono text-[var(--desk-text)]`}>
+                        {symbol || "—"}
                       </td>
-                      <td className="px-3 py-3 font-mono">
+                      <td className={tdClass}>{stock.name || "—"}</td>
+                      <td className={`${tdClass} font-mono ${chgToneClass(stock.auction_pct)}`}>
+                        {formatPct(stock.auction_pct)}
+                      </td>
+                      <td className={`${tdClass} font-mono`}>
                         {formatCompact(stock.auction_amount)}
                       </td>
-                      <td className="px-3 py-3">{stock.board || "—"}</td>
-                      <td className="px-3 py-3 font-mono">{formatScore(stock.score)}</td>
+                      <td className={tdClass}>{stock.board || "—"}</td>
+                      <td className={`${tdClass} font-mono`}>{formatScore(stock.score)}</td>
                     </tr>
                   );
                 })}
-                {!data?.stocks?.length && (
-                  <tr>
-                    <td colSpan={6} className="px-3 py-8 text-center text-[var(--desk-mist)]">
-                      暂无强势个股。请先加入自选并在竞价时段运行选拔。
-                    </td>
-                  </tr>
+                {!stocks.length && (
+                  <EmptyRow
+                    colSpan={7}
+                    message={
+                      hasRun
+                        ? "本次未选出符合条件的个股。"
+                        : "暂无个股。请先加入自选，并点击「运行早盘」。"
+                    }
+                  />
                 )}
               </tbody>
-            </table>
-          </div>
-        </CardContent>
-      </Card>
+            </SessionTable>
+          </SessionPanel>
+        </div>
+      </div>
 
       <StockDetailDrawer
         open={drawerSymbol !== null}
@@ -254,48 +329,4 @@ export default function Morning({ setLog }: PageLogProps) {
       />
     </div>
   );
-}
-
-/**
- * 晨会文案块。
- * @param props 标题与正文
- */
-function BriefBlock({ title, content }: { title: string; content?: string }) {
-  return (
-    <div className="rounded-lg border border-[var(--desk-line)] bg-[var(--desk-ink)] p-4">
-      <div className="mb-2 text-sm font-medium text-[var(--desk-text)]">{title}</div>
-      <pre className="whitespace-pre-wrap text-xs leading-6 text-[var(--desk-mist)]">
-        {content || "暂无内容"}
-      </pre>
-    </div>
-  );
-}
-
-/**
- * 竞价涨幅（小数 → 百分数）。
- * @param value 小数涨幅
- */
-function formatAuctionPct(value: number | undefined): string {
-  if (value == null || Number.isNaN(value)) return "—";
-  return `${value >= 0 ? "+" : ""}${(value * 100).toFixed(2)}%`;
-}
-
-/**
- * 得分展示。
- * @param value 分数
- */
-function formatScore(value: number | undefined): string {
-  if (value == null || Number.isNaN(value)) return "—";
-  return value.toFixed(2);
-}
-
-/**
- * 金额缩写。
- * @param value 金额
- */
-function formatCompact(value: number | undefined): string {
-  if (value == null || Number.isNaN(value)) return "—";
-  if (Math.abs(value) >= 100_000_000) return `${(value / 100_000_000).toFixed(2)}亿`;
-  if (Math.abs(value) >= 10_000) return `${(value / 10_000).toFixed(2)}万`;
-  return value.toFixed(0);
 }

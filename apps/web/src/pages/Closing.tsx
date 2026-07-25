@@ -1,9 +1,24 @@
-import { Button, Card, CardContent, CardHeader, CardTitle, Chip } from "@heroui/react";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { StockDetailDrawer } from "../stock/StockDetailDrawer";
 import { chgToneClass } from "../ui/chgTone";
 import type { PageLogProps } from "./types";
+import {
+  EmptyPickNotice,
+  EmptyRow,
+  formatPct,
+  formatScore,
+  PrimaryAction,
+  SecondaryAction,
+  SessionBrief,
+  SessionHero,
+  SessionPanel,
+  SessionTable,
+  StrategyChip,
+  tdClass,
+  thClass,
+  trClickClass,
+} from "./sessionPick/shared";
 
 type ClosingLatest = {
   asof: string;
@@ -26,7 +41,7 @@ type ClosingStrategy = {
 };
 
 /**
- * 尾盘选股：策略多选、跑选、文案与命中列表。
+ * 尾盘选股：策略多选、跑选、命中列表。
  * @param props 页面日志写入方法
  */
 export default function Closing({ setLog }: PageLogProps) {
@@ -82,22 +97,24 @@ export default function Closing({ setLog }: PageLogProps) {
   };
 
   /**
-   * 立即跑尾盘选股。
-   * 空勾选时后端按全部 closing 策略执行。
+   * 立即跑尾盘选股。空勾选时后端按全部 closing 策略执行。
    */
   const runNow = async () => {
     setBusy(true);
     try {
-      await api("/api/closing/run", {
+      const report = await api<{ stocks?: unknown[]; content?: string }>("/api/closing/run", {
         method: "POST",
         body: JSON.stringify({ strategy_ids: selectedIds }),
       });
-      setLog(
-        selectedIds.length
-          ? `尾盘选股已完成（勾选 ${selectedIds.length} 个策略）`
-          : "尾盘选股已完成（未勾选，按全部 closing 策略）"
-      );
       await loadLatest();
+      const n = Array.isArray(report.stocks) ? report.stocks.length : 0;
+      setLog(
+        n > 0
+          ? selectedIds.length
+            ? `尾盘选股完成：命中 ${n} 只（勾选 ${selectedIds.length} 个策略）`
+            : `尾盘选股完成：命中 ${n} 只`
+          : "尾盘选股完成：未选出符合条件的股票"
+      );
     } catch (error) {
       setLog(String(error));
     } finally {
@@ -128,147 +145,184 @@ export default function Closing({ setLog }: PageLogProps) {
   };
 
   const brief = data?.briefs?.closing;
-  /** 有勾选时按所选策略过滤展示；空勾选 = 全部。 */
+  const allStocks = data?.stocks ?? [];
   const displayStocks =
     selectedIds.length > 0
-      ? (data?.stocks ?? []).filter(
+      ? allStocks.filter(
           (stock) => stock.strategy_id != null && selectedIds.includes(stock.strategy_id)
         )
-      : (data?.stocks ?? []);
+      : allStocks;
+  const taggedCount = strategies.filter((s) => s.closing).length;
+  const hasRun = Boolean(brief?.content);
+  const filteredEmpty = selectedIds.length > 0 && allStocks.length > 0 && displayStocks.length === 0;
+  const noPickAfterRun = hasRun && allStocks.length === 0;
 
   return (
     <div className="space-y-4">
-      <Card className="border border-[var(--desk-line)] bg-[var(--desk-panel)]">
-        <CardHeader className="flex w-full flex-row flex-nowrap items-center justify-between gap-3 p-5 pb-3">
-          <div className="flex min-w-0 items-center gap-3">
-            <CardTitle className="text-base text-[var(--desk-text)]">尾盘选股</CardTitle>
-            {data?.asof && (
-              <Chip size="sm" variant="soft">
-                {data.asof}
-              </Chip>
-            )}
-          </div>
-          <div className="flex shrink-0 flex-wrap gap-2">
-            <Button size="sm" variant="secondary" isDisabled={busy} onPress={() => void refresh()}>
+      <SessionHero
+        kind="closing"
+        asof={data?.asof}
+        busy={busy}
+        metrics={[
+          { label: "命中", value: displayStocks.length },
+          { label: "已选策略", value: selectedIds.length || "全部" },
+          { label: "已标记", value: taggedCount },
+        ]}
+        actions={
+          <>
+            <SecondaryAction isDisabled={busy} onPress={() => void refresh()}>
               刷新
-            </Button>
-            <Button
-              size="sm"
-              variant="secondary"
+            </SecondaryAction>
+            <SecondaryAction
               isDisabled={busy || !displayStocks.length}
               onPress={() => void bindWatchlist()}
             >
-              一键进自选
-            </Button>
-            <Button
-              size="sm"
-              variant="primary"
+              进自选
+            </SecondaryAction>
+            <PrimaryAction
               isDisabled={busy || !strategies.length}
               onPress={() => void runNow()}
             >
               立即跑
-            </Button>
-          </div>
-        </CardHeader>
-        <CardContent className="grid gap-4 p-5 pt-2">
-          <BriefBlock title="尾盘篇" content={brief?.content} />
-        </CardContent>
-      </Card>
+            </PrimaryAction>
+          </>
+        }
+      />
 
-      <Card className="border border-[var(--desk-line)] bg-[var(--desk-panel)]">
-        <CardHeader className="p-5 pb-3">
-          <CardTitle className="text-base text-[var(--desk-text)]">策略选择</CardTitle>
-          <p className="mt-1 text-xs text-[var(--desk-mist)]">
-            默认勾选带 closing 角色的策略；未勾选时「立即跑」按全部 closing 策略执行
-          </p>
-        </CardHeader>
-        <CardContent className="p-5 pt-2">
-          <div className="flex flex-wrap gap-3">
-            {strategies.map((strategy) => (
-              <label
-                key={strategy.id}
-                className="flex items-center gap-2 rounded-lg border border-[var(--desk-line)] bg-[var(--desk-ink)] px-3 py-2 text-sm text-[var(--desk-text)]"
-              >
-                <input
-                  type="checkbox"
-                  checked={selectedIds.includes(strategy.id)}
-                  onChange={(event) => toggleStrategy(strategy.id, event.target.checked)}
-                />
-                <span>{strategy.name || strategy.id}</span>
-                {strategy.closing && (
-                  <Chip size="sm" variant="soft">
-                    closing
-                  </Chip>
-                )}
-              </label>
-            ))}
-            {!strategies.length && (
-              <p className="text-sm text-[var(--desk-mist)]">暂无可用策略</p>
-            )}
-          </div>
-        </CardContent>
-      </Card>
+      {noPickAfterRun && (
+        <EmptyPickNotice
+          title="本次未选出符合条件的股票"
+          tip="尾盘选股已跑完，参与策略均未打出买点。可放宽规则条件、确认行情日线是否齐全，或换一组策略后再跑。"
+        />
+      )}
 
-      <Card className="border border-[var(--desk-line)] bg-[var(--desk-panel)]">
-        <CardHeader className="flex flex-wrap items-center justify-between gap-2 p-5 pb-3">
-          <div>
-            <CardTitle className="text-base text-[var(--desk-text)]">命中个股</CardTitle>
-            <p className="mt-1 text-xs text-[var(--desk-mist)]">
-              库内保留当日全部 picks；勾选非空时仅展示所选策略。「一键进自选」同理过滤。
-            </p>
+      {filteredEmpty && (
+        <EmptyPickNotice
+          title="当前勾选策略下无命中"
+          tip={`当日共有 ${allStocks.length} 条命中，但不在当前勾选范围内。可调整上方策略勾选，或点「仅已标记 / 清空」后再看。`}
+        />
+      )}
+
+      {!hasRun && (
+        <EmptyPickNotice
+          title="尚未运行尾盘选股"
+          tip="先在策略页勾选「尾盘」，再点「立即跑」。若跑完仍无命中，页面会给出明确提示。"
+        />
+      )}
+
+      <SessionPanel title="场次摘要" hint="定时约 14:40 自动跑；也可在此手动重跑。">
+        <SessionBrief
+          title="尾盘"
+          content={brief?.content}
+          emptyHint="暂无摘要。先在策略页标记「尾盘」，再点「立即跑」。"
+        />
+      </SessionPanel>
+
+      <SessionPanel
+        title="参与策略"
+        hint="默认勾选已标记尾盘的策略；全部取消勾选时按全部已标记策略执行。"
+        action={
+          <div className="flex gap-2">
+            <SecondaryAction
+              isDisabled={busy || !strategies.some((s) => s.closing)}
+              onPress={() =>
+                setSelectedIds(strategies.filter((s) => s.closing).map((s) => s.id))
+              }
+            >
+              仅已标记
+            </SecondaryAction>
+            <SecondaryAction
+              isDisabled={busy || !strategies.length}
+              onPress={() => setSelectedIds(strategies.map((s) => s.id))}
+            >
+              全选
+            </SecondaryAction>
+            <SecondaryAction
+              isDisabled={busy || !selectedIds.length}
+              onPress={() => setSelectedIds([])}
+            >
+              清空
+            </SecondaryAction>
           </div>
-          <Button
-            size="sm"
-            variant="primary"
+        }
+      >
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          {strategies.map((strategy) => (
+            <StrategyChip
+              key={strategy.id}
+              id={strategy.id}
+              name={strategy.name}
+              selected={selectedIds.includes(strategy.id)}
+              tagged={strategy.closing}
+              onToggle={toggleStrategy}
+            />
+          ))}
+        </div>
+        {!strategies.length && (
+          <p className="text-sm text-[var(--desk-mist)]">暂无可用策略。</p>
+        )}
+      </SessionPanel>
+
+      <SessionPanel
+        title="命中个股"
+        hint="有勾选时仅展示所选策略结果；点击行打开详情。"
+        action={
+          <PrimaryAction
             isDisabled={busy || !displayStocks.length}
             onPress={() => void bindWatchlist()}
           >
             一键进自选
-          </Button>
-        </CardHeader>
-        <CardContent className="p-5 pt-2">
-          <div className="overflow-x-auto">
-            <table className="w-full border-collapse text-left text-sm">
-              <thead className="border-b border-[var(--desk-line)] text-[var(--desk-mist)]">
-                <tr>
-                  <th className="px-3 py-2 font-medium">代码</th>
-                  <th className="px-3 py-2 font-medium">名称</th>
-                  <th className="px-3 py-2 font-medium">策略</th>
-                  <th className="px-3 py-2 font-medium">涨跌幅</th>
-                  <th className="px-3 py-2 font-medium">score</th>
+          </PrimaryAction>
+        }
+      >
+        <SessionTable>
+          <thead>
+            <tr>
+              <th className={thClass}>#</th>
+              <th className={thClass}>代码</th>
+              <th className={thClass}>名称</th>
+              <th className={thClass}>策略</th>
+              <th className={thClass}>涨跌幅</th>
+              <th className={thClass}>得分</th>
+            </tr>
+          </thead>
+          <tbody>
+            {displayStocks.map((stock, index) => {
+              const symbol = stock.symbol || stock.code || "";
+              return (
+                <tr
+                  key={`${symbol}-${stock.strategy_id || ""}`}
+                  className={trClickClass}
+                  onClick={() => symbol && setDrawerSymbol(symbol)}
+                >
+                  <td className={`${tdClass} font-mono text-[var(--desk-mist)]`}>{index + 1}</td>
+                  <td className={`${tdClass} font-mono text-[var(--desk-text)]`}>
+                    {symbol || "—"}
+                  </td>
+                  <td className={tdClass}>{stock.name || "—"}</td>
+                  <td className={`${tdClass} font-mono text-xs`}>{stock.strategy_id || "—"}</td>
+                  <td className={`${tdClass} font-mono ${chgToneClass(stock.pct_chg)}`}>
+                    {formatPct(stock.pct_chg)}
+                  </td>
+                  <td className={`${tdClass} font-mono`}>{formatScore(stock.score)}</td>
                 </tr>
-              </thead>
-              <tbody>
-                {displayStocks.map((stock) => {
-                  const symbol = stock.symbol || stock.code || "";
-                  return (
-                    <tr
-                      key={`${symbol}-${stock.strategy_id || ""}`}
-                      className="cursor-pointer border-b border-[var(--desk-line)] last:border-0 hover:bg-[var(--desk-ink)]"
-                      onClick={() => symbol && setDrawerSymbol(symbol)}
-                    >
-                      <td className="px-3 py-3 font-mono">{symbol || "—"}</td>
-                      <td className="px-3 py-3">{stock.name || "—"}</td>
-                      <td className="px-3 py-3 font-mono">{stock.strategy_id || "—"}</td>
-                      <td className={`px-3 py-3 font-mono ${chgToneClass(stock.pct_chg)}`}>
-                        {formatPct(stock.pct_chg)}
-                      </td>
-                      <td className="px-3 py-3 font-mono">{formatScore(stock.score)}</td>
-                    </tr>
-                  );
-                })}
-                {!displayStocks.length && (
-                  <tr>
-                    <td colSpan={5} className="px-3 py-8 text-center text-[var(--desk-mist)]">
-                      暂无命中个股。未勾选时将按全部 closing 策略「立即跑」。
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </CardContent>
-      </Card>
+              );
+            })}
+            {!displayStocks.length && (
+              <EmptyRow
+                colSpan={6}
+                message={
+                  filteredEmpty
+                    ? "当前勾选策略下无命中，请调整勾选。"
+                    : noPickAfterRun
+                      ? "本次未选出符合条件的股票。"
+                      : "暂无命中。标记尾盘策略后点击「立即跑」。"
+                }
+              />
+            )}
+          </tbody>
+        </SessionTable>
+      </SessionPanel>
 
       <StockDetailDrawer
         open={drawerSymbol !== null}
@@ -277,37 +331,4 @@ export default function Closing({ setLog }: PageLogProps) {
       />
     </div>
   );
-}
-
-/**
- * 尾盘文案块。
- * @param props 标题与正文
- */
-function BriefBlock({ title, content }: { title: string; content?: string }) {
-  return (
-    <div className="rounded-lg border border-[var(--desk-line)] bg-[var(--desk-ink)] p-4">
-      <div className="mb-2 text-sm font-medium text-[var(--desk-text)]">{title}</div>
-      <pre className="whitespace-pre-wrap text-xs leading-6 text-[var(--desk-mist)]">
-        {content || "暂无内容"}
-      </pre>
-    </div>
-  );
-}
-
-/**
- * 涨跌幅（小数 → 百分数）。
- * @param value 小数涨幅
- */
-function formatPct(value: number | undefined): string {
-  if (value == null || Number.isNaN(value)) return "—";
-  return `${value >= 0 ? "+" : ""}${(value * 100).toFixed(2)}%`;
-}
-
-/**
- * 得分展示。
- * @param value 分数
- */
-function formatScore(value: number | undefined): string {
-  if (value == null || Number.isNaN(value)) return "—";
-  return value.toFixed(2);
 }

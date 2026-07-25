@@ -22,9 +22,9 @@ const JOB_LABELS: Record<string, string> = {
   ingest_minute_watch: "分钟同步",
   sync_sentiment_daily: "打板情绪",
   sync_lhb_daily: "龙虎榜",
-  run_morning_preopen: "晨会开盘前",
+  run_morning_preopen: "早盘开盘前",
   ingest_auction_snapshots: "竞价快照",
-  run_morning_post_auction: "晨会竞价选拔",
+  run_morning_post_auction: "早盘竞价选拔",
   run_closing_pick: "尾盘选股",
 };
 

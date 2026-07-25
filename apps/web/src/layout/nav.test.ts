@@ -14,7 +14,7 @@ describe("NAV", () => {
       { path: "/factors", label: "因子/ML" },
       { path: "/alerts", label: "告警" },
       { path: "/ai", label: "投研" },
-      { path: "/morning", label: "晨会" },
+      { path: "/morning", label: "早盘选股" },
       { path: "/closing", label: "尾盘选股" },
       { path: "/market-sync", label: "行情同步" },
       { path: "/review", label: "复盘" },

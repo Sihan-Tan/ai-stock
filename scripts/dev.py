@@ -85,14 +85,30 @@ def _check_deps(python_exe: str) -> bool:
         print(f"[dev] 未找到前端工程：{WEB_DIR}")
     elif not (WEB_DIR / "node_modules").is_dir():
         ok = False
+        install_hint = (
+            "cd apps/web && pnpm install"
+            if shutil.which("pnpm")
+            else "cd apps/web && npm install"
+        )
         print(
             "[dev] 前端依赖未安装（缺少 apps/web/node_modules）。\n"
-            "      请先：cd apps/web && npm install"
+            f"      请先：{install_hint}"
+        )
+    elif not (WEB_DIR / "node_modules" / "vite").is_dir():
+        ok = False
+        install_hint = (
+            "cd apps/web && pnpm install"
+            if shutil.which("pnpm")
+            else "cd apps/web && npm install"
+        )
+        print(
+            "[dev] 前端依赖不完整（缺少 vite）。\n"
+            f"      请先：{install_hint}"
         )
 
-    if shutil.which("npm") is None:
+    if shutil.which("pnpm") is None and shutil.which("npm") is None:
         ok = False
-        print("[dev] 未找到 npm，请先安装 Node.js。")
+        print("[dev] 未找到 pnpm/npm，请先安装 Node.js。")
 
     return ok
 
@@ -181,10 +197,16 @@ def main() -> int:
         "--app-dir",
         str(API_DIR),
     ]
-    web_cmd = ["npm", "run", "dev"]
-    if sys.platform == "win32":
-        # npm 在 Windows 上常为 npm.cmd
-        web_cmd = ["npm.cmd", "run", "dev"]
+    # 优先 pnpm（与仓库前端锁文件一致）；否则回退 npm
+    if shutil.which("pnpm"):
+        web_cmd = ["pnpm", "run", "dev"]
+        if sys.platform == "win32":
+            web_cmd = ["pnpm.cmd", "run", "dev"]
+    else:
+        web_cmd = ["npm", "run", "dev"]
+        if sys.platform == "win32":
+            # npm 在 Windows 上常为 npm.cmd
+            web_cmd = ["npm.cmd", "run", "dev"]
 
     print(f"[dev] API  → http://{API_HOST}:{API_PORT}/health  (docs: /docs)")
     print(f"[dev] Web → http://{API_HOST}:{WEB_PORT}/")
