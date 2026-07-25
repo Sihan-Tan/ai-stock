@@ -7,17 +7,22 @@ import {
   EmptyPickNotice,
   EmptyRow,
   formatPct,
+  formatPrice,
   formatScore,
   PrimaryAction,
+  ResearchPicksPanel,
+  type ResearchPickRow,
   SecondaryAction,
   SessionBrief,
   SessionHero,
+  SessionPager,
   SessionPanel,
   SessionTable,
   StrategyChip,
   tdClass,
   thClass,
   trClickClass,
+  usePagedItems,
 } from "./sessionPick/shared";
 
 type ClosingLatest = {
@@ -30,7 +35,10 @@ type ClosingLatest = {
     strategy_id?: string;
     pct_chg?: number;
     score?: number;
+    price?: number;
+    last_close?: number;
   }>;
+  research_picks?: ResearchPickRow[];
 };
 
 type ClosingStrategy = {
@@ -151,14 +159,56 @@ export default function Closing({ setLog }: PageLogProps) {
     }
   };
 
+  /**
+   * 对原筛选候选跑投研精选并刷新 latest。
+   */
+  const runResearchRefine = async () => {
+    setBusy(true);
+    try {
+      const report = await api<{
+        picks?: ResearchPickRow[];
+        candidates_evaluated?: number;
+        errors?: string[];
+      }>("/api/closing/research-refine", { method: "POST" });
+      await loadLatest();
+      const errs = report.errors ?? [];
+      if (errs.includes("llm_api_key_missing")) {
+        setLog("投研精选失败：未配置 LLM API Key，请到「设置 → LLM」填写后再试。");
+        return;
+      }
+      const hardErr = errs.find(
+        (e) =>
+          e.includes("LLM ") ||
+          e.includes("Error code") ||
+          e.includes("未解析到评分") ||
+          e.includes("BadRequest")
+      );
+      if (hardErr && !(report.picks?.length)) {
+        setLog(`投研精选失败：${hardErr}`);
+        return;
+      }
+      const n = report.picks?.length ?? 0;
+      const errNote = errs.length ? `；跳过 ${errs.length} 条` : "";
+      setLog(
+        `投研精选完成：入选 ${n} 只（评估 ${report.candidates_evaluated ?? "—"} 只候选）${errNote}`
+      );
+    } catch (error) {
+      setLog(String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const brief = data?.briefs?.closing;
   const allStocks = data?.stocks ?? [];
+  const researchPicks = data?.research_picks ?? [];
   const displayStocks =
     selectedIds.length > 0
       ? allStocks.filter(
           (stock) => stock.strategy_id != null && selectedIds.includes(stock.strategy_id)
         )
       : allStocks;
+  const stockPage = usePagedItems(displayStocks);
   const taggedCount = strategies.filter((s) => s.closing).length;
   const hasRun = Boolean(brief?.content);
   const filteredEmpty = selectedIds.length > 0 && allStocks.length > 0 && displayStocks.length === 0;
@@ -170,6 +220,7 @@ export default function Closing({ setLog }: PageLogProps) {
         kind="closing"
         asof={data?.asof}
         busy={busy}
+        hasRun={hasRun}
         metrics={[
           { label: "命中", value: displayStocks.length },
           { label: "已选策略", value: selectedIds.length || "全部" },
@@ -186,6 +237,12 @@ export default function Closing({ setLog }: PageLogProps) {
             >
               进自选
             </SecondaryAction>
+            <SecondaryAction
+              isDisabled={busy || !allStocks.length}
+              onPress={() => void runResearchRefine()}
+            >
+              投研精选
+            </SecondaryAction>
             <PrimaryAction
               isDisabled={busy || !strategies.length}
               onPress={() => void runNow()}
@@ -196,20 +253,6 @@ export default function Closing({ setLog }: PageLogProps) {
         }
       />
 
-      {noPickAfterRun && (
-        <EmptyPickNotice
-          title="本次未选出符合条件的股票"
-          tip="尾盘选股已跑完，参与策略均未打出买点。可放宽规则条件、确认行情日线是否齐全，或换一组策略后再跑。"
-        />
-      )}
-
-      {filteredEmpty && (
-        <EmptyPickNotice
-          title="当前勾选策略下无命中"
-          tip={`当日共有 ${allStocks.length} 条命中，但不在当前勾选范围内。可调整上方策略勾选，或点「仅已标记 / 清空」后再看。`}
-        />
-      )}
-
       {!hasRun && (
         <EmptyPickNotice
           title="尚未运行尾盘选股"
@@ -217,7 +260,7 @@ export default function Closing({ setLog }: PageLogProps) {
         />
       )}
 
-      <SessionPanel title="场次摘要" hint="定时约 14:40 自动跑；也可在此手动重跑。">
+      <SessionPanel title="场次摘要" hint="定时约 14:40 自动跑；也可点右上角「立即跑」。">
         <SessionBrief
           title="尾盘"
           content={brief?.content}
@@ -227,7 +270,7 @@ export default function Closing({ setLog }: PageLogProps) {
 
       <SessionPanel
         title="参与策略"
-        hint="默认勾选已标记尾盘的策略；全部取消勾选时按全部已标记策略执行。"
+        hint="勾选决定下方个股筛选与重跑范围；全部取消时按已标记尾盘策略执行。"
         action={
           <div className="flex gap-2">
             <SecondaryAction
@@ -270,6 +313,20 @@ export default function Closing({ setLog }: PageLogProps) {
         )}
       </SessionPanel>
 
+      {filteredEmpty && (
+        <EmptyPickNotice
+          title="当前勾选策略下无命中"
+          tip={`当日共有 ${allStocks.length} 条命中，但不在当前勾选范围内。请调整上方策略勾选，或点「仅已标记 / 清空」后再看下方个股。`}
+        />
+      )}
+
+      {noPickAfterRun && (
+        <EmptyPickNotice
+          title="本次未选出符合条件的股票"
+          tip="尾盘选股已跑完，参与策略均未打出买点。可放宽规则条件、确认行情日线是否齐全，或换一组策略后再跑。"
+        />
+      )}
+
       <SessionPanel
         title="命中个股"
         hint="有勾选时仅展示所选策略结果；点击行打开详情。"
@@ -288,25 +345,29 @@ export default function Closing({ setLog }: PageLogProps) {
               <th className={thClass}>#</th>
               <th className={thClass}>代码</th>
               <th className={thClass}>名称</th>
+              <th className={thClass}>现价</th>
               <th className={thClass}>策略</th>
               <th className={thClass}>涨跌幅</th>
               <th className={thClass}>得分</th>
             </tr>
           </thead>
           <tbody>
-            {displayStocks.map((stock, index) => {
+            {stockPage.slice.map((stock, index) => {
               const symbol = stock.symbol || stock.code || "";
+              const rowNo = (stockPage.page - 1) * stockPage.pageSize + index + 1;
+              const price = stock.price ?? stock.last_close;
               return (
                 <tr
                   key={`${symbol}-${stock.strategy_id || ""}`}
                   className={trClickClass}
                   onClick={() => symbol && setDrawerSymbol(symbol)}
                 >
-                  <td className={`${tdClass} font-mono text-[var(--desk-mist)]`}>{index + 1}</td>
+                  <td className={`${tdClass} font-mono text-[var(--desk-mist)]`}>{rowNo}</td>
                   <td className={`${tdClass} font-mono text-[var(--desk-text)]`}>
                     {symbol || "—"}
                   </td>
                   <td className={tdClass}>{stock.name || "—"}</td>
+                  <td className={`${tdClass} font-mono`}>{formatPrice(price)}</td>
                   <td className={`${tdClass} font-mono text-xs`}>{stock.strategy_id || "—"}</td>
                   <td className={`${tdClass} font-mono ${chgToneClass(stock.pct_chg)}`}>
                     {formatPct(stock.pct_chg)}
@@ -317,7 +378,7 @@ export default function Closing({ setLog }: PageLogProps) {
             })}
             {!displayStocks.length && (
               <EmptyRow
-                colSpan={6}
+                colSpan={7}
                 message={
                   filteredEmpty
                     ? "当前勾选策略下无命中，请调整勾选。"
@@ -329,7 +390,25 @@ export default function Closing({ setLog }: PageLogProps) {
             )}
           </tbody>
         </SessionTable>
+        <SessionPager
+          page={stockPage.page}
+          pageSize={stockPage.pageSize}
+          total={stockPage.total}
+          onPageChange={stockPage.setPage}
+        />
       </SessionPanel>
+
+      <ResearchPicksPanel
+        picks={researchPicks}
+        busy={busy}
+        onRun={() => void runResearchRefine()}
+        emptyHint={
+          allStocks.length
+            ? "暂无投研精选。点击「投研精选」对当前命中个股打分。"
+            : "暂无投研精选。请先完成尾盘选拔后再运行。"
+        }
+        onRowClick={(symbol) => setDrawerSymbol(symbol)}
+      />
 
       <StockDetailDrawer
         open={drawerSymbol !== null}

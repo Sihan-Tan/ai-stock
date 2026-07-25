@@ -1,5 +1,5 @@
 import { Button, Chip } from "@heroui/react";
-import type { ComponentProps, ReactNode } from "react";
+import { useEffect, useMemo, useState, type ComponentProps, type ReactNode } from "react";
 
 export type SessionKind = "morning" | "closing";
 
@@ -21,20 +21,47 @@ const SESSION_META: Record<
   },
 };
 
+type SessionRunStatus = "idle" | "running" | "done";
+
 type SessionHeroProps = {
   kind: SessionKind;
   asof?: string;
+  /** 是否正在跑选拔 / 精选 */
   busy?: boolean;
+  /** 是否已有本场次结果（用于「完成 / 未开始」） */
+  hasRun?: boolean;
   metrics?: Array<{ label: string; value: string | number }>;
   actions: ReactNode;
 };
 
 /**
- * 早盘 / 尾盘共用页头：场次标签、日期、指标与操作区。
+ * 页头运行状态：未开始 / 运行中 / 完成。
+ * @param busy 进行中
+ * @param hasRun 已有结果
+ */
+function resolveSessionRunStatus(busy?: boolean, hasRun?: boolean): SessionRunStatus {
+  if (busy) return "running";
+  if (hasRun) return "done";
+  return "idle";
+}
+
+const RUN_STATUS_CHIP: Record<
+  SessionRunStatus,
+  { label: string; color?: "warning" | "success" | "accent" }
+> = {
+  idle: { label: "未开始" },
+  running: { label: "运行中", color: "warning" },
+  done: { label: "完成", color: "success" },
+};
+
+/**
+ * 早盘 / 尾盘共用页头：场次标签、日期、运行状态与操作区。
  * @param props 场次与操作
  */
-export function SessionHero({ kind, asof, busy, metrics, actions }: SessionHeroProps) {
+export function SessionHero({ kind, asof, busy, hasRun, metrics, actions }: SessionHeroProps) {
   const meta = SESSION_META[kind];
+  const runStatus = resolveSessionRunStatus(busy, hasRun);
+  const statusChip = RUN_STATUS_CHIP[runStatus];
   return (
     <section
       className={`overflow-hidden rounded-xl border border-[var(--desk-line)] bg-[var(--desk-panel)] border-l-4 ${meta.accentClass}`}
@@ -53,11 +80,14 @@ export function SessionHero({ kind, asof, busy, metrics, actions }: SessionHeroP
                 {asof}
               </Chip>
             )}
-            {busy && (
-              <span className="text-xs text-[var(--desk-mist)]" aria-live="polite">
-                运行中…
-              </span>
-            )}
+            <Chip
+              size="sm"
+              variant="soft"
+              color={statusChip.color}
+              aria-live="polite"
+            >
+              {statusChip.label}
+            </Chip>
           </div>
           <p className="max-w-xl text-sm leading-relaxed text-[var(--desk-mist)]">{meta.tip}</p>
           {metrics && metrics.length > 0 && (
@@ -180,6 +210,72 @@ export function EmptyRow({ colSpan, message }: EmptyRowProps) {
   );
 }
 
+/** 初选个股表默认每页条数 */
+export const SESSION_STOCK_PAGE_SIZE = 10;
+
+type SessionPagerProps = {
+  page: number;
+  pageSize: number;
+  total: number;
+  onPageChange: (page: number) => void;
+};
+
+/**
+ * 表格底部分页：上一页 / 下一页。
+ * @param props 页码与总数
+ */
+export function SessionPager({ page, pageSize, total, onPageChange }: SessionPagerProps) {
+  const pageCount = Math.max(1, Math.ceil(total / pageSize) || 1);
+  const safePage = Math.min(Math.max(1, page), pageCount);
+  if (total <= pageSize) return null;
+  const from = (safePage - 1) * pageSize + 1;
+  const to = Math.min(total, safePage * pageSize);
+  return (
+    <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-[var(--desk-mist)]">
+      <span>
+        第 {from}–{to} 条，共 {total} 条
+      </span>
+      <div className="flex items-center gap-2">
+        <SecondaryAction
+          isDisabled={safePage <= 1}
+          onPress={() => onPageChange(safePage - 1)}
+        >
+          上一页
+        </SecondaryAction>
+        <span className="font-mono text-[var(--desk-text)]">
+          {safePage}/{pageCount}
+        </span>
+        <SecondaryAction
+          isDisabled={safePage >= pageCount}
+          onPress={() => onPageChange(safePage + 1)}
+        >
+          下一页
+        </SecondaryAction>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * 列表分页切片；items 变化时自动回到第 1 页。
+ * @param items 全量数据
+ * @param pageSize 每页条数
+ */
+export function usePagedItems<T>(items: T[], pageSize: number = SESSION_STOCK_PAGE_SIZE) {
+  const [page, setPage] = useState(1);
+  const signature = `${items.length}:${pageSize}`;
+  useEffect(() => {
+    setPage(1);
+  }, [signature]);
+  const pageCount = Math.max(1, Math.ceil(items.length / pageSize) || 1);
+  const safePage = Math.min(Math.max(1, page), pageCount);
+  const slice = useMemo(() => {
+    const start = (safePage - 1) * pageSize;
+    return items.slice(start, start + pageSize);
+  }, [items, pageSize, safePage]);
+  return { page: safePage, setPage, pageSize, total: items.length, slice };
+}
+
 type EmptyPickNoticeProps = {
   /** 主标题 */
   title: string;
@@ -274,6 +370,130 @@ export function PrimaryAction({
       {children}
     </Button>
   );
+}
+
+/** 投研精选单条结果 */
+export type ResearchPickRow = {
+  symbol?: string;
+  name?: string;
+  score?: number;
+  confidence?: number;
+  rationale?: string;
+  rank?: number;
+  buy_low?: number;
+  buy_high?: number;
+  target_low?: number;
+  target_high?: number;
+  stop_loss?: number;
+};
+
+type ResearchPicksPanelProps = {
+  picks: ResearchPickRow[];
+  busy?: boolean;
+  /** 面板右上角自定义操作；未传且提供 onRun 时渲染默认「投研精选」按钮 */
+  action?: ReactNode;
+  onRun?: () => void;
+  emptyHint?: string;
+  /** 点击行打开详情时的代码 */
+  onRowClick?: (symbol: string) => void;
+};
+
+/**
+ * 投研精选结果表（早盘 / 尾盘共用）。
+ * @param props picks / busy / onRun / action / emptyHint / onRowClick
+ */
+export function ResearchPicksPanel({
+  picks,
+  busy,
+  action,
+  onRun,
+  emptyHint = "暂无投研精选。先完成选拔后再点「投研精选」。",
+  onRowClick,
+}: ResearchPicksPanelProps) {
+  const headerAction =
+    action ??
+    (onRun ? (
+      <SecondaryAction isDisabled={busy} onPress={() => void onRun()}>
+        投研精选
+      </SecondaryAction>
+    ) : undefined);
+
+  return (
+    <SessionPanel
+      title="投研精选"
+      hint="基于原筛选候选，经 LLM 打分；每只须含买入区间、目标价区间与止损价。"
+      action={headerAction}
+    >
+      <SessionTable>
+        <thead>
+          <tr>
+            <th className={thClass}>#</th>
+            <th className={thClass}>代码</th>
+            <th className={thClass}>名称</th>
+            <th className={thClass}>score</th>
+            <th className={thClass}>confidence</th>
+            <th className={thClass}>买入区间</th>
+            <th className={thClass}>目标价</th>
+            <th className={thClass}>止损</th>
+            <th className={thClass}>理由</th>
+          </tr>
+        </thead>
+        <tbody>
+          {picks.map((pick, index) => {
+            const symbol = pick.symbol || "";
+            const clickable = Boolean(onRowClick && symbol);
+            return (
+              <tr
+                key={`${symbol}-${pick.rank ?? index}`}
+                className={clickable ? trClickClass : "border-t border-[var(--desk-line)]"}
+                onClick={() => clickable && onRowClick?.(symbol)}
+              >
+                <td className={`${tdClass} font-mono text-[var(--desk-mist)]`}>
+                  {pick.rank ?? index + 1}
+                </td>
+                <td className={`${tdClass} font-mono text-[var(--desk-text)]`}>
+                  {symbol || "—"}
+                </td>
+                <td className={tdClass}>{pick.name || "—"}</td>
+                <td className={`${tdClass} font-mono`}>{formatScore(pick.score)}</td>
+                <td className={`${tdClass} font-mono`}>{formatScore(pick.confidence)}</td>
+                <td className={`${tdClass} font-mono`}>
+                  {formatPriceRange(pick.buy_low, pick.buy_high)}
+                </td>
+                <td className={`${tdClass} font-mono`}>
+                  {formatPriceRange(pick.target_low, pick.target_high)}
+                </td>
+                <td className={`${tdClass} font-mono`}>{formatPrice(pick.stop_loss)}</td>
+                <td className={`${tdClass} max-w-md text-[var(--desk-mist)]`}>
+                  {pick.rationale || "—"}
+                </td>
+              </tr>
+            );
+          })}
+          {!picks.length && <EmptyRow colSpan={9} message={emptyHint} />}
+        </tbody>
+      </SessionTable>
+    </SessionPanel>
+  );
+}
+
+/**
+ * 单价展示。
+ * @param value 价格（元）
+ */
+export function formatPrice(value: number | undefined): string {
+  if (value == null || Number.isNaN(value)) return "—";
+  return value.toFixed(2);
+}
+
+/**
+ * 价格区间展示。
+ * @param low 下限
+ * @param high 上限
+ */
+export function formatPriceRange(low?: number, high?: number): string {
+  if (low == null || high == null || Number.isNaN(low) || Number.isNaN(high)) return "—";
+  return `${low.toFixed(2)}–${high.toFixed(2)}`;
 }
 
 /**

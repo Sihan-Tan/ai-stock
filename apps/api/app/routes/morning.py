@@ -12,6 +12,7 @@ from desk_calendar import CalendarService
 from desk_db import get_db
 from desk_db.models import MorningBriefRow, MorningStrongPick
 from desk_market.auction_ingest import AuctionSnapshotIngestor
+from desk_ai.refine import ResearchRefineService, list_research_picks
 from desk_morning_brief import MorningBriefService
 from desk_morning_brief.bind import bind_morning_picks
 
@@ -24,6 +25,14 @@ class MorningBindIn(BaseModel):
     asof: date | None = None
     limit: int = Field(20, ge=1, le=100)
     symbols: list[str] | None = None
+
+
+class ResearchRefineIn(BaseModel):
+    """手动跑投研精选。"""
+
+    asof: date | None = None
+    top_n: int | None = Field(None, ge=1, le=20)
+    min_confidence: float | None = Field(None, ge=0, le=100)
 
 
 def _get_market_data():
@@ -82,7 +91,13 @@ def _latest_payload(db: Session, asof: date) -> dict:
             boards.append(item)
         else:
             stocks.append(item)
-    return {"asof": asof.isoformat(), "briefs": by_stage, "boards": boards, "stocks": stocks}
+    return {
+        "asof": asof.isoformat(),
+        "briefs": by_stage,
+        "boards": boards,
+        "stocks": stocks,
+        "research_picks": list_research_picks(db, asof, "morning"),
+    }
 
 
 @router.post("/preopen")
@@ -124,6 +139,24 @@ def morning_latest(asof: date | None = None, db: Session = Depends(get_db)):
     if not cal.is_trade_day(asof):
         asof = cal.previous_trade_day(asof)
     return _latest_payload(db, asof)
+
+
+@router.post("/research-refine")
+def research_refine(body: ResearchRefineIn | None = None, db: Session = Depends(get_db)):
+    """
+    投研精选：对当日早盘候选打分取 TopN。
+
+    @param body: 可选 asof / top_n / min_confidence
+    """
+    payload = body or ResearchRefineIn()
+    report = ResearchRefineService(db).run(
+        "morning",
+        payload.asof,
+        top_n=payload.top_n,
+        min_confidence=payload.min_confidence,
+    )
+    db.commit()
+    return report.model_dump()
 
 
 @router.post("/bind")

@@ -8,16 +8,21 @@ import {
   EmptyRow,
   formatCompact,
   formatPct,
+  formatPrice,
   formatScore,
   PrimaryAction,
+  ResearchPicksPanel,
+  type ResearchPickRow,
   SecondaryAction,
   SessionBrief,
   SessionHero,
+  SessionPager,
   SessionPanel,
   SessionTable,
   tdClass,
   thClass,
   trClickClass,
+  usePagedItems,
 } from "./sessionPick/shared";
 
 type MorningLatest = {
@@ -37,9 +42,11 @@ type MorningLatest = {
     name?: string;
     auction_pct?: number;
     auction_amount?: number;
+    price?: number;
     board?: string;
     score?: number;
   }>;
+  research_picks?: ResearchPickRow[];
 };
 
 /**
@@ -126,10 +133,53 @@ export default function Morning({ setLog }: PageLogProps) {
     }
   };
 
+  /**
+   * 对原筛选候选跑投研精选并刷新 latest。
+   */
+  const runResearchRefine = async () => {
+    setBusy(true);
+    try {
+      const report = await api<{
+        picks?: ResearchPickRow[];
+        candidates_evaluated?: number;
+        errors?: string[];
+      }>("/api/morning/research-refine", { method: "POST" });
+      const latest = await api<MorningLatest>("/api/morning/latest");
+      setData(latest);
+      const errs = report.errors ?? [];
+      if (errs.includes("llm_api_key_missing")) {
+        setLog("投研精选失败：未配置 LLM API Key，请到「设置 → LLM」填写后再试。");
+        return;
+      }
+      const hardErr = errs.find(
+        (e) =>
+          e.includes("LLM ") ||
+          e.includes("Error code") ||
+          e.includes("未解析到评分") ||
+          e.includes("BadRequest")
+      );
+      if (hardErr && !(report.picks?.length)) {
+        setLog(`投研精选失败：${hardErr}`);
+        return;
+      }
+      const n = report.picks?.length ?? latest.research_picks?.length ?? 0;
+      const errNote = errs.length ? `；跳过 ${errs.length} 条` : "";
+      setLog(
+        `投研精选完成：入选 ${n} 只（评估 ${report.candidates_evaluated ?? "—"} 只候选）${errNote}`
+      );
+    } catch (error) {
+      setLog(String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const pre = data?.briefs?.preopen;
   const post = data?.briefs?.post_auction;
   const boards = data?.boards ?? [];
   const stocks = data?.stocks ?? [];
+  const researchPicks = data?.research_picks ?? [];
+  const stockPage = usePagedItems(stocks);
   const activeBrief = briefTab === "preopen" ? pre : post;
   const hasRun = Boolean(pre?.content || post?.content);
   const noStockPick = hasRun && stocks.length === 0;
@@ -140,6 +190,7 @@ export default function Morning({ setLog }: PageLogProps) {
         kind="morning"
         asof={data?.asof}
         busy={busy}
+        hasRun={hasRun}
         metrics={[
           { label: "强势板块", value: boards.length },
           { label: "强势个股", value: stocks.length },
@@ -157,6 +208,12 @@ export default function Morning({ setLog }: PageLogProps) {
               onPress={() => void bindWatchlist()}
             >
               进自选
+            </SecondaryAction>
+            <SecondaryAction
+              isDisabled={busy || !stocks.length}
+              onPress={() => void runResearchRefine()}
+            >
+              投研精选
             </SecondaryAction>
             <PrimaryAction isDisabled={busy} onPress={() => void runAll()}>
               运行早盘
@@ -275,6 +332,7 @@ export default function Morning({ setLog }: PageLogProps) {
                   <th className={thClass}>#</th>
                   <th className={thClass}>代码</th>
                   <th className={thClass}>名称</th>
+                  <th className={thClass}>现价</th>
                   <th className={thClass}>竞价涨幅</th>
                   <th className={thClass}>竞价额</th>
                   <th className={thClass}>板块</th>
@@ -282,19 +340,21 @@ export default function Morning({ setLog }: PageLogProps) {
                 </tr>
               </thead>
               <tbody>
-                {stocks.map((stock, index) => {
+                {stockPage.slice.map((stock, index) => {
                   const symbol = stock.symbol || stock.code || "";
+                  const rowNo = (stockPage.page - 1) * stockPage.pageSize + index + 1;
                   return (
                     <tr
                       key={symbol}
                       className={trClickClass}
                       onClick={() => symbol && setDrawerSymbol(symbol)}
                     >
-                      <td className={`${tdClass} font-mono text-[var(--desk-mist)]`}>{index + 1}</td>
+                      <td className={`${tdClass} font-mono text-[var(--desk-mist)]`}>{rowNo}</td>
                       <td className={`${tdClass} font-mono text-[var(--desk-text)]`}>
                         {symbol || "—"}
                       </td>
                       <td className={tdClass}>{stock.name || "—"}</td>
+                      <td className={`${tdClass} font-mono`}>{formatPrice(stock.price)}</td>
                       <td className={`${tdClass} font-mono ${chgToneClass(stock.auction_pct)}`}>
                         {formatPct(stock.auction_pct)}
                       </td>
@@ -308,7 +368,7 @@ export default function Morning({ setLog }: PageLogProps) {
                 })}
                 {!stocks.length && (
                   <EmptyRow
-                    colSpan={7}
+                    colSpan={8}
                     message={
                       hasRun
                         ? "本次未选出竞价上涨个股。"
@@ -318,9 +378,27 @@ export default function Morning({ setLog }: PageLogProps) {
                 )}
               </tbody>
             </SessionTable>
+            <SessionPager
+              page={stockPage.page}
+              pageSize={stockPage.pageSize}
+              total={stockPage.total}
+              onPageChange={stockPage.setPage}
+            />
           </SessionPanel>
         </div>
       </div>
+
+      <ResearchPicksPanel
+        picks={researchPicks}
+        busy={busy}
+        onRun={() => void runResearchRefine()}
+        emptyHint={
+          stocks.length
+            ? "暂无投研精选。点击「投研精选」对当前强势个股打分。"
+            : "暂无投研精选。请先完成早盘选拔后再运行。"
+        }
+        onRowClick={(symbol) => setDrawerSymbol(symbol)}
+      />
 
       <StockDetailDrawer
         open={drawerSymbol !== null}

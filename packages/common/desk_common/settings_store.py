@@ -30,6 +30,10 @@ EDITABLE_ENV: dict[str, str] = {
     "paper_runner_enabled": "PAPER_RUNNER_ENABLED",
     "paper_runner_strategy_id": "PAPER_RUNNER_STRATEGY_ID",
     "paper_runner_interval_minutes": "PAPER_RUNNER_INTERVAL_MINUTES",
+    "research_refine_top_n": "RESEARCH_REFINE_TOP_N",
+    "research_refine_min_confidence": "RESEARCH_REFINE_MIN_CONFIDENCE",
+    "research_refine_max_candidates": "RESEARCH_REFINE_MAX_CANDIDATES",
+    "research_refine_auto": "RESEARCH_REFINE_AUTO",
     "backtest_buy_commission": "BACKTEST_BUY_COMMISSION",
     "backtest_sell_commission": "BACKTEST_SELL_COMMISSION",
     "backtest_stamp_duty": "BACKTEST_STAMP_DUTY",
@@ -98,6 +102,10 @@ def public_settings() -> dict[str, Any]:
         "paper_runner_enabled": s.paper_runner_enabled,
         "paper_runner_strategy_id": s.paper_runner_strategy_id,
         "paper_runner_interval_minutes": s.paper_runner_interval_minutes,
+        "research_refine_top_n": int(s.research_refine_top_n),
+        "research_refine_min_confidence": s.research_refine_min_confidence,
+        "research_refine_max_candidates": int(s.research_refine_max_candidates),
+        "research_refine_auto": s.research_refine_auto,
         "backtest_buy_commission": s.backtest_buy_commission,
         "backtest_sell_commission": s.backtest_sell_commission,
         "backtest_stamp_duty": s.backtest_stamp_duty,
@@ -222,6 +230,12 @@ def apply_settings_patch(patch: dict[str, Any]) -> dict[str, Any]:
             cleaned[field] = float(raw)
         elif field == "paper_runner_interval_minutes":
             cleaned[field] = max(5, int(float(raw)))
+        elif field == "research_refine_top_n":
+            cleaned[field] = max(1, min(20, int(float(raw))))
+        elif field == "research_refine_max_candidates":
+            cleaned[field] = max(1, min(50, int(float(raw))))
+        elif field == "research_refine_min_confidence":
+            cleaned[field] = max(0.0, min(100.0, float(raw)))
         elif field == "risk_max_positions":
             cleaned[field] = max(0, int(float(raw)))
         elif field in (
@@ -232,6 +246,7 @@ def apply_settings_patch(patch: dict[str, Any]) -> dict[str, Any]:
             "risk_armed",
             "risk_kill_switch",
             "feishu_alert_enabled",
+            "research_refine_auto",
         ):
             if isinstance(raw, bool):
                 cleaned[field] = raw

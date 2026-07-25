@@ -18,6 +18,25 @@ from .tools import TOOL_SPECS, dispatch_tool
 _TOOL_RESULT_MAX = 12_000
 _MAX_ITERATIONS = 8
 
+# DeepSeek 已弃用旧模型名；本地 .env 仍写 deepseek-chat 时自动映射
+_DEEPSEEK_MODEL_ALIASES = {
+    "deepseek-chat": "deepseek-v4-flash",
+    "deepseek-reasoner": "deepseek-v4-pro",
+}
+
+
+def resolve_llm_model(provider: str, model: str) -> str:
+    """
+    解析实际调用的模型 ID。
+
+    @param provider: llm_provider
+    @param model: 配置中的模型名
+    """
+    name = (model or "").strip()
+    if (provider or "").strip().lower() == "deepseek":
+        return _DEEPSEEK_MODEL_ALIASES.get(name, name or "deepseek-v4-flash")
+    return name
+
 
 class NanobotResearchSession:
     """
@@ -51,7 +70,23 @@ class NanobotResearchSession:
             api_key=self.settings.llm_api_key,
             base_url=self.settings.llm_base_url,
         )
-        return await client.chat.completions.create(**kwargs)
+        try:
+            return await client.chat.completions.create(**kwargs)
+        finally:
+            await client.close()
+
+    def _chat_create_sync(self, **kwargs: Any) -> Any:
+        """同步调用 chat.completions.create（精选打分用）。"""
+        from openai import OpenAI
+
+        client = OpenAI(
+            api_key=self.settings.llm_api_key,
+            base_url=self.settings.llm_base_url,
+        )
+        try:
+            return client.chat.completions.create(**kwargs)
+        finally:
+            client.close()
 
     def _build_system(
         self,
@@ -170,6 +205,7 @@ class NanobotResearchSession:
         messages: list[dict[str, Any]],
         skill_hint: str | None = None,
         enabled_skills: list[str] | None = None,
+        tools: list[dict[str, Any]] | None = None,
     ) -> AsyncIterator[str]:
         """流式输出：tools 循环或无 Key 时的提示/关键词降级。"""
         user = next((m.get("content") or "" for m in reversed(messages) if m.get("role") == "user"), "")
@@ -183,13 +219,15 @@ class NanobotResearchSession:
 
         system = self._build_system(skill_hint=skill_hint, enabled_skills=enabled_skills)
         working: list[dict[str, Any]] = [{"role": "system", "content": system}, *messages]
+        tool_specs = tools if tools is not None else TOOL_SPECS
+        model = resolve_llm_model(self.settings.llm_provider, self.settings.llm_model)
 
         try:
             for _ in range(_MAX_ITERATIONS):
                 resp = await self._chat_create(
-                    model=self.settings.llm_model,
+                    model=model,
                     messages=working,
-                    tools=TOOL_SPECS,
+                    tools=tool_specs,
                     tool_choice="auto",
                 )
                 msg = resp.choices[0].message
@@ -237,6 +275,115 @@ class NanobotResearchSession:
             yield "（已达工具调用轮次上限，请缩小问题后重试。）"
         except Exception as exc:  # noqa: BLE001
             yield self._format_llm_error(exc)
+
+    def score_pick_json_sync(
+        self,
+        symbol: str,
+        name: str,
+        context: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """
+        同步精选评分（只读 tools + JSON），供 ResearchRefineService 在同步路由中调用。
+
+        @param symbol: 标的代码
+        @param name: 名称
+        @param context: 候选上下文
+        @returns: 解析后的 score payload；失败抛 RuntimeError 或返回 None
+        """
+        if not self.settings.llm_api_key:
+            return None
+        from desk_ai.refine import parse_score_payload
+        from desk_ai.tools import READONLY_TOOL_SPECS
+
+        prompt = (
+            f"对 {symbol}（{name}）做精选评分。上下文：{json.dumps(context, ensure_ascii=False)}。"
+            "必须调用只读工具获取依据（含现价/估值），禁止编造数字。禁止保存草稿或笔记。"
+            "必须给出可执行价格计划：买入区间、目标价区间、止损价（单位：元，均为正数）。"
+            "最终只输出一行 JSON，字段："
+            '{"symbol","score","confidence","rationale",'
+            '"buy_low","buy_high","target_low","target_high","stop_loss"}；'
+            "score/confidence 为 0-100；buy_low<=buy_high；target_low<=target_high。"
+        )
+        system = self._build_system(
+            skill_hint="investment-research",
+            enabled_skills=["investment-research", "financial-analysis", "valuation"],
+        )
+        working: list[dict[str, Any]] = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": prompt},
+        ]
+        model = resolve_llm_model(self.settings.llm_provider, self.settings.llm_model)
+        try:
+            for _ in range(_MAX_ITERATIONS):
+                resp = self._chat_create_sync(
+                    model=model,
+                    messages=working,
+                    tools=READONLY_TOOL_SPECS,
+                    tool_choice="auto",
+                )
+                msg = resp.choices[0].message
+                tool_calls = getattr(msg, "tool_calls", None) or None
+                content = getattr(msg, "content", None)
+                if tool_calls:
+                    working.append(
+                        {
+                            "role": "assistant",
+                            "content": content,
+                            "tool_calls": self._tool_calls_payload(tool_calls),
+                        }
+                    )
+                    for tc in tool_calls:
+                        raw_args = tc.function.arguments or "{}"
+                        try:
+                            args = json.loads(raw_args)
+                        except json.JSONDecodeError:
+                            args = {}
+                        if not isinstance(args, dict):
+                            args = {}
+                        try:
+                            result = dispatch_tool(self.db, tc.function.name, args)
+                        except Exception as tool_exc:  # noqa: BLE001
+                            result = {"error": f"{type(tool_exc).__name__}: {tool_exc}"}
+                        working.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tc.id,
+                                "content": self._truncate_tool_result(result),
+                            }
+                        )
+                    continue
+                if content:
+                    parsed = parse_score_payload(content, symbol)
+                    if parsed is not None:
+                        return parsed
+                    stripped = str(content).strip()
+                    if stripped:
+                        raise RuntimeError(f"未解析到评分 JSON：{stripped[:240]}")
+                    return None
+                return None
+            raise RuntimeError("精选评分已达工具调用轮次上限")
+        except RuntimeError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(self._format_llm_error(exc)) from exc
+
+    async def score_pick_json(
+        self,
+        symbol: str,
+        name: str,
+        context: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """
+        受控投研评分：启用 investment-research / financial-analysis / valuation；
+        要求最终只输出一行 JSON。
+
+        @param symbol: 标的代码
+        @param name: 名称
+        @param context: 候选上下文（source/asof/base_score 等）
+        @returns: 解析后的 score payload，失败为 None
+        """
+        # 异步入口也走同步实现，避免 AsyncOpenAI 在 asyncio.run 关环时 aclose 报错
+        return self.score_pick_json_sync(symbol, name, context)
 
     async def _fallback_without_llm(self, user: str) -> AsyncIterator[str]:
         """无 API Key：提示配置 LLM；可选策略/知识关键词降级（不假装五步法）。"""

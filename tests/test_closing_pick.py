@@ -124,6 +124,8 @@ def test_run_scans_universe_and_stores_picks(db: Session):
     report = ClosingPickService(db).run(asof=asof)
     assert "close_always_buy" in report.strategy_ids
     assert len(report.stocks) >= 1
+    assert report.stocks[0].get("price") is not None
+    assert report.stocks[0].get("last_close") == report.stocks[0].get("price")
     picks = db.scalars(select(ClosingPick).where(ClosingPick.asof == asof)).all()
     assert len(picks) >= 1
     briefs = db.scalars(select(ClosingBriefRow).where(ClosingBriefRow.asof == asof)).all()

@@ -43,6 +43,10 @@ type AppSettings = {
   risk_armed?: boolean;
   risk_kill_switch?: boolean;
   risk_whitelist?: string;
+  research_refine_top_n?: number;
+  research_refine_min_confidence?: number;
+  research_refine_max_candidates?: number;
+  research_refine_auto?: boolean;
 };
 
 const EMPTY: AppSettings = {
@@ -78,6 +82,10 @@ const EMPTY: AppSettings = {
   risk_armed: false,
   risk_kill_switch: false,
   risk_whitelist: "",
+  research_refine_top_n: 5,
+  research_refine_min_confidence: 70,
+  research_refine_max_candidates: 15,
+  research_refine_auto: false,
 };
 
 /** 设置页模块 Tab */
@@ -87,6 +95,7 @@ const SETTINGS_TABS = [
   { id: "fees", label: "手续费" },
   { id: "ml", label: "机器学习" },
   { id: "llm", label: "LLM" },
+  { id: "research", label: "投研精选" },
   { id: "feishu", label: "飞书告警" },
   { id: "qmt", label: "miniQMT" },
 ] as const;
@@ -240,6 +249,16 @@ export default function Settings({ setLog }: PageLogProps) {
         risk_armed: Boolean(form.risk_armed),
         risk_kill_switch: Boolean(form.risk_kill_switch),
         risk_whitelist: form.risk_whitelist || "",
+        research_refine_top_n: Math.max(1, Math.min(20, Math.floor(Number(form.research_refine_top_n) || 5))),
+        research_refine_min_confidence: Math.max(
+          0,
+          Math.min(100, Number(form.research_refine_min_confidence) || 0)
+        ),
+        research_refine_max_candidates: Math.max(
+          1,
+          Math.min(50, Math.floor(Number(form.research_refine_max_candidates) || 15))
+        ),
+        research_refine_auto: Boolean(form.research_refine_auto),
       };
       if (form.llm_api_key && !form.llm_api_key.includes("*")) {
         body.llm_api_key = form.llm_api_key;
@@ -662,6 +681,7 @@ export default function Settings({ setLog }: PageLogProps) {
                       className={inputClass}
                       value={form.llm_model}
                       onChange={(e) => patch("llm_model", e.target.value)}
+                      placeholder="deepseek-v4-flash"
                     />
                   </Field>
                   <Field label="Base URL">
@@ -683,6 +703,69 @@ export default function Settings({ setLog }: PageLogProps) {
                       onChange={(e) => patch("llm_api_key", e.target.value)}
                     />
                   </Field>
+                </div>
+                <p className="pt-2 text-xs text-[var(--desk-mist)]">
+                  DeepSeek 请使用 <code>deepseek-v4-flash</code> 或 <code>deepseek-v4-pro</code>
+                  ；旧名 <code>deepseek-chat</code> 会在调用时自动映射到 flash。
+                </p>
+              </TabPanel>
+            )}
+
+            {tab === "research" && (
+              <TabPanel title="投研精选">
+                <p className="text-xs text-[var(--desk-mist)]">
+                  早盘/尾盘原筛选后，用 LLM 对候选打分取 TopN；可在选股页手动触发，或开启自动精选。
+                </p>
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                  <Field label="TopN（取前 N 只）">
+                    <input
+                      className={inputClass}
+                      inputMode="numeric"
+                      value={String(form.research_refine_top_n ?? 5)}
+                      onChange={(e) =>
+                        patch("research_refine_top_n", Math.max(1, Number(e.target.value) || 1))
+                      }
+                    />
+                  </Field>
+                  <Field label="置信度门槛（0–100）">
+                    <input
+                      className={inputClass}
+                      inputMode="decimal"
+                      value={String(form.research_refine_min_confidence ?? 70)}
+                      onChange={(e) =>
+                        patch("research_refine_min_confidence", Number(e.target.value) || 0)
+                      }
+                    />
+                  </Field>
+                  <Field label="候选上限">
+                    <input
+                      className={inputClass}
+                      inputMode="numeric"
+                      value={String(form.research_refine_max_candidates ?? 15)}
+                      onChange={(e) =>
+                        patch(
+                          "research_refine_max_candidates",
+                          Math.max(1, Number(e.target.value) || 1)
+                        )
+                      }
+                    />
+                  </Field>
+                </div>
+                <div className="mt-4 space-y-3 rounded-lg border border-[var(--desk-line)] bg-[var(--desk-ink)] p-4">
+                  <label className="flex items-start gap-2 text-sm text-[var(--desk-text)]">
+                    <input
+                      type="checkbox"
+                      className="mt-1"
+                      checked={Boolean(form.research_refine_auto)}
+                      onChange={(e) => patch("research_refine_auto", e.target.checked)}
+                    />
+                    <span>
+                      选拔成功后自动精选
+                      <span className="mt-0.5 block text-xs text-[var(--desk-mist)]">
+                        需已配置 LLM API Key；失败不影响原选拔结果
+                      </span>
+                    </span>
+                  </label>
                 </div>
               </TabPanel>
             )}

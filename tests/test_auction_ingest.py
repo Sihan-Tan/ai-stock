@@ -68,4 +68,5 @@ def test_auction_ingest_writes_watchlist_snapshots(_db):
     assert row is not None
     assert row.auction_pct == pytest.approx(0.098)
     assert row.auction_amount == pytest.approx(1.5e8)
+    assert row.auction_price == pytest.approx(109.8)
     assert row.board_name == "白酒"

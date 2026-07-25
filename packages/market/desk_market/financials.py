@@ -222,7 +222,15 @@ class FinancialService:
 
         tables = fetched.get("tables") or {}
         source = str(fetched.get("source") or "unknown")
-        self._upsert_snapshots(sym, tables, source=source)
+        try:
+            self._upsert_snapshots(sym, tables, source=source)
+        except Exception as exc:  # noqa: BLE001
+            # 缓存写入失败不应阻断财务结果；恢复 Session 供后续精选继续
+            _LOGGER.warning("financial snapshot upsert failed for %s: %s", sym, exc)
+            try:
+                self.db.rollback()
+            except Exception:  # noqa: BLE001
+                pass
         metrics = _metrics_from_tables(tables)
         return {
             "symbol": sym,
@@ -391,13 +399,17 @@ class FinancialService:
         source: str,
     ) -> None:
         """
-        按 period/table 写入或更新 FinancialSnapshot。
+        按 period/table 写入或更新 FinancialSnapshot（幂等，抗并发重复键）。
 
         @param symbol: 标的
         @param tables: 拉取到的表
         @param source: qmt|akshare
         """
+        from sqlalchemy.exc import IntegrityError
+
         now = datetime.utcnow()
+        # 同批去重：同一 (table, period) 保留最后一条，避免 pending 双插
+        pending: dict[tuple[str, str], dict[str, Any]] = {}
         for table_name, rows in tables.items():
             if table_name not in _CACHE_TABLES:
                 continue
@@ -407,23 +419,27 @@ class FinancialService:
                     continue
                 payload = {k: row.get(k) for k in _STANDARD_KEYS if k in row or k == "period"}
                 payload["period"] = period
-                # 保留标准 key 之外的有用字段（如已存在）
                 for key, value in row.items():
                     if key not in payload:
                         payload[key] = value
-                existing = self.db.scalar(
-                    select(FinancialSnapshot).where(
-                        FinancialSnapshot.symbol == symbol,
-                        FinancialSnapshot.table_name == table_name,
-                        FinancialSnapshot.period == period,
-                    )
+                pending[(table_name, period)] = payload
+
+        for (table_name, period), payload in pending.items():
+            payload_json = json.dumps(payload, ensure_ascii=False)
+            existing = self.db.scalar(
+                select(FinancialSnapshot).where(
+                    FinancialSnapshot.symbol == symbol,
+                    FinancialSnapshot.table_name == table_name,
+                    FinancialSnapshot.period == period,
                 )
-                payload_json = json.dumps(payload, ensure_ascii=False)
-                if existing:
-                    existing.source = source
-                    existing.payload_json = payload_json
-                    existing.fetched_at = now
-                else:
+            )
+            if existing:
+                existing.source = source
+                existing.payload_json = payload_json
+                existing.fetched_at = now
+                continue
+            try:
+                with self.db.begin_nested():
                     self.db.add(
                         FinancialSnapshot(
                             symbol=symbol,
@@ -434,6 +450,21 @@ class FinancialService:
                             fetched_at=now,
                         )
                     )
+                    self.db.flush()
+            except IntegrityError:
+                # 并发/缓存竞态：回退到更新已有行
+                existing = self.db.scalar(
+                    select(FinancialSnapshot).where(
+                        FinancialSnapshot.symbol == symbol,
+                        FinancialSnapshot.table_name == table_name,
+                        FinancialSnapshot.period == period,
+                    )
+                )
+                if existing is None:
+                    raise
+                existing.source = source
+                existing.payload_json = payload_json
+                existing.fetched_at = now
         self.db.flush()
 
     def _latest_price(self, symbol: str) -> float | None:

@@ -147,6 +147,7 @@ class AuctionSnapshotIngestor:
             row.name = name
             row.auction_pct = auction_pct
             row.auction_amount = amount
+            row.auction_price = last_f
             row.board_code = board_code
             row.board_name = board_name
             written += 1

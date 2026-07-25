@@ -9,6 +9,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from desk_ai.refine import maybe_auto_refine
 from desk_alert import FeishuWebhookChannel
 from desk_calendar import CalendarService
 from desk_closing_pick.screen import eval_buy_signals
@@ -144,6 +145,7 @@ class ClosingPickService:
                     "bar_date": ev.get("bar_date"),
                     "pct_chg": pct,
                     "last_close": ev.get("last_close"),
+                    "price": ev.get("last_close"),
                     "signals": ev.get("signals"),
                 }
                 self.db.add(
@@ -190,6 +192,8 @@ class ClosingPickService:
         except Exception:  # noqa: BLE001
             pass
         self.db.flush()
+        if stocks:
+            maybe_auto_refine(self.db, "closing", asof)
         return ClosingPickReport(
             asof=asof, strategy_ids=ids, stocks=stocks, content=content
         )

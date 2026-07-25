@@ -82,6 +82,55 @@ def test_financial_snapshot_roundtrip(_db):
     db.close()
 
 
+def test_upsert_snapshots_idempotent_on_duplicate_period(_db):
+    """同 symbol/table/period 重复写入应更新而非 UniqueViolation。"""
+    from desk_market.financials import FinancialService
+    from desk_market.qmt_financials import MockQmtFinancials
+
+    db = Session(get_engine())
+    db.add(
+        FinancialSnapshot(
+            symbol="000021.SZ",
+            table_name="Income",
+            period="20221231",
+            source="old",
+            payload_json='{"period":"20221231","revenue":1}',
+            fetched_at=datetime(2024, 1, 1),
+        )
+    )
+    db.commit()
+
+    svc = FinancialService(
+        db,
+        qmt=MockQmtFinancials(
+            data={
+                "000021.SZ": {
+                    "Income": [
+                        {"period": "20221231", "revenue": 2},
+                        {"period": "20221231", "revenue": 3},  # 同批重复
+                    ],
+                }
+            }
+        ),
+    )
+    # 跳过缓存，直接 upsert
+    svc._upsert_snapshots(
+        "000021.SZ",
+        {
+            "Income": [
+                {"period": "20221231", "revenue": 9},
+                {"period": "20221231", "revenue": 10},
+            ]
+        },
+        source="qmt",
+    )
+    db.commit()
+    rows = db.query(FinancialSnapshot).filter_by(symbol="000021.SZ", table_name="Income").all()
+    assert len(rows) == 1
+    assert '"revenue": 10' in rows[0].payload_json or rows[0].payload_json.find("10") >= 0
+    db.close()
+
+
 def test_mock_qmt_financials_returns_tables():
     from desk_market.qmt_financials import MockQmtFinancials
 

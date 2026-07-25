@@ -5,7 +5,20 @@
 
 from __future__ import annotations
 
+from desk_ai.refine import (
+    ResearchRefineService,
+    list_research_picks,
+    maybe_auto_refine,
+    parse_score_payload,
+)
 from desk_ai.session import NanobotResearchSession
 from desk_ai.skills import SkillLoader
 
-__all__ = ["NanobotResearchSession", "SkillLoader"]
+__all__ = [
+    "NanobotResearchSession",
+    "SkillLoader",
+    "ResearchRefineService",
+    "parse_score_payload",
+    "list_research_picks",
+    "maybe_auto_refine",
+]

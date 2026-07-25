@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     llm_provider: Literal["openai", "deepseek", "chatgpt"] = "deepseek"
     llm_api_key: str = ""
     llm_base_url: str = "https://api.deepseek.com/v1"
-    llm_model: str = "deepseek-chat"
+    llm_model: str = "deepseek-v4-flash"
 
     feishu_webhook_url: str = ""
     feishu_sign_secret: str = ""
@@ -47,6 +47,10 @@ class Settings(BaseSettings):
     paper_runner_strategy_id: str = "ma_cross"
     """连续竞价时段扫描间隔（分钟，≥5）。"""
     paper_runner_interval_minutes: int = 30
+    research_refine_top_n: int = 5
+    research_refine_min_confidence: float = 70.0
+    research_refine_max_candidates: int = 15
+    research_refine_auto: bool = False
     skills_dir: str = "skills"
     """Tavily 搜索 API Key（env ``TAVILY_API_KEY``）；空则 web_search 工具不可用。"""
     tavily_api_key: str = ""

@@ -139,3 +139,34 @@ class ClosingPickReport(BaseModel):
     stocks: list[dict[str, Any]] = Field(default_factory=list)
     content: str = ""
     generated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ResearchPickItem(BaseModel):
+    """单条投研精选。"""
+
+    symbol: str
+    name: str = ""
+    score: float = 0.0
+    confidence: float = 0.0
+    rationale: str = ""
+    rank: int = 0
+    """买入区间下限（元）。"""
+    buy_low: float = 0.0
+    """买入区间上限（元）。"""
+    buy_high: float = 0.0
+    """目标价区间下限（元）。"""
+    target_low: float = 0.0
+    """目标价区间上限（元）。"""
+    target_high: float = 0.0
+    """止损价（元）。"""
+    stop_loss: float = 0.0
+
+
+class ResearchRefineReport(BaseModel):
+    """投研精选运行结果。"""
+
+    asof: date
+    source: Literal["morning", "closing"]
+    picks: list[ResearchPickItem] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
+    candidates_evaluated: int = 0

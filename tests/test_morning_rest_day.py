@@ -57,6 +57,7 @@ def test_post_auction_uses_previous_trade_day_snapshots(db: Session):
             name="茅台",
             auction_pct=0.05,
             auction_amount=1e8,
+            auction_price=105.0,
             board_code="白酒",
             board_name="白酒",
         )
@@ -68,6 +69,7 @@ def test_post_auction_uses_previous_trade_day_snapshots(db: Session):
             name="平安",
             auction_pct=-0.02,
             auction_amount=5e7,
+            auction_price=10.0,
             board_code="银行",
             board_name="银行",
         )
@@ -78,6 +80,7 @@ def test_post_auction_uses_previous_trade_day_snapshots(db: Session):
     assert report.asof == fri
     assert len(report.stocks) >= 1
     assert report.stocks[0]["symbol"] == "600519.SH"
+    assert report.stocks[0].get("price") == 105.0
     assert all(float(s["auction_pct"]) > 0 for s in report.stocks)
 
 

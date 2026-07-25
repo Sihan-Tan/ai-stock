@@ -35,6 +35,10 @@ class SettingsPatch(BaseModel):
     paper_runner_enabled: bool | None = None
     paper_runner_strategy_id: str | None = None
     paper_runner_interval_minutes: int | None = None
+    research_refine_top_n: int | None = None
+    research_refine_min_confidence: float | None = None
+    research_refine_max_candidates: int | None = None
+    research_refine_auto: bool | None = None
     backtest_buy_commission: float | None = None
     backtest_sell_commission: float | None = None
     backtest_stamp_duty: float | None = None

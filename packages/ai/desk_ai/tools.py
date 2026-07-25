@@ -29,6 +29,20 @@ ALLOWED_TOOLS: frozenset[str] = frozenset(
     }
 )
 
+# 精选评分允许的只读工具（禁止写草稿/笔记）
+READONLY_SCORE_TOOLS: frozenset[str] = frozenset(
+    {
+        "get_watchlist",
+        "list_strategies",
+        "list_skills",
+        "search_knowledge",
+        "get_financials",
+        "peer_compare",
+        "get_valuation",
+        "web_search",
+    }
+)
+
 
 def _fn(name: str, description: str, properties: dict[str, Any], required: list[str] | None = None) -> dict:
     """构造 OpenAI tools function schema 条目。"""
@@ -117,6 +131,12 @@ TOOL_SPECS: list[dict[str, Any]] = [
         },
         ["title", "body"],
     ),
+]
+
+READONLY_TOOL_SPECS: list[dict[str, Any]] = [
+    spec
+    for spec in TOOL_SPECS
+    if (spec.get("function") or {}).get("name") in READONLY_SCORE_TOOLS
 ]
 
 

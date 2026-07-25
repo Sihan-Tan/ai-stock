@@ -9,6 +9,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from desk_ai.refine import maybe_auto_refine
 from desk_alert import FeishuWebhookChannel
 from desk_calendar import CalendarService
 from desk_common.contracts import MorningBrief, StrongPickReport
@@ -95,6 +96,7 @@ class MorningBriefService:
                     "name": s.name,
                     "auction_pct": s.auction_pct,
                     "auction_amount": s.auction_amount,
+                    "price": s.auction_price,
                     "board": s.board_name,
                     "score": round(score, 2),
                 }
@@ -169,6 +171,8 @@ class MorningBriefService:
         )
         self.alert.send("早盘·竞价强势", content, category="morning", dedupe_key=f"auction:{asof}")
         self.db.flush()
+        if stocks:
+            maybe_auto_refine(self.db, "morning", asof)
         return StrongPickReport(asof=asof, boards=boards, stocks=stocks)
 
     def _store(self, asof: date, stage: str, content: str, extras: dict[str, Any]) -> MorningBrief:

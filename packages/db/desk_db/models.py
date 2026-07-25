@@ -463,6 +463,8 @@ class AuctionSnapshot(Base):
     name: Mapped[str] = mapped_column(String(64), default="")
     auction_pct: Mapped[float] = mapped_column(Float, default=0.0)
     auction_amount: Mapped[float] = mapped_column(Float, default=0.0)
+    """竞价现价（快照 last，元）。"""
+    auction_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     board_code: Mapped[str] = mapped_column(String(32), default="")
     board_name: Mapped[str] = mapped_column(String(64), default="")
 
@@ -505,6 +507,24 @@ class ClosingPick(Base):
     name: Mapped[str] = mapped_column(String(64), default="")
     score: Mapped[float] = mapped_column(Float, default=1.0)
     meta_json: Mapped[str] = mapped_column(Text, default="{}")
+
+
+class ResearchPick(Base):
+    """投研精选结果（早盘/尾盘共用）。"""
+
+    __tablename__ = "research_picks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    asof: Mapped[date] = mapped_column(Date, index=True)
+    source: Mapped[str] = mapped_column(String(16), index=True)  # morning|closing
+    symbol: Mapped[str] = mapped_column(String(32), index=True)
+    name: Mapped[str] = mapped_column(String(64), default="")
+    score: Mapped[float] = mapped_column(Float, default=0.0)
+    confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    rationale: Mapped[str] = mapped_column(Text, default="")
+    rank: Mapped[int] = mapped_column(Integer, default=0)
+    meta_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
 class FinancialSnapshot(Base):
