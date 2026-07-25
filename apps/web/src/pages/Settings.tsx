@@ -54,6 +54,7 @@ type AppSettings = {
   research_refine_auto?: boolean;
   research_refine_batch_size?: number;
   research_refine_parallel?: number;
+  review_auto?: boolean;
 };
 
 const EMPTY: AppSettings = {
@@ -99,6 +100,7 @@ const EMPTY: AppSettings = {
   research_refine_auto: false,
   research_refine_batch_size: 4,
   research_refine_parallel: 2,
+  review_auto: false,
 };
 
 /** 设置页模块 Tab */
@@ -282,6 +284,7 @@ export default function Settings({ setLog }: PageLogProps) {
           Math.min(50, Math.floor(Number(form.research_refine_max_candidates) || 15))
         ),
         research_refine_auto: Boolean(form.research_refine_auto),
+        review_auto: Boolean(form.review_auto),
         research_refine_batch_size: Math.max(
           1,
           Math.min(10, Math.floor(Number(form.research_refine_batch_size) || 4))
@@ -876,6 +879,20 @@ export default function Settings({ setLog }: PageLogProps) {
                       选拔成功后自动精选
                       <span className="mt-0.5 block text-xs text-[var(--desk-mist)]">
                         需已配置 LLM API Key；失败不影响原选拔结果
+                      </span>
+                    </span>
+                  </label>
+                  <label className="flex items-start gap-2 text-sm text-[var(--desk-text)]">
+                    <input
+                      type="checkbox"
+                      className="mt-1"
+                      checked={Boolean(form.review_auto)}
+                      onChange={(e) => patch("review_auto", e.target.checked)}
+                    />
+                    <span>
+                      日终自动 LLM 复盘
+                      <span className="mt-0.5 block text-xs text-[var(--desk-mist)]">
+                        交易日 15:45（北京）生成大盘/交易/归因复盘；当日已有笔记则跳过；需 LLM Key
                       </span>
                     </span>
                   </label>

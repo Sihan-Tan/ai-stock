@@ -43,6 +43,16 @@ async def lifespan(_: FastAPI):
             schedulers.append(runner_sched)
     except Exception:  # noqa: BLE001
         logger.exception("paper runner scheduler failed to start")
+    # 日终 LLM 复盘（任务内检查 REVIEW_AUTO）
+    try:
+        from desk_review.scheduler import build_review_scheduler
+
+        review_sched, _ = build_review_scheduler()
+        if review_sched.get_jobs():
+            review_sched.start()
+            schedulers.append(review_sched)
+    except Exception:  # noqa: BLE001
+        logger.exception("review auto scheduler failed to start")
     yield
     for sched in schedulers:
         try:

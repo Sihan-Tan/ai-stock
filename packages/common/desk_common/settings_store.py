@@ -40,6 +40,7 @@ EDITABLE_ENV: dict[str, str] = {
     "research_refine_auto": "RESEARCH_REFINE_AUTO",
     "research_refine_batch_size": "RESEARCH_REFINE_BATCH_SIZE",
     "research_refine_parallel": "RESEARCH_REFINE_PARALLEL",
+    "review_auto": "REVIEW_AUTO",
     "backtest_buy_commission": "BACKTEST_BUY_COMMISSION",
     "backtest_sell_commission": "BACKTEST_SELL_COMMISSION",
     "backtest_stamp_duty": "BACKTEST_STAMP_DUTY",
@@ -119,6 +120,7 @@ def public_settings() -> dict[str, Any]:
         "research_refine_auto": s.research_refine_auto,
         "research_refine_batch_size": int(s.research_refine_batch_size),
         "research_refine_parallel": int(s.research_refine_parallel),
+        "review_auto": s.review_auto,
         "backtest_buy_commission": s.backtest_buy_commission,
         "backtest_sell_commission": s.backtest_sell_commission,
         "backtest_stamp_duty": s.backtest_stamp_duty,
@@ -264,6 +266,7 @@ def apply_settings_patch(patch: dict[str, Any]) -> dict[str, Any]:
             "risk_kill_switch",
             "feishu_alert_enabled",
             "research_refine_auto",
+            "review_auto",
         ):
             if isinstance(raw, bool):
                 cleaned[field] = raw

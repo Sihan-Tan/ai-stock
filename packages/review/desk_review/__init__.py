@@ -11,6 +11,15 @@ from sqlalchemy.orm import Session
 
 from desk_db.models import ReviewNote
 
+from desk_review.generate import generate_review, maybe_auto_review, prefetch_review_facts
+
+__all__ = [
+    "ReviewService",
+    "generate_review",
+    "maybe_auto_review",
+    "prefetch_review_facts",
+]
+
 
 class ReviewService:
     """日复盘。"""
@@ -49,10 +58,19 @@ class ReviewService:
     def list_recent(self, limit: int = 20) -> list[dict[str, Any]]:
         """最近复盘。"""
         rows = self.db.scalars(select(ReviewNote).order_by(ReviewNote.asof.desc()).limit(limit)).all()
-        return [
-            {
-                "asof": r.asof.isoformat(),
-                "content": r.content[:120],
-            }
-            for r in rows
-        ]
+        out: list[dict[str, Any]] = []
+        for r in rows:
+            try:
+                deviations = json.loads(r.deviations_json or "[]")
+            except json.JSONDecodeError:
+                deviations = []
+            llm = any(isinstance(d, dict) and d.get("type") == "llm" for d in deviations)
+            out.append(
+                {
+                    "asof": r.asof.isoformat(),
+                    "content": (r.content or "")[:200],
+                    "llm": llm,
+                    "deviation_count": len(deviations),
+                }
+            )
+        return out

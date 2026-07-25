@@ -45,6 +45,7 @@ class SettingsPatch(BaseModel):
     research_refine_auto: bool | None = None
     research_refine_batch_size: int | None = None
     research_refine_parallel: int | None = None
+    review_auto: bool | None = None
     backtest_buy_commission: float | None = None
     backtest_sell_commission: float | None = None
     backtest_stamp_duty: float | None = None

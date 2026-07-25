@@ -64,6 +64,8 @@ class Settings(BaseSettings):
     research_refine_batch_size: int = 4
     """并行批次数上限（1–4）；仅并行 LLM HTTP，预取仍在主线程。"""
     research_refine_parallel: int = 2
+    """日终 LLM 复盘自动开关；交易日 15:45 生成（当日已有笔记则跳过）。"""
+    review_auto: bool = False
     skills_dir: str = "skills"
     """Tavily 搜索 API Key（env ``TAVILY_API_KEY``）；空则 web_search 工具不可用。"""
     tavily_api_key: str = ""
