@@ -106,10 +106,22 @@ def closing_latest(asof: date | None = None, db: Session = Depends(get_db)):
     """
     读取当日尾盘文案与命中结果。
 
+    若指定日无结果且为非交易日，回退到上一交易日（与手动跑扫描日一致）。
+
     @param asof: 交易日，默认今天
     """
     asof = asof or date.today()
-    return _latest_payload(db, asof)
+    payload = _latest_payload(db, asof)
+    if payload["briefs"] or payload["stocks"]:
+        return payload
+    from desk_calendar import CalendarService
+
+    cal = CalendarService(db)
+    if not cal.is_trade_day(asof):
+        prev = cal.previous_trade_day(asof)
+        if prev != asof:
+            return _latest_payload(db, prev)
+    return payload
 
 
 @router.get("/history")

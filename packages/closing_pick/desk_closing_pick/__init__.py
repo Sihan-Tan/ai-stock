@@ -68,15 +68,18 @@ class ClosingPickService:
         ``strategy_ids`` 为 None 或空列表时，使用全部 closing 角色策略；
         非空列表视为子集（可含未打标策略，供页面重跑）。
 
+        若 ``asof`` 非交易日，回退到上一交易日扫描（摘要中注明），避免周末手动跑直接空结果。
+
         @param asof: 业务日
         @param strategy_ids: 可选策略列表；None/空 = 全部 closing
         """
-        asof = asof or date.today()
+        requested = asof or date.today()
+        asof = requested
+        day_note = ""
         if not self.calendar.is_trade_day(asof):
-            content = f"{asof} 非交易日，跳过尾盘选股。"
-            self._clear_briefs(asof)
-            self._store_brief(asof, content, {})
-            return ClosingPickReport(asof=asof, content=content)
+            prev = self.calendar.previous_trade_day(asof)
+            day_note = f"{requested} 非交易日，已按上一交易日 {prev} 扫描。\n"
+            asof = prev
 
         use_all_closing = not strategy_ids
         ids = (
@@ -84,8 +87,32 @@ class ClosingPickService:
             if use_all_closing
             else list(strategy_ids)
         )
+        if not ids:
+            content = (
+                f"【尾盘选股】{asof}\n"
+                f"{day_note}"
+                "没有可跑的策略。请在策略页勾选「尾盘」，或在本页勾选策略后再跑。"
+            )
+            extras = {
+                "strategy_ids": [],
+                "hit_count": 0,
+                "universe_size": 0,
+                "reason": "no_strategies",
+            }
+            self._clear_briefs(asof)
+            if requested != asof:
+                self._clear_briefs(requested)
+            self._store_brief(asof, content, extras)
+            self.db.flush()
+            return ClosingPickReport(
+                asof=asof, strategy_ids=[], stocks=[], content=content
+            )
+
         universe = self.listed_universe()
         stocks: list[dict[str, Any]] = []
+        skipped_bars = 0
+        skipped_strategy = 0
+        evaluated = 0
 
         q = select(ClosingPick).where(ClosingPick.asof == asof)
         if not use_all_closing:
@@ -98,7 +125,15 @@ class ClosingPickService:
                 ev = eval_buy_signals(
                     self.db, strategy_id=sid, symbol=symbol, asof=asof
                 )
-                if not ev.get("ok") or not ev.get("signals"):
+                msg = str(ev.get("message") or "")
+                if not ev.get("ok"):
+                    if "insufficient bars" in msg:
+                        skipped_bars += 1
+                    elif "not runnable" in msg:
+                        skipped_strategy += 1
+                    continue
+                evaluated += 1
+                if not ev.get("signals"):
                     continue
                 pct = float(ev.get("pct_chg") or 0)
                 score = round(pct * 100, 2)
@@ -128,11 +163,22 @@ class ClosingPickService:
         bits = [f"{s['symbol']}({s.get('strategy_id')})" for s in stocks[:6]]
         content = (
             f"【尾盘选股】{asof}\n"
-            f"策略 {len(ids)} 个 · 命中 {len(stocks)} 只\n"
-            f"{' · '.join(bits) if bits else '无命中'}"
+            f"{day_note}"
+            f"策略 {len(ids)} 个 · 宇宙 {len(universe)} 只 · 命中 {len(stocks)} 只\n"
+            f"{' · '.join(bits) if bits else '无命中（策略买点未触发或 K 线不足）'}"
         )
-        extras = {"strategy_ids": ids, "hit_count": len(stocks)}
+        extras = {
+            "strategy_ids": ids,
+            "hit_count": len(stocks),
+            "universe_size": len(universe),
+            "evaluated": evaluated,
+            "skipped_insufficient_bars": skipped_bars,
+            "skipped_strategy_not_runnable": skipped_strategy,
+            "requested_asof": requested.isoformat(),
+        }
         self._clear_briefs(asof)
+        if requested != asof:
+            self._clear_briefs(requested)
         self._store_brief(asof, content, extras)
         try:
             self.alert.send(

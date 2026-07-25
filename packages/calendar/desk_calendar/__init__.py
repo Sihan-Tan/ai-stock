@@ -116,6 +116,19 @@ class CalendarService:
             cur += timedelta(days=1)
         return cur
 
+    def previous_trade_day(self, day: date | None = None) -> date:
+        """
+        上一交易日（不含 day 当日）。
+
+        @param day: 基准日，默认今天
+        """
+        cur = (day or date.today()) - timedelta(days=1)
+        for _ in range(30):
+            if self.is_trade_day(cur):
+                return cur
+            cur -= timedelta(days=1)
+        return cur
+
     def month_view(self, year: int, month: int) -> list[dict[str, Any]]:
         """月历视图。"""
         self.ensure_year(year)

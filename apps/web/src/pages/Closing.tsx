@@ -102,18 +102,25 @@ export default function Closing({ setLog }: PageLogProps) {
   const runNow = async () => {
     setBusy(true);
     try {
-      const report = await api<{ stocks?: unknown[]; content?: string }>("/api/closing/run", {
-        method: "POST",
-        body: JSON.stringify({ strategy_ids: selectedIds }),
-      });
+      const hasTagged = strategies.some((item) => item.closing);
+      if (!selectedIds.length && !hasTagged) {
+        setLog("没有可跑的策略：请先在本页勾选策略，或到策略页标记「尾盘」后再跑");
+        return;
+      }
+      const report = await api<{ stocks?: unknown[]; content?: string; asof?: string }>(
+        "/api/closing/run",
+        {
+          method: "POST",
+          body: JSON.stringify({ strategy_ids: selectedIds }),
+        }
+      );
       await loadLatest();
       const n = Array.isArray(report.stocks) ? report.stocks.length : 0;
+      const asofNote = report.asof ? `（${report.asof}）` : "";
       setLog(
         n > 0
-          ? selectedIds.length
-            ? `尾盘选股完成：命中 ${n} 只（勾选 ${selectedIds.length} 个策略）`
-            : `尾盘选股完成：命中 ${n} 只`
-          : "尾盘选股完成：未选出符合条件的股票"
+          ? `尾盘选股完成${asofNote}：命中 ${n} 只`
+          : `尾盘选股完成${asofNote}：未选出符合条件的股票。${report.content ? "详见场次摘要。" : ""}`
       );
     } catch (error) {
       setLog(String(error));

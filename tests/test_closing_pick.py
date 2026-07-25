@@ -242,6 +242,38 @@ def test_run_replaces_same_day_brief(db: Session):
     assert len(briefs) == 1
 
 
+def test_run_no_strategies_explains_reason(db: Session):
+    """无 closing 策略且未显式传入时，摘要说明无策略。"""
+    asof = _seed_trade_day(db)
+    report = ClosingPickService(db).run(asof=asof)
+    assert report.stocks == []
+    assert report.strategy_ids == []
+    assert "没有可跑的策略" in report.content
+
+
+def test_run_non_trade_day_falls_back_to_previous(db: Session):
+    """非交易日手动跑回退到上一交易日并扫描。"""
+    from datetime import timedelta
+
+    from desk_db.models import TradeCalendar
+
+    fri = date.today()
+    while fri.weekday() != 4:  # Friday
+        fri -= timedelta(days=1)
+    sat = fri + timedelta(days=1)
+    db.add(TradeCalendar(cal_date=fri, is_open=True))
+    db.add(TradeCalendar(cal_date=sat, is_open=False))
+    db.add(SecurityMeta(symbol="600519.SH", name="茅台", is_delisted=False, status="listed"))
+    db.commit()
+    _seed_bars(db, "600519.SH")
+    _seed_factor_yaml(db, "close_always_buy", ALWAYS_BUY_YAML, roles=["closing"])
+
+    report = ClosingPickService(db).run(asof=sat)
+    assert report.asof == fri
+    assert "非交易日" in report.content
+    assert len(report.stocks) >= 1
+
+
 def test_bind_closing_picks_dedupes_symbols(db: Session):
     """按 score 降序写入自选，同 symbol 去重。"""
     from desk_closing_pick.bind import bind_closing_picks
