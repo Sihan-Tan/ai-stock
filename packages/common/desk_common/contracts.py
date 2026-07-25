@@ -120,3 +120,22 @@ class MorningBrief(BaseModel):
     stage: Literal["preopen", "post_auction"]
     content: str
     extras: dict[str, Any] = Field(default_factory=dict)
+
+
+class ClosingBrief(BaseModel):
+    """尾盘选股报告。"""
+
+    asof: date
+    stage: Literal["closing"] = "closing"
+    content: str
+    extras: dict[str, Any] = Field(default_factory=dict)
+
+
+class ClosingPickReport(BaseModel):
+    """尾盘选股运行结果。"""
+
+    asof: date
+    strategy_ids: list[str] = Field(default_factory=list)
+    stocks: list[dict[str, Any]] = Field(default_factory=list)
+    content: str = ""
+    generated_at: datetime = Field(default_factory=datetime.utcnow)

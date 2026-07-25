@@ -25,6 +25,7 @@ paths = [
     ROOT / "packages" / "ai",
     ROOT / "packages" / "review",
     ROOT / "packages" / "morning_brief",
+    ROOT / "packages" / "closing_pick",
 ]
 for p in paths:
     s = str(p)

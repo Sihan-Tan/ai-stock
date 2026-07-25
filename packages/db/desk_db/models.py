@@ -479,6 +479,34 @@ class MorningStrongPick(Base):
     meta_json: Mapped[str] = mapped_column(Text, default="{}")
 
 
+class ClosingBriefRow(Base):
+    """尾盘选股文案。"""
+
+    __tablename__ = "closing_briefs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    asof: Mapped[date] = mapped_column(Date, index=True)
+    stage: Mapped[str] = mapped_column(String(16), default="closing")
+    content: Mapped[str] = mapped_column(Text)
+    extras_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class ClosingPick(Base):
+    """尾盘选股命中明细（按策略分行）。"""
+
+    __tablename__ = "closing_picks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    asof: Mapped[date] = mapped_column(Date, index=True)
+    strategy_id: Mapped[str] = mapped_column(String(64), index=True)
+    pick_type: Mapped[str] = mapped_column(String(16), default="stock")
+    code: Mapped[str] = mapped_column(String(64))
+    name: Mapped[str] = mapped_column(String(64), default="")
+    score: Mapped[float] = mapped_column(Float, default=1.0)
+    meta_json: Mapped[str] = mapped_column(Text, default="{}")
+
+
 class FinancialSnapshot(Base):
     """财务快照缓存（投研）。"""
 
