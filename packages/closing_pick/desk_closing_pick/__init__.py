@@ -73,6 +73,7 @@ class ClosingPickService:
         asof = asof or date.today()
         if not self.calendar.is_trade_day(asof):
             content = f"{asof} 非交易日，跳过尾盘选股。"
+            self._clear_briefs(asof)
             self._store_brief(asof, content, {})
             return ClosingPickReport(asof=asof, content=content)
 
@@ -88,7 +89,9 @@ class ClosingPickService:
 
         for sid in ids:
             for symbol, name in universe:
-                ev = eval_buy_signals(self.db, strategy_id=sid, symbol=symbol)
+                ev = eval_buy_signals(
+                    self.db, strategy_id=sid, symbol=symbol, asof=asof
+                )
                 if not ev.get("ok") or not ev.get("signals"):
                     continue
                 pct = float(ev.get("pct_chg") or 0)
@@ -123,6 +126,7 @@ class ClosingPickService:
             f"{' · '.join(bits) if bits else '无命中'}"
         )
         extras = {"strategy_ids": ids, "hit_count": len(stocks)}
+        self._clear_briefs(asof)
         self._store_brief(asof, content, extras)
         try:
             self.alert.send(
@@ -137,6 +141,17 @@ class ClosingPickService:
         return ClosingPickReport(
             asof=asof, strategy_ids=ids, stocks=stocks, content=content
         )
+
+    def _clear_briefs(self, asof: date) -> None:
+        """删除同日 closing 阶段 brief，避免重跑堆积。"""
+        rows = self.db.scalars(
+            select(ClosingBriefRow).where(
+                ClosingBriefRow.asof == asof,
+                ClosingBriefRow.stage == "closing",
+            )
+        ).all()
+        for row in rows:
+            self.db.delete(row)
 
     def _store_brief(
         self, asof: date, content: str, extras: dict[str, Any]

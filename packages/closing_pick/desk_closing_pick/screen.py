@@ -16,7 +16,7 @@ from desk_strategy.factor_rules import attach_ml_factor_columns, collect_factor_
 
 
 def eval_buy_signals(
-    db: Session, *, strategy_id: str, symbol: str
+    db: Session, *, strategy_id: str, symbol: str, asof: date | None = None
 ) -> dict[str, Any]:
     """
     评估最新日 K 的买入信号。
@@ -26,6 +26,7 @@ def eval_buy_signals(
     @param db: 数据库会话
     @param strategy_id: 策略 ID
     @param symbol: 标的代码
+    @param asof: 业务截止日；缺省为今天
     @returns: ok / signals / bar_date / last_close / message / pct_chg
     """
     base: dict[str, Any] = {
@@ -41,7 +42,7 @@ def eval_buy_signals(
         base["message"] = f"strategy not runnable: {strategy_id}"
         return base
 
-    end = date.today()
+    end = asof or date.today()
     start = end - timedelta(days=400)
     df = MarketService(db).load_daily_df(symbol, start, end)
     if df is None or getattr(df, "empty", True) or len(df) < 30:

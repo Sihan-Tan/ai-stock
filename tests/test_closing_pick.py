@@ -144,3 +144,79 @@ def test_run_skips_strategies_without_closing_role(db: Session):
     report = ClosingPickService(db).run(asof=asof)
     assert report.strategy_ids == []
     assert report.stocks == []
+
+
+def test_run_explicit_strategy_ids_bypasses_closing_role(db: Session):
+    """显式 strategy_ids 可扫未打 closing 角色的策略。"""
+    asof = _seed_trade_day(db)
+    db.add(SecurityMeta(symbol="600519.SH", name="茅台", is_delisted=False, status="listed"))
+    db.commit()
+    _seed_bars(db, "600519.SH")
+    _seed_factor_yaml(
+        db,
+        "no_role",
+        ALWAYS_BUY_YAML.replace("close_always_buy", "no_role"),
+        roles=[],
+    )
+    report = ClosingPickService(db).run(strategy_ids=["no_role"], asof=asof)
+    assert "no_role" in report.strategy_ids
+    assert len(report.stocks) >= 1
+    picks = db.scalars(
+        select(ClosingPick).where(
+            ClosingPick.asof == asof, ClosingPick.strategy_id == "no_role"
+        )
+    ).all()
+    assert len(picks) >= 1
+
+
+def test_set_closing_role_persists_and_lists(db: Session):
+    """set_closing_role 写入 params_json，list_closing_strategy_ids 随之变化。"""
+    from desk_strategy import StrategyRegistry
+
+    _seed_factor_yaml(
+        db,
+        "role_toggle",
+        ALWAYS_BUY_YAML.replace("close_always_buy", "role_toggle"),
+        roles=[],
+    )
+    svc = ClosingPickService(db)
+    reg = StrategyRegistry(db)
+    assert "role_toggle" not in svc.list_closing_strategy_ids()
+
+    meta = reg.set_closing_role("role_toggle", True)
+    assert meta is not None
+    assert "closing" in (meta.params or {}).get("roles", [])
+    row = db.scalars(
+        select(StrategyRow).where(StrategyRow.strategy_id == "role_toggle")
+    ).one()
+    params = json.loads(row.params_json or "{}")
+    assert "closing" in params.get("roles", [])
+    assert "role_toggle" in svc.list_closing_strategy_ids()
+
+    meta2 = reg.set_closing_role("role_toggle", False)
+    assert meta2 is not None
+    assert "closing" not in (meta2.params or {}).get("roles", [])
+    row2 = db.scalars(
+        select(StrategyRow).where(StrategyRow.strategy_id == "role_toggle")
+    ).one()
+    params2 = json.loads(row2.params_json or "{}")
+    assert "closing" not in params2.get("roles", [])
+    assert "role_toggle" not in svc.list_closing_strategy_ids()
+
+
+def test_run_replaces_same_day_brief(db: Session):
+    """同日重跑不堆积 ClosingBriefRow。"""
+    asof = _seed_trade_day(db)
+    db.add(SecurityMeta(symbol="600519.SH", name="茅台", is_delisted=False, status="listed"))
+    db.commit()
+    _seed_bars(db, "600519.SH")
+    _seed_factor_yaml(db, "close_always_buy", ALWAYS_BUY_YAML, roles=["closing"])
+    svc = ClosingPickService(db)
+    svc.run(asof=asof)
+    svc.run(asof=asof)
+    briefs = db.scalars(
+        select(ClosingBriefRow).where(
+            ClosingBriefRow.asof == asof, ClosingBriefRow.stage == "closing"
+        )
+    ).all()
+    assert len(briefs) == 1
