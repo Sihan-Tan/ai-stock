@@ -34,6 +34,8 @@ EDITABLE_ENV: dict[str, str] = {
     "research_refine_min_confidence": "RESEARCH_REFINE_MIN_CONFIDENCE",
     "research_refine_max_candidates": "RESEARCH_REFINE_MAX_CANDIDATES",
     "research_refine_auto": "RESEARCH_REFINE_AUTO",
+    "research_refine_batch_size": "RESEARCH_REFINE_BATCH_SIZE",
+    "research_refine_parallel": "RESEARCH_REFINE_PARALLEL",
     "backtest_buy_commission": "BACKTEST_BUY_COMMISSION",
     "backtest_sell_commission": "BACKTEST_SELL_COMMISSION",
     "backtest_stamp_duty": "BACKTEST_STAMP_DUTY",
@@ -106,6 +108,8 @@ def public_settings() -> dict[str, Any]:
         "research_refine_min_confidence": s.research_refine_min_confidence,
         "research_refine_max_candidates": int(s.research_refine_max_candidates),
         "research_refine_auto": s.research_refine_auto,
+        "research_refine_batch_size": int(s.research_refine_batch_size),
+        "research_refine_parallel": int(s.research_refine_parallel),
         "backtest_buy_commission": s.backtest_buy_commission,
         "backtest_sell_commission": s.backtest_sell_commission,
         "backtest_stamp_duty": s.backtest_stamp_duty,
@@ -236,6 +240,10 @@ def apply_settings_patch(patch: dict[str, Any]) -> dict[str, Any]:
             cleaned[field] = max(1, min(50, int(float(raw))))
         elif field == "research_refine_min_confidence":
             cleaned[field] = max(0.0, min(100.0, float(raw)))
+        elif field == "research_refine_batch_size":
+            cleaned[field] = max(1, min(10, int(float(raw))))
+        elif field == "research_refine_parallel":
+            cleaned[field] = max(1, min(4, int(float(raw))))
         elif field == "risk_max_positions":
             cleaned[field] = max(0, int(float(raw)))
         elif field in (

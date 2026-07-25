@@ -108,6 +108,49 @@ def test_parse_score_payload_invalid_skips():
     )
 
 
+def test_parse_score_payload_list_and_feishu_body():
+    """批量 JSON 解析与飞书全量正文。"""
+    from desk_common.contracts import ResearchPickItem
+    from desk_ai.refine import format_research_feishu_body, parse_score_payload_list
+
+    text = """```json
+[
+  {"symbol":"600519.SH","score":90,"confidence":88,"rationale":"a",
+   "buy_low":1600,"buy_high":1650,"target_low":1700,"target_high":1800,"stop_loss":1550},
+  {"symbol":"000001.SZ","score":70,"confidence":75,"rationale":"b",
+   "buy_range":[10,11],"target_range":[12,13],"stop_loss":9.5}
+]
+```"""
+    mapped = parse_score_payload_list(text, ["600519.SH", "000001.SZ"])
+    assert set(mapped) == {"600519.SH", "000001.SZ"}
+    assert mapped["000001.SZ"]["buy_low"] == 10
+
+    body = format_research_feishu_body(
+        date(2026, 7, 25),
+        "morning",
+        [
+            ResearchPickItem(
+                symbol="600519.SH",
+                name="茅台",
+                score=90,
+                confidence=88,
+                rationale="强势",
+                rank=1,
+                buy_low=1600,
+                buy_high=1650,
+                target_low=1700,
+                target_high=1800,
+                stop_loss=1550,
+            )
+        ],
+        errors=["x:skip"],
+    )
+    assert "买入 1600.00–1650.00" in body
+    assert "止损 1550.00" in body
+    assert "理由：强势" in body
+    assert "异常：x:skip" in body
+
+
 def _price_plan(symbol: str, **extra: object) -> dict:
     """测试用完整评分载荷（含必填价格）。"""
     base = {

@@ -30,16 +30,11 @@ ALLOWED_TOOLS: frozenset[str] = frozenset(
 )
 
 # 精选评分允许的只读工具（禁止写草稿/笔记）
+# 注意：默认精选路径已改为「预取事实 + 无工具分批 LLM」，下列集合仅作兼容/降级
 READONLY_SCORE_TOOLS: frozenset[str] = frozenset(
     {
-        "get_watchlist",
-        "list_strategies",
-        "list_skills",
-        "search_knowledge",
         "get_financials",
-        "peer_compare",
         "get_valuation",
-        "web_search",
     }
 )
 

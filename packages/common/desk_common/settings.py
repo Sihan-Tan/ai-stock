@@ -30,8 +30,8 @@ class Settings(BaseSettings):
     feishu_sign_secret: str = ""
     """飞书告警总开关；False 时自动告警不发 Webhook。"""
     feishu_alert_enabled: bool = True
-    """允许推送的类别（逗号分隔）；默认不含 risk。"""
-    feishu_alert_categories: str = "morning,closing,paper"
+    """允许推送的类别（逗号分隔）；默认含 research，不含 risk。"""
+    feishu_alert_categories: str = "morning,closing,paper,research"
 
     qmt_userdata_path: str = r"C:\QMT\userdata_mini"
     qmt_account_id: str = ""
@@ -51,6 +51,10 @@ class Settings(BaseSettings):
     research_refine_min_confidence: float = 70.0
     research_refine_max_candidates: int = 15
     research_refine_auto: bool = False
+    """每批送入 LLM 的候选数（1–10）；预取事实后无工具分批打分。"""
+    research_refine_batch_size: int = 4
+    """并行批次数上限（1–4）；仅并行 LLM HTTP，预取仍在主线程。"""
+    research_refine_parallel: int = 2
     skills_dir: str = "skills"
     """Tavily 搜索 API Key（env ``TAVILY_API_KEY``）；空则 web_search 工具不可用。"""
     tavily_api_key: str = ""

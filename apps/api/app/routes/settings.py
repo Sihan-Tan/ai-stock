@@ -39,6 +39,8 @@ class SettingsPatch(BaseModel):
     research_refine_min_confidence: float | None = None
     research_refine_max_candidates: int | None = None
     research_refine_auto: bool | None = None
+    research_refine_batch_size: int | None = None
+    research_refine_parallel: int | None = None
     backtest_buy_commission: float | None = None
     backtest_sell_commission: float | None = None
     backtest_stamp_duty: float | None = None

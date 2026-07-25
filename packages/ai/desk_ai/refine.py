@@ -21,6 +21,122 @@ logger = logging.getLogger(__name__)
 ScorerFn = Callable[[str, str, dict[str, Any]], dict[str, Any] | None]
 
 _JSON_OBJECT_RE = re.compile(r"\{[\s\S]*\}")
+_JSON_ARRAY_RE = re.compile(r"\[[\s\S]*\]")
+
+
+def parse_score_payload_list(text: str, expected_symbols: list[str]) -> dict[str, dict[str, Any]]:
+    """
+    从模型输出解析 JSON 数组（或多对象），按 symbol 映射。
+
+    @param text: 模型原文
+    @param expected_symbols: 本批期望标的（用于缺省 symbol）
+    @returns: symbol -> 已校验 payload
+    """
+    if not text or not isinstance(text, str):
+        return {}
+    raw = text.strip()
+    fence = re.search(r"```(?:json)?\s*([\s\S]*?)```", raw, re.IGNORECASE)
+    if fence:
+        raw = fence.group(1).strip()
+    items: list[Any] = []
+    arr_match = _JSON_ARRAY_RE.search(raw)
+    if arr_match:
+        try:
+            loaded = json.loads(arr_match.group(0))
+            if isinstance(loaded, list):
+                items = loaded
+        except json.JSONDecodeError:
+            items = []
+    if not items:
+        # 退化：尝试单对象
+        one = parse_score_payload(raw, expected_symbols[0] if expected_symbols else "")
+        if one:
+            return {one["symbol"]: one}
+        return {}
+
+    out: dict[str, dict[str, Any]] = {}
+    for i, item in enumerate(items):
+        if not isinstance(item, dict):
+            continue
+        fallback = expected_symbols[i] if i < len(expected_symbols) else (
+            expected_symbols[0] if expected_symbols else ""
+        )
+        parsed = parse_score_payload(json.dumps(item, ensure_ascii=False), fallback)
+        if parsed is None:
+            continue
+        out[parsed["symbol"]] = parsed
+    return out
+
+
+def format_research_feishu_body(
+    asof: date,
+    source: str,
+    picks: list[ResearchPickItem],
+    *,
+    errors: list[str] | None = None,
+) -> str:
+    """
+    组装投研精选飞书正文（含每只的价格计划与理由）。
+
+    @param asof: 业务日
+    @param source: morning|closing
+    @param picks: 精选结果
+    @param errors: 可选错误摘要
+    """
+    lines = [f"【投研精选·{source}】{asof}", f"共 {len(picks)} 只", ""]
+    for p in picks:
+        lines.append(
+            f"#{p.rank} {p.symbol} {p.name or ''}".rstrip()
+        )
+        lines.append(f"score={p.score:.0f}  confidence={p.confidence:.0f}")
+        lines.append(
+            f"买入 {p.buy_low:.2f}–{p.buy_high:.2f} | "
+            f"目标 {p.target_low:.2f}–{p.target_high:.2f} | "
+            f"止损 {p.stop_loss:.2f}"
+        )
+        if p.rationale:
+            lines.append(f"理由：{p.rationale}")
+        lines.append("")
+    if errors:
+        # 飞书消息不宜过长：最多附 5 条错误
+        shown = errors[:5]
+        lines.append("异常：" + "；".join(shown))
+        if len(errors) > 5:
+            lines.append(f"…另有 {len(errors) - 5} 条错误未列出")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def prefetch_refine_facts(db: Session, symbol: str) -> dict[str, Any]:
+    """
+    预取精选所需事实（估值/现价），避免 LLM 多轮工具调用。
+
+    @param db: Session
+    @param symbol: 标的
+    """
+    try:
+        from desk_market.financials import FinancialService
+
+        raw = FinancialService(db).get_valuation(symbol)
+    except Exception as exc:  # noqa: BLE001
+        return {"symbol": symbol, "error": f"{type(exc).__name__}: {exc}"}
+    if not isinstance(raw, dict):
+        return {"symbol": symbol, "error": "valuation_invalid"}
+    keys = (
+        "symbol",
+        "price",
+        "pe",
+        "pb",
+        "ps",
+        "eps",
+        "bps",
+        "pe_percentile",
+        "source",
+        "note",
+        "error",
+    )
+    slim = {k: raw.get(k) for k in keys if raw.get(k) is not None}
+    slim.setdefault("symbol", symbol)
+    return slim
 
 
 def _run_coro(coro: Any) -> Any:
@@ -209,10 +325,220 @@ class ResearchRefineService:
         self.scorer = scorer
 
     def _default_scorer(self, symbol: str, name: str, context: dict[str, Any]) -> dict[str, Any] | None:
-        """默认走同步 score_pick_json_sync，避免 asyncio.run + AsyncOpenAI 关环报错。"""
+        """单股降级：预取事实后一次无工具 LLM（无分批时用）。"""
         from desk_ai.session import NanobotResearchSession
 
-        return NanobotResearchSession(self.db).score_pick_json_sync(symbol, name, context)
+        facts = context.get("facts")
+        if not isinstance(facts, dict):
+            facts = prefetch_refine_facts(self.db, symbol)
+        return NanobotResearchSession(self.db).score_pick_json_sync(
+            symbol, name, {**context, "facts": facts}
+        )
+
+    def _score_candidates_batched(
+        self,
+        candidates: list[dict[str, Any]],
+        *,
+        source: str,
+        asof: date,
+        scorer: ScorerFn | None,
+    ) -> tuple[list[dict[str, Any]], list[str]]:
+        """
+        预取事实后分批（可并行）打分。
+
+        注入 scorer 时仍逐只调用（测试兼容）；默认走无工具批量 LLM。
+        """
+        errors: list[str] = []
+        scored: list[dict[str, Any]] = []
+
+        # 注入 scorer（测试）时跳过预取；默认路径主线程预取，避免 Session 跨线程
+        prepared: list[dict[str, Any]] = []
+        if scorer is not None:
+            for cand in candidates:
+                prepared.append(
+                    {
+                        **cand,
+                        "name": cand.get("name") or "",
+                        "facts": {},
+                    }
+                )
+        else:
+            for cand in candidates:
+                symbol = cand["symbol"]
+                name = cand.get("name") or ""
+                facts = prefetch_refine_facts(self.db, symbol)
+                if facts.get("error"):
+                    errors.append(f"{symbol}:prefetch:{facts.get('error')}")
+                prepared.append({**cand, "name": name, "facts": facts})
+
+        if scorer is not None:
+            for cand in prepared:
+                symbol = cand["symbol"]
+                name = cand.get("name") or ""
+                context = {
+                    "source": source,
+                    "asof": asof.isoformat(),
+                    "base_score": cand.get("base_score"),
+                    "name": name,
+                    "facts": cand.get("facts"),
+                }
+                try:
+                    raw = scorer(symbol, name, context)
+                except Exception as exc:  # noqa: BLE001
+                    errors.append(f"{symbol}:{type(exc).__name__}:{exc}")
+                    try:
+                        self.db.rollback()
+                    except Exception:  # noqa: BLE001
+                        pass
+                    continue
+                parsed = self._coerce_parsed(raw, symbol)
+                if parsed is None:
+                    errors.append(f"{symbol}:parse_failed")
+                    continue
+                scored.append(self._pack_scored(parsed, name, raw))
+            return scored, errors
+
+        from desk_ai.session import NanobotResearchSession
+
+        batch_size = max(1, min(10, int(self.settings.research_refine_batch_size)))
+        parallel = max(1, min(4, int(self.settings.research_refine_parallel)))
+        batches = [
+            prepared[i : i + batch_size] for i in range(0, len(prepared), batch_size)
+        ]
+
+        def _run_batch(batch: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[str]]:
+            session = NanobotResearchSession(self.db)
+            try:
+                mapped = session.score_picks_batch_sync(batch, source=source, asof=asof)
+            except Exception as exc:  # noqa: BLE001
+                # 整批失败：逐只降级一次无工具调用
+                local_scored: list[dict[str, Any]] = []
+                local_err = [f"batch:{type(exc).__name__}:{exc}"]
+                for cand in batch:
+                    symbol = cand["symbol"]
+                    name = cand.get("name") or ""
+                    try:
+                        raw = session.score_pick_json_sync(
+                            symbol,
+                            name,
+                            {
+                                "source": source,
+                                "asof": asof.isoformat(),
+                                "base_score": cand.get("base_score"),
+                                "name": name,
+                                "facts": cand.get("facts"),
+                            },
+                        )
+                    except Exception as one_exc:  # noqa: BLE001
+                        local_err.append(f"{symbol}:{type(one_exc).__name__}:{one_exc}")
+                        continue
+                    parsed = self._coerce_parsed(raw, symbol)
+                    if parsed is None:
+                        local_err.append(f"{symbol}:parse_failed")
+                        continue
+                    local_scored.append(self._pack_scored(parsed, name, raw))
+                return local_scored, local_err
+
+            local_scored = []
+            local_err: list[str] = []
+            for cand in batch:
+                symbol = cand["symbol"]
+                name = cand.get("name") or ""
+                parsed = mapped.get(symbol)
+                if parsed is None:
+                    # 尝试规范化 key 匹配
+                    for k, v in mapped.items():
+                        try:
+                            if normalize_symbol(k) == normalize_symbol(symbol):
+                                parsed = v
+                                break
+                        except Exception:  # noqa: BLE001
+                            continue
+                if parsed is None:
+                    local_err.append(f"{symbol}:batch_missing")
+                    continue
+                local_scored.append(self._pack_scored(parsed, name, parsed))
+            return local_scored, local_err
+
+        if parallel <= 1 or len(batches) <= 1:
+            for batch in batches:
+                part, err = _run_batch(batch)
+                scored.extend(part)
+                errors.extend(err)
+            return scored, errors
+
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        with ThreadPoolExecutor(max_workers=min(parallel, len(batches))) as pool:
+            futs = {pool.submit(_run_batch, b): i for i, b in enumerate(batches)}
+            # 按提交顺序合并，便于稳定
+            results: list[tuple[list[dict[str, Any]], list[str]] | None] = [None] * len(batches)
+            for fut in as_completed(futs):
+                idx = futs[fut]
+                try:
+                    results[idx] = fut.result()
+                except Exception as exc:  # noqa: BLE001
+                    results[idx] = ([], [f"batch_parallel:{type(exc).__name__}:{exc}"])
+            for item in results:
+                if not item:
+                    continue
+                part, err = item
+                scored.extend(part)
+                errors.extend(err)
+        return scored, errors
+
+    @staticmethod
+    def _coerce_parsed(raw: Any, symbol: str) -> dict[str, Any] | None:
+        """将 scorer 返回值规范为 parse_score_payload 结果。"""
+        if raw is None:
+            return None
+        if isinstance(raw, dict):
+            # 已是完整 payload
+            if all(k in raw for k in ("score", "confidence", "buy_low", "stop_loss")):
+                parsed = parse_score_payload(json.dumps(raw, ensure_ascii=False), symbol)
+                return parsed
+            return parse_score_payload(json.dumps(raw, ensure_ascii=False), symbol)
+        return parse_score_payload(str(raw), symbol)
+
+    @staticmethod
+    def _pack_scored(parsed: dict[str, Any], name: str, raw: Any) -> dict[str, Any]:
+        """组装落库用 scored 条目。"""
+        return {
+            **parsed,
+            "name": name,
+            "meta": {
+                **(raw if isinstance(raw, dict) else {"raw": str(raw)}),
+                "buy_low": parsed["buy_low"],
+                "buy_high": parsed["buy_high"],
+                "target_low": parsed["target_low"],
+                "target_high": parsed["target_high"],
+                "stop_loss": parsed["stop_loss"],
+            },
+        }
+
+    def _maybe_feishu(
+        self,
+        asof: date,
+        source: str,
+        picks: list[ResearchPickItem],
+        *,
+        errors: list[str] | None = None,
+    ) -> None:
+        """成功有结果时推送全量精选字段；失败不影响落库。"""
+        if not picks:
+            return
+        try:
+            from desk_alert import FeishuWebhookChannel
+
+            body = format_research_feishu_body(asof, source, picks, errors=errors)
+            FeishuWebhookChannel(self.db).send(
+                f"投研精选·{source}",
+                body,
+                category="research",
+                dedupe_key=f"research:{source}:{asof}",
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("research refine feishu send failed")
 
     def _resolve_asof(self, asof: date | None) -> date:
         """解析业务日：非交易日回退上一交易日（与 morning/closing 一致）。"""
@@ -286,27 +612,6 @@ class ResearchRefineService:
         )
         self.db.flush()
 
-    def _maybe_feishu(self, asof: date, source: str, picks: list[ResearchPickItem]) -> None:
-        """成功有结果时可选飞书；失败不影响落库。"""
-        if not picks:
-            return
-        try:
-            from desk_alert import FeishuWebhookChannel
-
-            bits = [f"{p.symbol}({p.score:.0f}/{p.confidence:.0f})" for p in picks[:8]]
-            body = (
-                f"【投研精选·{source}】{asof}\n"
-                f"共 {len(picks)} 只：{' · '.join(bits)}"
-            )
-            FeishuWebhookChannel(self.db).send(
-                f"投研精选·{source}",
-                body,
-                category="research",
-                dedupe_key=f"research:{source}:{asof}",
-            )
-        except Exception:  # noqa: BLE001
-            logger.exception("research refine feishu send failed")
-
     def run(
         self,
         source: Literal["morning", "closing"],
@@ -342,16 +647,14 @@ class ResearchRefineService:
         min_conf = max(0.0, min(100.0, min_conf))
         max_cand = max(1, min(50, int(self.settings.research_refine_max_candidates)))
 
-        scorer = self.scorer
-        if scorer is None:
-            if not self.settings.llm_api_key:
-                # 无 Key：明确错误并保留既有精选，禁止清空
-                return ResearchRefineReport(
-                    asof=resolved,
-                    source=source,
-                    errors=["llm_api_key_missing"],
-                )
-            scorer = self._default_scorer
+        injected = self.scorer
+        if injected is None and not self.settings.llm_api_key:
+            # 无 Key：明确错误并保留既有精选，禁止清空
+            return ResearchRefineReport(
+                asof=resolved,
+                source=source,
+                errors=["llm_api_key_missing"],
+            )
 
         candidates = self._candidates(source, resolved, max_cand)
         if not candidates:
@@ -362,51 +665,12 @@ class ResearchRefineService:
                 errors=["no_candidates"],
             )
 
-        errors: list[str] = []
-        scored: list[dict[str, Any]] = []
-        for cand in candidates:
-            symbol = cand["symbol"]
-            name = cand.get("name") or ""
-            context = {
-                "source": source,
-                "asof": resolved.isoformat(),
-                "base_score": cand.get("base_score"),
-                "name": name,
-            }
-            try:
-                raw = scorer(symbol, name, context)
-            except Exception as exc:  # noqa: BLE001
-                errors.append(f"{symbol}:{type(exc).__name__}:{exc}")
-                # 工具链可能弄脏 Session（如财务快照唯一键冲突）
-                try:
-                    self.db.rollback()
-                except Exception:  # noqa: BLE001
-                    pass
-                continue
-            if raw is None:
-                errors.append(f"{symbol}:scorer_none")
-                continue
-            if isinstance(raw, dict):
-                parsed = parse_score_payload(json.dumps(raw, ensure_ascii=False), symbol)
-            else:
-                parsed = parse_score_payload(str(raw), symbol)
-            if parsed is None:
-                errors.append(f"{symbol}:parse_failed")
-                continue
-            scored.append(
-                {
-                    **parsed,
-                    "name": name,
-                    "meta": {
-                        **(raw if isinstance(raw, dict) else {"raw": str(raw)}),
-                        "buy_low": parsed["buy_low"],
-                        "buy_high": parsed["buy_high"],
-                        "target_low": parsed["target_low"],
-                        "target_high": parsed["target_high"],
-                        "stop_loss": parsed["stop_loss"],
-                    },
-                }
-            )
+        scored, errors = self._score_candidates_batched(
+            candidates,
+            source=source,
+            asof=resolved,
+            scorer=injected,
+        )
 
         filtered = [s for s in scored if s["confidence"] >= min_conf]
         filtered.sort(key=lambda x: x["score"], reverse=True)
@@ -452,7 +716,7 @@ class ResearchRefineService:
                 )
             )
         self.db.flush()
-        self._maybe_feishu(resolved, source, picks)
+        self._maybe_feishu(resolved, source, picks, errors=errors)
         return ResearchRefineReport(
             asof=resolved,
             source=source,

@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from desk_common.settings import get_settings
 from desk_db.models import AlertRow
 
-MANAGED_ALERT_CATEGORIES = frozenset({"morning", "closing", "paper", "risk"})
+MANAGED_ALERT_CATEGORIES = frozenset({"morning", "closing", "paper", "risk", "research"})
 TEST_ALERT_CATEGORIES = frozenset({"test", "manual"})
 
 

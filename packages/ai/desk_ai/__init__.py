@@ -7,9 +7,12 @@ from __future__ import annotations
 
 from desk_ai.refine import (
     ResearchRefineService,
+    format_research_feishu_body,
     list_research_picks,
     maybe_auto_refine,
     parse_score_payload,
+    parse_score_payload_list,
+    prefetch_refine_facts,
 )
 from desk_ai.session import NanobotResearchSession
 from desk_ai.skills import SkillLoader
@@ -19,6 +22,9 @@ __all__ = [
     "SkillLoader",
     "ResearchRefineService",
     "parse_score_payload",
+    "parse_score_payload_list",
+    "format_research_feishu_body",
+    "prefetch_refine_facts",
     "list_research_picks",
     "maybe_auto_refine",
 ]

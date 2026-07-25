@@ -276,6 +276,70 @@ class NanobotResearchSession:
         except Exception as exc:  # noqa: BLE001
             yield self._format_llm_error(exc)
 
+    def score_picks_batch_sync(
+        self,
+        batch: list[dict[str, Any]],
+        *,
+        source: str,
+        asof: date | str,
+    ) -> dict[str, dict[str, Any]]:
+        """
+        分批精选评分：注入预取事实，单次无工具 LLM，返回 symbol→payload。
+
+        @param batch: 含 symbol/name/facts/base_score 的候选
+        @param source: morning|closing
+        @param asof: 业务日
+        """
+        from datetime import date as date_cls
+
+        from desk_ai.refine import parse_score_payload_list
+
+        if not self.settings.llm_api_key:
+            return {}
+        if not batch:
+            return {}
+
+        asof_s = asof.isoformat() if isinstance(asof, date_cls) else str(asof)
+        payload = []
+        symbols: list[str] = []
+        for item in batch:
+            symbol = str(item.get("symbol") or "")
+            symbols.append(symbol)
+            payload.append(
+                {
+                    "symbol": symbol,
+                    "name": item.get("name") or "",
+                    "base_score": item.get("base_score"),
+                    "facts": item.get("facts") or {},
+                }
+            )
+
+        system = (
+            "你是刻度 Desk 精选评分助手。"
+            "根据用户给出的预取事实对候选打分并给出价格计划。"
+            "禁止编造财务数字；事实缺失时降低 confidence。"
+            "禁止调用工具；禁止输出 JSON 以外的文字。"
+        )
+        user = (
+            f"场次={source} 日期={asof_s}。对下列 {len(payload)} 只股票评分。\n"
+            f"候选事实：{json.dumps(payload, ensure_ascii=False, default=str)}\n"
+            "只输出一个 JSON 数组，每项字段："
+            '{"symbol","score","confidence","rationale",'
+            '"buy_low","buy_high","target_low","target_high","stop_loss"}；'
+            "score/confidence 为 0-100；价格为正数且 buy_low<=buy_high、target_low<=target_high。"
+        )
+        model = resolve_llm_model(self.settings.llm_provider, self.settings.llm_model)
+        resp = self._chat_create_sync(
+            model=model,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            # 无 tools：一次往返
+        )
+        content = getattr(resp.choices[0].message, "content", None) or ""
+        return parse_score_payload_list(str(content), symbols)
+
     def score_pick_json_sync(
         self,
         symbol: str,
@@ -283,11 +347,11 @@ class NanobotResearchSession:
         context: dict[str, Any],
     ) -> dict[str, Any] | None:
         """
-        同步精选评分（只读 tools + JSON），供 ResearchRefineService 在同步路由中调用。
+        单股精选评分：优先用 context.facts 一次无工具调用；无事实时短工具环。
 
         @param symbol: 标的代码
         @param name: 名称
-        @param context: 候选上下文
+        @param context: 候选上下文（可含 facts）
         @returns: 解析后的 score payload；失败抛 RuntimeError 或返回 None
         """
         if not self.settings.llm_api_key:
@@ -295,26 +359,62 @@ class NanobotResearchSession:
         from desk_ai.refine import parse_score_payload
         from desk_ai.tools import READONLY_TOOL_SPECS
 
+        facts = context.get("facts") if isinstance(context, dict) else None
+        model = resolve_llm_model(self.settings.llm_provider, self.settings.llm_model)
+
+        # 快路径：已有预取事实 → 单次无工具 LLM
+        if isinstance(facts, dict) and facts:
+            system = (
+                "你是刻度 Desk 精选评分助手。根据预取事实打分并给出价格计划。"
+                "禁止编造数字；禁止调用工具；只输出一行 JSON。"
+            )
+            prompt = (
+                f"对 {symbol}（{name}）评分。上下文：{json.dumps(context, ensure_ascii=False, default=str)}。"
+                "字段："
+                '{"symbol","score","confidence","rationale",'
+                '"buy_low","buy_high","target_low","target_high","stop_loss"}；'
+                "score/confidence 0-100；价格为正且区间合法。"
+            )
+            try:
+                resp = self._chat_create_sync(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": prompt},
+                    ],
+                )
+                content = getattr(resp.choices[0].message, "content", None)
+                if content:
+                    parsed = parse_score_payload(str(content), symbol)
+                    if parsed is not None:
+                        return parsed
+                    raise RuntimeError(f"未解析到评分 JSON：{str(content).strip()[:240]}")
+                return None
+            except RuntimeError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                raise RuntimeError(self._format_llm_error(exc)) from exc
+
+        # 降级：仅 get_financials / get_valuation，最多 3 轮
         prompt = (
             f"对 {symbol}（{name}）做精选评分。上下文：{json.dumps(context, ensure_ascii=False)}。"
-            "必须调用只读工具获取依据（含现价/估值），禁止编造数字。禁止保存草稿或笔记。"
-            "必须给出可执行价格计划：买入区间、目标价区间、止损价（单位：元，均为正数）。"
-            "最终只输出一行 JSON，字段："
+            "只允许调用 get_valuation 或 get_financials；禁止其它工具。"
+            "必须给出买入区间、目标价区间、止损价。"
+            "最终只输出一行 JSON："
             '{"symbol","score","confidence","rationale",'
-            '"buy_low","buy_high","target_low","target_high","stop_loss"}；'
-            "score/confidence 为 0-100；buy_low<=buy_high；target_low<=target_high。"
+            '"buy_low","buy_high","target_low","target_high","stop_loss"}。'
         )
-        system = self._build_system(
-            skill_hint="investment-research",
-            enabled_skills=["investment-research", "financial-analysis", "valuation"],
+        system = (
+            "你是刻度 Desk 精选评分助手。只用估值/财务只读工具，禁止编造数字。"
+            "尽快结束工具调用并输出 JSON。"
         )
         working: list[dict[str, Any]] = [
             {"role": "system", "content": system},
             {"role": "user", "content": prompt},
         ]
-        model = resolve_llm_model(self.settings.llm_provider, self.settings.llm_model)
+        max_iters = 3
         try:
-            for _ in range(_MAX_ITERATIONS):
+            for _ in range(max_iters):
                 resp = self._chat_create_sync(
                     model=model,
                     messages=working,

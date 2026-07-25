@@ -47,6 +47,8 @@ type AppSettings = {
   research_refine_min_confidence?: number;
   research_refine_max_candidates?: number;
   research_refine_auto?: boolean;
+  research_refine_batch_size?: number;
+  research_refine_parallel?: number;
 };
 
 const EMPTY: AppSettings = {
@@ -66,7 +68,7 @@ const EMPTY: AppSettings = {
   feishu_webhook_url: "",
   feishu_sign_secret: "",
   feishu_alert_enabled: true,
-  feishu_alert_categories: "morning,closing,paper",
+  feishu_alert_categories: "morning,closing,paper,research",
   qmt_userdata_path: "",
   qmt_account_id: "",
   paper_initial_cash: 1_000_000,
@@ -86,6 +88,8 @@ const EMPTY: AppSettings = {
   research_refine_min_confidence: 70,
   research_refine_max_candidates: 15,
   research_refine_auto: false,
+  research_refine_batch_size: 4,
+  research_refine_parallel: 2,
 };
 
 /** 设置页模块 Tab */
@@ -103,7 +107,13 @@ const SETTINGS_TABS = [
 type SettingsTabId = (typeof SETTINGS_TABS)[number]["id"];
 
 /** 飞书告警类别顺序（写入 feishu_alert_categories 时保持此序） */
-const FEISHU_ALERT_CATEGORY_ORDER = ["morning", "closing", "paper", "risk"] as const;
+const FEISHU_ALERT_CATEGORY_ORDER = [
+  "morning",
+  "closing",
+  "paper",
+  "research",
+  "risk",
+] as const;
 
 type FeishuAlertCategoryId = (typeof FEISHU_ALERT_CATEGORY_ORDER)[number];
 
@@ -111,6 +121,7 @@ const FEISHU_ALERT_CATEGORY_LABELS: Record<FeishuAlertCategoryId, string> = {
   morning: "早盘",
   closing: "尾盘",
   paper: "纸交易",
+  research: "投研精选",
   risk: "风控",
 };
 
@@ -259,6 +270,14 @@ export default function Settings({ setLog }: PageLogProps) {
           Math.min(50, Math.floor(Number(form.research_refine_max_candidates) || 15))
         ),
         research_refine_auto: Boolean(form.research_refine_auto),
+        research_refine_batch_size: Math.max(
+          1,
+          Math.min(10, Math.floor(Number(form.research_refine_batch_size) || 4))
+        ),
+        research_refine_parallel: Math.max(
+          1,
+          Math.min(4, Math.floor(Number(form.research_refine_parallel) || 2))
+        ),
       };
       if (form.llm_api_key && !form.llm_api_key.includes("*")) {
         body.llm_api_key = form.llm_api_key;
@@ -714,7 +733,7 @@ export default function Settings({ setLog }: PageLogProps) {
             {tab === "research" && (
               <TabPanel title="投研精选">
                 <p className="text-xs text-[var(--desk-mist)]">
-                  早盘/尾盘原筛选后，用 LLM 对候选打分取 TopN；可在选股页手动触发，或开启自动精选。
+                  早盘/尾盘原筛选后，预取估值事实并分批 LLM 打分；飞书推送含买入/目标/止损全字段。
                 </p>
                 <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                   <Field label="TopN（取前 N 只）">
@@ -746,6 +765,32 @@ export default function Settings({ setLog }: PageLogProps) {
                         patch(
                           "research_refine_max_candidates",
                           Math.max(1, Number(e.target.value) || 1)
+                        )
+                      }
+                    />
+                  </Field>
+                  <Field label="每批股票数">
+                    <input
+                      className={inputClass}
+                      inputMode="numeric"
+                      value={String(form.research_refine_batch_size ?? 4)}
+                      onChange={(e) =>
+                        patch(
+                          "research_refine_batch_size",
+                          Math.max(1, Math.min(10, Number(e.target.value) || 1))
+                        )
+                      }
+                    />
+                  </Field>
+                  <Field label="并行批次数">
+                    <input
+                      className={inputClass}
+                      inputMode="numeric"
+                      value={String(form.research_refine_parallel ?? 2)}
+                      onChange={(e) =>
+                        patch(
+                          "research_refine_parallel",
+                          Math.max(1, Math.min(4, Number(e.target.value) || 1))
                         )
                       }
                     />
