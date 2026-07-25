@@ -25,6 +25,7 @@ type Strategy = {
   description?: string;
   capital_pct?: number;
   capital_allocated?: number;
+  params?: { roles?: string[] };
   kpi?: StrategyKpi;
   lifecycle_history?: Array<{ ts?: string; from?: string | null; to?: string; reason?: string }>;
   yaml_body?: string | null;
@@ -220,6 +221,27 @@ export default function Strategies({ setLog }: PageLogProps) {
   };
 
   /**
+   * 切换策略是否参与尾盘选股（POST closing 角色标记后刷新列表）。
+   * @param strategyId 策略 ID
+   * @param closing 勾选为 true 时加入 closing 角色
+   */
+  const markClosingRole = async (strategyId: string, closing: boolean) => {
+    setBusy(true);
+    try {
+      await api("/api/closing/strategies/mark", {
+        method: "POST",
+        body: JSON.stringify({ strategy_id: strategyId, closing }),
+      });
+      await load();
+      setLog(closing ? `${strategyId} 已标记用于尾盘` : `${strategyId} 已取消尾盘标记`);
+    } catch (error) {
+      setLog(String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
    * 删除策略：首次软删，已软删则硬删。
    */
   const remove = async (row: Strategy) => {
@@ -393,6 +415,19 @@ export default function Strategies({ setLog }: PageLogProps) {
                         <div className="mt-0.5 text-[11px] text-[var(--desk-mist)]">
                           {row.source} · {row.version}
                         </div>
+                        <label className="mt-1.5 flex w-fit cursor-pointer items-center gap-1 text-[11px] text-[var(--desk-mist)]">
+                          <input
+                            type="checkbox"
+                            className="accent-[var(--desk-accent)]"
+                            checked={(row.params?.roles || []).includes("closing")}
+                            disabled={busy}
+                            onChange={(event) =>
+                              void markClosingRole(row.id, event.target.checked)
+                            }
+                            aria-label={`${row.id} 用于尾盘`}
+                          />
+                          尾盘
+                        </label>
                       </td>
                       <td className="px-3 py-3">
                         <select
