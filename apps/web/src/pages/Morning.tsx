@@ -77,8 +77,8 @@ export default function Morning({ setLog }: PageLogProps) {
       const n = latest.stocks?.length ?? 0;
       setLog(
         n > 0
-          ? `早盘选股完成：强势个股 ${n} 只`
-          : "早盘选股完成：未选出符合条件的个股"
+          ? `早盘选股完成：强势个股 ${n} 只${latest.asof ? `（${latest.asof}）` : ""}`
+          : `早盘选股完成：未选出符合条件的个股${latest.asof ? `（${latest.asof}）` : ""}`
       );
     } catch (error) {
       setLog(String(error));
@@ -168,7 +168,7 @@ export default function Morning({ setLog }: PageLogProps) {
       {noStockPick && (
         <EmptyPickNotice
           title="本次未选出符合条件的个股"
-          tip="竞价选拔已跑完，但当前宇宙内没有进入强势名单的标的。可检查自选是否已加入、竞价快照是否齐全，或稍后再重跑竞价。"
+          tip="竞价选拔已跑完，但在市宇宙内没有竞价上涨标的入围。可检查证券元数据/竞价快照是否齐全，或稍后再重跑。"
         />
       )}
 
@@ -259,7 +259,7 @@ export default function Morning({ setLog }: PageLogProps) {
         <div className="xl:col-span-3">
           <SessionPanel
             title="强势个股"
-            hint="点击行打开详情；「进自选」写入监控池。"
+            hint="按竞价上涨标的聚合；非自选名单。"
             action={
               <PrimaryAction
                 isDisabled={busy || !stocks.length}
@@ -311,8 +311,8 @@ export default function Morning({ setLog }: PageLogProps) {
                     colSpan={7}
                     message={
                       hasRun
-                        ? "本次未选出符合条件的个股。"
-                        : "暂无个股。请先加入自选，并点击「运行早盘」。"
+                        ? "本次未选出竞价上涨个股。"
+                        : "暂无个股。请点击「运行早盘」拉取竞价快照并选拔。"
                     }
                   />
                 )}

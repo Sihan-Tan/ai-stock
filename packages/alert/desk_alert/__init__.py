@@ -17,6 +17,28 @@ from sqlalchemy.orm import Session
 from desk_common.settings import get_settings
 from desk_db.models import AlertRow
 
+MANAGED_ALERT_CATEGORIES = frozenset({"morning", "closing", "paper", "risk"})
+TEST_ALERT_CATEGORIES = frozenset({"test", "manual"})
+
+
+def _parse_alert_categories(raw: str) -> set[str]:
+    """解析逗号分隔类别为小写集合。"""
+    return {c.strip().lower() for c in (raw or "").split(",") if c.strip()}
+
+
+def _category_allowed(category: str, categories_csv: str) -> bool:
+    """
+    托管类别须在允许列表；未知类别在总开关开启时放行。
+
+    @param category: 告警类别
+    @param categories_csv: FEISHU_ALERT_CATEGORIES
+    """
+    cat = (category or "").strip().lower()
+    allowed = _parse_alert_categories(categories_csv)
+    if cat in MANAGED_ALERT_CATEGORIES:
+        return cat in allowed
+    return True
+
 
 class FeishuWebhookChannel:
     """飞书自定义机器人。"""
@@ -26,13 +48,21 @@ class FeishuWebhookChannel:
         self.settings = get_settings()
 
     def send(
-        self, title: str, body: str, category: str = "signal", dedupe_key: str = ""
+        self,
+        title: str,
+        body: str,
+        category: str = "signal",
+        dedupe_key: str = "",
+        *,
+        force: bool = False,
     ) -> dict[str, Any]:
         """
         发送告警；落库防抖（同 key 5 分钟内不重复发送）。
+        总开关/类别关闭时不 POST，status=disabled；force 或测试类别绕过。
 
         @returns: 状态字典（status / id）
         """
+        self.settings = get_settings()
         if dedupe_key:
             since = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=5)
             hit = self.db.scalar(
@@ -43,14 +73,32 @@ class FeishuWebhookChannel:
             if hit:
                 return {"status": "deduped", "id": hit.id}
 
-        payload = {"msg_type": "text", "content": {"text": f"{title}\n{body}"}}
+        cat = (category or "signal").strip().lower() or "signal"
+        is_test = force or cat in TEST_ALERT_CATEGORIES
+        if not is_test:
+            if not self.settings.feishu_alert_enabled:
+                return self._persist(title, body, cat, dedupe_key, "disabled")
+            if not _category_allowed(cat, self.settings.feishu_alert_categories):
+                return self._persist(title, body, cat, dedupe_key, "disabled")
+
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        payload = {"msg_type": "text", "content": {"text": f"{title}  {ts}\n{body}"}}
         url = (self.settings.feishu_webhook_url or "").strip()
-        status = "skipped"
         if url:
             status = self._post_webhook(url, payload)
         else:
             status = "logged_only"
+        return self._persist(title, body, cat, dedupe_key, status)
 
+    def _persist(
+        self,
+        title: str,
+        body: str,
+        category: str,
+        dedupe_key: str,
+        status: str,
+    ) -> dict[str, Any]:
+        """写入 alerts 行并返回 status/id。"""
         row = AlertRow(
             channel="feishu",
             category=category,

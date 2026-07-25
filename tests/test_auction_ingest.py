@@ -56,7 +56,7 @@ def test_auction_ingest_writes_watchlist_snapshots(_db):
         "amount": 1.5e8,
     }
 
-    result = AuctionSnapshotIngestor(db, md, asof=asof).run()
+    result = AuctionSnapshotIngestor(db, md, asof=asof, scope="watchlist").run()
     db.commit()
 
     assert result["written"] == 1

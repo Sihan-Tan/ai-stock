@@ -28,6 +28,10 @@ class Settings(BaseSettings):
 
     feishu_webhook_url: str = ""
     feishu_sign_secret: str = ""
+    """飞书告警总开关；False 时自动告警不发 Webhook。"""
+    feishu_alert_enabled: bool = True
+    """允许推送的类别（逗号分隔）；默认不含 risk。"""
+    feishu_alert_categories: str = "morning,closing,paper"
 
     qmt_userdata_path: str = r"C:\QMT\userdata_mini"
     qmt_account_id: str = ""

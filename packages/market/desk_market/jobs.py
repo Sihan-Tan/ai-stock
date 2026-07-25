@@ -320,7 +320,9 @@ class MarketJobs:
             if not CalendarService(self.db).require_trade_day(asof):
                 self.store.finish(row, status="ok", message="skipped_non_trade_day")
                 return {"status": "ok", "skipped": True, "run_id": row.id}
-            result = AuctionSnapshotIngestor(self.db, self.md, asof=asof).run()
+            result = AuctionSnapshotIngestor(
+                self.db, self.md, asof=asof, scope="listed"
+            ).run()
             self.store.finish(
                 row,
                 status="ok",
@@ -360,7 +362,9 @@ class MarketJobs:
             if not CalendarService(self.db).require_trade_day(asof):
                 self.store.finish(row, status="ok", message="skipped_non_trade_day")
                 return {"status": "ok", "skipped": True, "run_id": row.id}
-            ingest = AuctionSnapshotIngestor(self.db, self.md, asof=asof).run()
+            ingest = AuctionSnapshotIngestor(
+                self.db, self.md, asof=asof, scope="listed"
+            ).run()
             report = MorningBriefService(self.db).run_post_auction(asof)
             self.store.finish(
                 row,

@@ -20,6 +20,8 @@ EDITABLE_ENV: dict[str, str] = {
     "llm_model": "LLM_MODEL",
     "feishu_webhook_url": "FEISHU_WEBHOOK_URL",
     "feishu_sign_secret": "FEISHU_SIGN_SECRET",
+    "feishu_alert_enabled": "FEISHU_ALERT_ENABLED",
+    "feishu_alert_categories": "FEISHU_ALERT_CATEGORIES",
     "qmt_userdata_path": "QMT_USERDATA_PATH",
     "qmt_account_id": "QMT_ACCOUNT_ID",
     "qmt_force_mock": "QMT_FORCE_MOCK",
@@ -86,6 +88,8 @@ def public_settings() -> dict[str, Any]:
         "feishu_webhook_url": s.feishu_webhook_url,
         "feishu_sign_secret": _mask_secret(s.feishu_sign_secret),
         "feishu_sign_secret_set": bool(s.feishu_sign_secret),
+        "feishu_alert_enabled": s.feishu_alert_enabled,
+        "feishu_alert_categories": s.feishu_alert_categories,
         "qmt_userdata_path": s.qmt_userdata_path,
         "qmt_account_id": s.qmt_account_id,
         "qmt_force_mock": s.qmt_force_mock,
@@ -227,6 +231,7 @@ def apply_settings_patch(patch: dict[str, Any]) -> dict[str, Any]:
             "paper_runner_enabled",
             "risk_armed",
             "risk_kill_switch",
+            "feishu_alert_enabled",
         ):
             if isinstance(raw, bool):
                 cleaned[field] = raw

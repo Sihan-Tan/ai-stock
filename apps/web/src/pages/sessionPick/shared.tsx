@@ -10,7 +10,7 @@ const SESSION_META: Record<
   morning: {
     label: "早盘选股",
     window: "开盘前 · 竞价",
-    tip: "情绪摘要与竞价强势板块 / 个股，一键写入自选。",
+    tip: "基于在市标的竞价快照选拔强势板块 / 个股，一键写入自选。",
     accentClass: "border-l-[var(--desk-signal)]",
   },
   closing: {

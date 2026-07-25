@@ -1,9 +1,9 @@
-"""集合竞价快照：自选宇宙 + QMT 快照落库，供晨会竞价选拔。"""
+"""集合竞价快照：可选自选或在市宇宙，供早盘竞价选拔。"""
 
 from __future__ import annotations
 
 from datetime import date
-from typing import Any
+from typing import Any, Literal
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -13,12 +13,15 @@ from desk_db.models import AuctionSnapshot, BoardMember, SecurityMeta, Watchlist
 from desk_market.em_boards import annotate_primary_boards
 from desk_market.qmt_md import QmtMarketData
 
+UniverseScope = Literal["listed", "watchlist"]
+
 
 class AuctionSnapshotIngestor:
     """
     拉取竞价阶段价量并写入 ``auction_snapshots``。
 
-    宇宙默认：自选；自选为空时回退到未退市 SecurityMeta（上限 batch）。
+    - ``listed``：未退市证券宇宙（早盘选股默认）
+    - ``watchlist``：仅自选（自选为空时回退 listed）
     """
 
     def __init__(
@@ -27,23 +30,26 @@ class AuctionSnapshotIngestor:
         md: QmtMarketData,
         asof: date | None = None,
         *,
+        scope: UniverseScope = "listed",
         exclude_st: bool = True,
         max_universe: int = 400,
     ) -> None:
         self.db = db
         self.md = md
         self.asof = asof or date.today()
+        self.scope = scope
         self.exclude_st = exclude_st
         self.max_universe = max_universe
 
     def _universe(self) -> list[str]:
-        """自选优先，否则未退市证券列表截断。"""
-        watch = [
-            normalize_symbol(r.symbol)
-            for r in self.db.scalars(select(WatchlistItem)).all()
-        ]
-        if watch:
-            return sorted(set(watch))[: self.max_universe]
+        """按 scope 返回规范化 symbol 列表。"""
+        if self.scope == "watchlist":
+            watch = [
+                normalize_symbol(r.symbol)
+                for r in self.db.scalars(select(WatchlistItem)).all()
+            ]
+            if watch:
+                return sorted(set(watch))[: self.max_universe]
         listed = self.db.scalars(
             select(SecurityMeta.symbol).where(SecurityMeta.is_delisted.is_(False))
         ).all()

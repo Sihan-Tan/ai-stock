@@ -15,6 +15,7 @@ class AlertIn(BaseModel):
     body: str
     category: str = "signal"
     dedupe_key: str = ""
+    force: bool = False
 
 
 @router.get("")
@@ -24,4 +25,10 @@ def list_alerts(db: Session = Depends(get_db)):
 
 @router.post("/send")
 def send_alert(body: AlertIn, db: Session = Depends(get_db)):
-    return FeishuWebhookChannel(db).send(body.title, body.body, body.category, body.dedupe_key)
+    return FeishuWebhookChannel(db).send(
+        body.title,
+        body.body,
+        body.category,
+        body.dedupe_key,
+        force=body.force,
+    )

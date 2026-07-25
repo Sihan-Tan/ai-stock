@@ -26,6 +26,8 @@ type AppSettings = {
   feishu_webhook_url: string;
   feishu_sign_secret: string;
   feishu_sign_secret_set?: boolean;
+  feishu_alert_enabled?: boolean;
+  feishu_alert_categories?: string;
   qmt_userdata_path: string;
   qmt_account_id: string;
   paper_initial_cash: number;
@@ -59,6 +61,8 @@ const EMPTY: AppSettings = {
   llm_model: "",
   feishu_webhook_url: "",
   feishu_sign_secret: "",
+  feishu_alert_enabled: true,
+  feishu_alert_categories: "morning,closing,paper",
   qmt_userdata_path: "",
   qmt_account_id: "",
   paper_initial_cash: 1_000_000,
@@ -88,6 +92,41 @@ const SETTINGS_TABS = [
 ] as const;
 
 type SettingsTabId = (typeof SETTINGS_TABS)[number]["id"];
+
+/** 飞书告警类别顺序（写入 feishu_alert_categories 时保持此序） */
+const FEISHU_ALERT_CATEGORY_ORDER = ["morning", "closing", "paper", "risk"] as const;
+
+type FeishuAlertCategoryId = (typeof FEISHU_ALERT_CATEGORY_ORDER)[number];
+
+const FEISHU_ALERT_CATEGORY_LABELS: Record<FeishuAlertCategoryId, string> = {
+  morning: "早盘",
+  closing: "尾盘",
+  paper: "纸交易",
+  risk: "风控",
+};
+
+/**
+ * 解析逗号分隔的飞书告警类别为集合。
+ * @param raw 配置字符串
+ */
+function feishuCategorySet(raw: string | undefined): Set<string> {
+  const set = new Set<string>();
+  for (const part of (raw || "").split(",")) {
+    const t = part.trim();
+    if (t) {
+      set.add(t);
+    }
+  }
+  return set;
+}
+
+/**
+ * 按固定顺序拼接已勾选的飞书告警类别。
+ * @param set 已选类别
+ */
+function joinFeishuCategories(set: Set<string>): string {
+  return FEISHU_ALERT_CATEGORY_ORDER.filter((key) => set.has(key)).join(",");
+}
 
 /**
  * 策略下拉选项：保证当前值始终可选；列表为空时回退 ma_cross。
@@ -150,6 +189,21 @@ export default function Settings({ setLog }: PageLogProps) {
   };
 
   /**
+   * 切换飞书告警子类别并写回有序逗号串。
+   * @param key 类别 ID
+   * @param checked 是否勾选
+   */
+  const toggleFeishuCategory = (key: FeishuAlertCategoryId, checked: boolean) => {
+    const set = feishuCategorySet(form.feishu_alert_categories);
+    if (checked) {
+      set.add(key);
+    } else {
+      set.delete(key);
+    }
+    patch("feishu_alert_categories", joinFeishuCategories(set));
+  };
+
+  /**
    * 保存到后端（持久化 .env）。
    */
   const save = async () => {
@@ -169,6 +223,8 @@ export default function Settings({ setLog }: PageLogProps) {
         llm_base_url: form.llm_base_url,
         llm_model: form.llm_model,
         feishu_webhook_url: form.feishu_webhook_url,
+        feishu_alert_enabled: Boolean(form.feishu_alert_enabled),
+        feishu_alert_categories: form.feishu_alert_categories || "",
         qmt_userdata_path: form.qmt_userdata_path,
         qmt_account_id: form.qmt_account_id,
         paper_initial_cash: Number(form.paper_initial_cash),
@@ -217,6 +273,7 @@ export default function Settings({ setLog }: PageLogProps) {
           title: "飞书测试推送",
           body: "来自设置页的连通性测试",
           category: "test",
+          force: true,
           dedupe_key: `settings-test-${Date.now()}`,
         }),
       });
@@ -655,6 +712,38 @@ export default function Settings({ setLog }: PageLogProps) {
                       onChange={(e) => patch("feishu_sign_secret", e.target.value)}
                     />
                   </Field>
+                </div>
+                <div className="mt-4 space-y-3 rounded-lg border border-[var(--desk-line)] bg-[var(--desk-ink)] p-4">
+                  <div className="text-sm font-medium text-[var(--desk-text)]">推送开关</div>
+                  <p className="text-xs text-[var(--desk-mist)]">
+                    关闭总开关后自动告警静音；测试推送仍可用。风控类默认关闭。
+                  </p>
+                  <label className="flex items-start gap-2 text-sm text-[var(--desk-text)]">
+                    <input
+                      type="checkbox"
+                      className="mt-1"
+                      checked={Boolean(form.feishu_alert_enabled)}
+                      onChange={(e) => patch("feishu_alert_enabled", e.target.checked)}
+                    />
+                    <span>启用飞书告警（总开关）</span>
+                  </label>
+                  {FEISHU_ALERT_CATEGORY_ORDER.map((key) => {
+                    const checked = feishuCategorySet(form.feishu_alert_categories).has(key);
+                    return (
+                      <label
+                        key={key}
+                        className="flex items-start gap-2 text-sm text-[var(--desk-text)]"
+                      >
+                        <input
+                          type="checkbox"
+                          className="mt-1"
+                          checked={checked}
+                          onChange={(e) => toggleFeishuCategory(key, e.target.checked)}
+                        />
+                        <span>{FEISHU_ALERT_CATEGORY_LABELS[key]}</span>
+                      </label>
+                    );
+                  })}
                 </div>
                 <div className="flex flex-wrap items-center gap-2 pt-1">
                   <Button
