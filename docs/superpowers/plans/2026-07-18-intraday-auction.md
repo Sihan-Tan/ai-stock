@@ -1,6 +1,8 @@
+> **状态：已实现**（规格见 specs/2026-07-18-intraday-auction-design.md）
+
 # 分时开盘集合竞价 Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** 分时图横轴前插 09:15–09:30，左侧竞价区浅底色 + 09:30 竖线；请求窗与 QMT 分钟（必要时 tick 聚合）覆盖该时段；顶栏均价/OHLC 仅统计连续竞价（≥09:30）。
 
@@ -33,7 +35,7 @@
 - Modify: `apps/web/src/stock/format.ts`
 - Modify: `apps/web/src/stock/format.test.ts`
 
-- [ ] **Step 1: 改写失败测试（旧 09:30→0 预期作废）**
+- [x] **Step 1: 改写失败测试（旧 09:30→0 预期作废）**
 
 将 `format.test.ts` 中 `ashare session axis` 与 `toChartBars` 分时断言改为：
 
@@ -69,13 +71,13 @@ describe("ashare session axis", () => {
 
 `toChartBars` 分时用例：09:30 的 `time` 改为 `1_000_015`；11:30/13:00 改为 `1_000_135`；并新增一根 `09:15`（`2026-07-15T01:15:00.000Z`）期望 `time: 1_000_000`。
 
-- [ ] **Step 2: 跑测确认失败**
+- [x] **Step 2: 跑测确认失败**
 
 Run: `cd apps/web && npx vitest run src/stock/format.test.ts`
 
 Expected: FAIL（旧坐标仍为 09:30→0）
 
-- [ ] **Step 3: 实现坐标与刻度**
+- [x] **Step 3: 实现坐标与刻度**
 
 在 `format.ts` 中：
 
@@ -118,13 +120,13 @@ export function toAshareSessionIndex(hour: number, minute: number): number | nul
 
 重写 `formatAshareSessionLabel` / `formatIntradayTickMark`：关键点为 `0→09:15`、`ASHARE_CONTINUOUS_START_INDEX→09:30`、`ASHARE_AUCTION_SPAN+AM_SPAN→11:30/13:00`、`ASHARE_SESSION_LAST_INDEX→15:00`；其余由序号反算墙钟（竞价段用 `9:15+idx`，上午用 `9:30+(idx-15)`，下午用 `13:00+(idx-135)`）。
 
-- [ ] **Step 4: 跑测通过**
+- [x] **Step 4: 跑测通过**
 
 Run: `cd apps/web && npx vitest run src/stock/format.test.ts`
 
 Expected: PASS（本 Task 相关用例；若摘要用例尚未改，先别改摘要，或本步只跑 session 相关 describe）
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/web/src/stock/format.ts apps/web/src/stock/format.test.ts
@@ -139,7 +141,7 @@ git commit -m "feat(web): extend intraday axis for 09:15 auction window"
 - Modify: `apps/web/src/stock/format.ts`（`summarizeIntradayBars`、`buildIntradayAvgSeries`）
 - Modify: `apps/web/src/stock/format.test.ts`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```ts
 it("ignores auction bars before 09:30 for OHLC and VWAP", () => {
@@ -183,13 +185,13 @@ it("ignores auction bars before 09:30 for OHLC and VWAP", () => {
 });
 ```
 
-- [ ] **Step 2: 跑测确认失败**
+- [x] **Step 2: 跑测确认失败**
 
 Run: `cd apps/web && npx vitest run src/stock/format.test.ts -t "ignores auction"`
 
 Expected: FAIL（当前会把竞价 high=12 算进去）
 
-- [ ] **Step 3: 实现过滤**
+- [x] **Step 3: 实现过滤**
 
 在 `format.ts` 增加：
 
@@ -211,13 +213,13 @@ export function isContinuousSessionTs(value: string | undefined): boolean {
 
 `buildIntradayAvgSeries`：仅对 `isContinuousSessionTs` 为真的 bar 累加 VWAP（图表黄线与顶栏一致）。价格主线 / 成交量仍含竞价（`toChartBars` 不过滤）。
 
-- [ ] **Step 4: 跑全文件测试**
+- [x] **Step 4: 跑全文件测试**
 
 Run: `cd apps/web && npx vitest run src/stock/format.test.ts`
 
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/web/src/stock/format.ts apps/web/src/stock/format.test.ts
@@ -231,7 +233,7 @@ git commit -m "feat(web): exclude auction from intraday VWAP summary"
 **Files:**
 - Modify: `apps/web/src/stock/StockDetailView.tsx`（`loadBars`）
 
-- [ ] **Step 1: 修改 from**
+- [x] **Step 1: 修改 from**
 
 ```ts
 from: `${date}T09:15:00+08:00`,
@@ -239,7 +241,7 @@ from: `${date}T09:15:00+08:00`,
 
 `to` 仍为 `15:00`。无需新测（纯常量）；若有 e2e/契约测到 09:30 则同步改。
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 git add apps/web/src/stock/StockDetailView.tsx
@@ -253,7 +255,7 @@ git commit -m "feat(web): request intraday bars from 09:15"
 **Files:**
 - Modify: `apps/web/src/stock/StockChart.tsx`
 
-- [ ] **Step 1: 增加 overlay 状态与绘制**
+- [x] **Step 1: 增加 overlay 状态与绘制**
 
 在分时分支、`setVisibleRange` 之后：
 
@@ -305,11 +307,11 @@ JSX（容器相对定位）：
 
 注意：lightweight-charts canvas 可能盖住 div——若 z-index 无效，改为在 chart 容器**外层**包一层 `relative`，overlay 与 chart 同级且 chart 容器 `z-10` 不行时，用 **chart 上方兄弟节点** 且保证 chart 背景 transparent（已是），或把 overlay 放在 chart 内部第一个子节点并用 `z-index` + 不挡事件。验收时以肉眼可见为准；若被 canvas 挡住，改用 `chart.panes()` 自定义 primitive 或在主图下方用极矮 Histogram 占位——优先 overlay。
 
-- [ ] **Step 2: 手动点检**（实现者本地开详情分时）
+- [x] **Step 2: 手动点检**（实现者本地开详情分时）
 
 Expected：左侧一段浅底、09:30 竖线；刻度含 09:15 / 09:30。
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add apps/web/src/stock/StockChart.tsx
@@ -324,7 +326,7 @@ git commit -m "feat(web): shade auction zone on intraday chart"
 - Modify: `packages/market/desk_market/qmt_md.py`（`MockQmtMarketData` + `XtdataMarketData`）
 - Create: `tests/test_qmt_md_auction_minute.py`
 
-- [ ] **Step 1: 写失败测试（Mock）**
+- [x] **Step 1: 写失败测试（Mock）**
 
 ```python
 """竞价分钟缺口：tick 聚合补 09:15–09:29。"""
@@ -376,13 +378,13 @@ def test_get_minute_bars_fills_auction_from_ticks():
 
 若现有 `seed_minute` 签名不同，按 `MockQmtMarketData` 实际 API 调整；缺少 `seed_ticks` 则本 Task 一并添加。
 
-- [ ] **Step 2: 跑测确认失败**
+- [x] **Step 2: 跑测确认失败**
 
 Run: `python -m pytest tests/test_qmt_md_auction_minute.py -v`
 
 Expected: FAIL（无 `seed_ticks` 或未补竞价）
 
-- [ ] **Step 3: Mock 实现**
+- [x] **Step 3: Mock 实现**
 
 - `MockQmtMarketData`：`_ticks: dict[str, list]` + `seed_ticks(symbol, rows)`。
 - 在 `get_minute_bars` 末尾调用共享逻辑 `_fill_auction_minutes(df, ticks, start, end)`：
@@ -391,7 +393,7 @@ Expected: FAIL（无 `seed_ticks` 或未补竞价）
   - 否则对该分钟 ticks：`open=first.last`，`high=max`，`low=min`，`close=last.last`，`volume=sum`，`amount=sum`，`ts=当日该分钟 :00`。
   - 合并后按 `ts` 排序。
 
-- [ ] **Step 4: Xtdata 实现**
+- [x] **Step 4: Xtdata 实现**
 
 在 `XtdataMarketData.get_minute_bars` 取得 `1m` 的 `out` 后：
 
@@ -409,13 +411,13 @@ out = self._ensure_auction_minutes(symbol, out, start_ts, end_ts)
 
 空档无 tick：**不插假量**。
 
-- [ ] **Step 5: 跑测通过**
+- [x] **Step 5: 跑测通过**
 
 Run: `python -m pytest tests/test_qmt_md_auction_minute.py -v`
 
 Expected: PASS
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add packages/market/desk_market/qmt_md.py tests/test_qmt_md_auction_minute.py
@@ -428,26 +430,26 @@ git commit -m "feat(market): fill opening auction minutes from QMT ticks"
 
 **Files:** 无新文件（或按失败补测）
 
-- [ ] **Step 1: 前端单测**
+- [x] **Step 1: 前端单测**
 
 Run: `cd apps/web && npx vitest run src/stock/format.test.ts`
 
 Expected: PASS
 
-- [ ] **Step 2: 后端相关测**
+- [x] **Step 2: 后端相关测**
 
 Run: `python -m pytest tests/test_qmt_md_auction_minute.py tests/test_market_pipeline_qmt_md.py -q`
 
 Expected: PASS
 
-- [ ] **Step 3: 手工验收清单**
+- [x] **Step 3: 手工验收清单**
 
 1. 详情页分时：轴上有 **09:15**、**09:30**；左侧浅底 + 竖线。
 2. 有 QMT 竞价数据时，09:15–09:30 有价/量。
 3. 顶栏均价/OHLC 不受竞价极端价影响（对比仅看 ≥09:30）。
 4. 无竞价数据时连续竞价段仍正常。
 
-- [ ] **Step 4: 若手工改动有修正则再 commit**
+- [x] **Step 4: 若手工改动有修正则再 commit**
 
 ```bash
 git add -u

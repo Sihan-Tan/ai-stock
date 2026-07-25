@@ -1,6 +1,8 @@
+> **状态：已实现**
+
 # 飞书告警开关 Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** 为飞书告警增加总开关与按类别开关；关闭后自动告警不发 Webhook，测试推送仍可发。
 
@@ -38,7 +40,7 @@
 - Modify: `.env.example`
 - Modify: `apps/api/app/routes/settings.py`
 
-- [ ] **Step 1: 在 Settings 增加字段**
+- [x] **Step 1: 在 Settings 增加字段**
 
 在 `feishu_sign_secret` 后插入：
 
@@ -51,7 +53,7 @@
     feishu_alert_categories: str = "morning,closing,paper"
 ```
 
-- [ ] **Step 2: 更新 settings_store**
+- [x] **Step 2: 更新 settings_store**
 
 `EDITABLE_ENV` 增加：
 
@@ -75,7 +77,7 @@
 在 `apply_settings_patch` 的 bool 字段元组中加入 `"feishu_alert_enabled"`（与 `risk_armed` 同组）。  
 `feishu_alert_categories` 走现有 `else: str(raw).strip()` 分支即可。
 
-- [ ] **Step 3: SettingsPatch + .env.example**
+- [x] **Step 3: SettingsPatch + .env.example**
 
 `SettingsPatch` 增加：
 
@@ -98,7 +100,7 @@ FEISHU_ALERT_ENABLED=true
 FEISHU_ALERT_CATEGORIES=morning,closing,paper
 ```
 
-- [ ] **Step 4: 冒烟读默认值**
+- [x] **Step 4: 冒烟读默认值**
 
 Run:
 
@@ -108,7 +110,7 @@ python -c "from desk_common.settings import Settings; s=Settings(); print(s.feis
 
 Expected: `True morning,closing,paper`
 
-- [ ] **Step 5: Commit**（仅当用户要求提交时执行）
+- [x] **Step 5: Commit**（仅当用户要求提交时执行）
 
 ```bash
 git add packages/common/desk_common/settings.py packages/common/desk_common/settings_store.py apps/api/app/routes/settings.py .env.example
@@ -128,7 +130,7 @@ EOF
 - Modify: `tests/test_feishu_alert.py`
 - Modify: `apps/api/app/routes/alerts.py`
 
-- [ ] **Step 1: 写失败单测**
+- [x] **Step 1: 写失败单测**
 
 在 `tests/test_feishu_alert.py` 追加（需 DB fixture；复用项目内存库模式，参考 `tests/test_auction_ingest.py` 的 `_db` 或 `conftest`）：
 
@@ -219,13 +221,13 @@ def test_send_test_category_bypasses(alert_db, monkeypatch: pytest.MonkeyPatch):
     ch._post_webhook.assert_called_once()
 ```
 
-- [ ] **Step 2: 跑测确认失败**
+- [x] **Step 2: 跑测确认失败**
 
 Run: `pytest tests/test_feishu_alert.py::test_send_disabled_when_master_off -v`
 
 Expected: FAIL（`force` / `_category_allowed` 尚未实现，或行为仍为 sent）
 
-- [ ] **Step 3: 实现通道拦截**
+- [x] **Step 3: 实现通道拦截**
 
 在 `packages/alert/desk_alert/__init__.py` 增加：
 
@@ -321,7 +323,7 @@ def _category_allowed(category: str, categories_csv: str) -> bool:
 
 注意：`send` 内每次应 `self.settings = get_settings()` 或构造时读到的 settings 在单测里需 `get_settings.cache_clear()` 后重建 channel（测试已如此）。为保险，在 `send` 开头加一行 `self.settings = get_settings()`。
 
-- [ ] **Step 4: API 透传 force**
+- [x] **Step 4: API 透传 force**
 
 `apps/api/app/routes/alerts.py`：
 
@@ -347,13 +349,13 @@ def send_alert(body: AlertIn, db: Session = Depends(get_db)):
 
 设置页已用 `category: "test"`，可不改即可绕过；可选在测试请求里加 `"force": true` 双保险。
 
-- [ ] **Step 5: 跑通单测**
+- [x] **Step 5: 跑通单测**
 
 Run: `pytest tests/test_feishu_alert.py -v`
 
 Expected: 全部 PASS
 
-- [ ] **Step 6: Commit**（仅当用户要求提交时执行）
+- [x] **Step 6: Commit**（仅当用户要求提交时执行）
 
 ```bash
 git add packages/alert/desk_alert/__init__.py apps/api/app/routes/alerts.py tests/test_feishu_alert.py
@@ -371,7 +373,7 @@ EOF
 **Files:**
 - Modify: `apps/web/src/pages/Settings.tsx`
 
-- [ ] **Step 1: 扩展类型与 EMPTY**
+- [x] **Step 1: 扩展类型与 EMPTY**
 
 `AppSettings` 增加：
 
@@ -387,7 +389,7 @@ EOF
   feishu_alert_categories: "morning,closing,paper",
 ```
 
-- [ ] **Step 2: 保存时带上字段**
+- [x] **Step 2: 保存时带上字段**
 
 在 `save` 的 `body` 中飞书段加入：
 
@@ -397,7 +399,7 @@ EOF
         feishu_alert_categories: form.feishu_alert_categories || "",
 ```
 
-- [ ] **Step 3: 飞书 Tab 增加开关 UI**
+- [x] **Step 3: 飞书 Tab 增加开关 UI**
 
 在 Webhook / 签名 `grid` 之后、「测试推送」之前插入（风格对齐交易模式双开关）：
 
@@ -465,14 +467,14 @@ EOF
           dedupe_key: `settings-test-${Date.now()}`,
 ```
 
-- [ ] **Step 4: 手动验收清单（实现者勾）**
+- [x] **Step 4: 手动验收清单（实现者勾）**
 
 1. 打开设置 → 飞书：看到总开关与四类  
 2. 取消总开关 → 保存 → 跑早盘/尾盘，告警流出现 `disabled`  
 3. 打开总开关、只关早盘 → 早盘 `disabled`、尾盘可发  
 4. 总开关关时点「测试推送」仍成功（`sent` 或 `logged_only`）
 
-- [ ] **Step 5: Commit**（仅当用户要求提交时执行）
+- [x] **Step 5: Commit**（仅当用户要求提交时执行）
 
 ```bash
 git add apps/web/src/pages/Settings.tsx
@@ -500,7 +502,7 @@ pytest tests/test_feishu_alert.py tests/test_core.py::test_morning_and_ai_skills
 
 - [x] **Step 2: 更新规格状态为「已实现」**
 
-- [ ] **Step 3: Commit**（仅当用户要求提交时执行）
+- [x] **Step 3: Commit**（仅当用户要求提交时执行）
 
 ```bash
 git add docs/superpowers/specs/2026-07-25-feishu-alert-switch-design.md docs/superpowers/plans/2026-07-25-feishu-alert-switch.md

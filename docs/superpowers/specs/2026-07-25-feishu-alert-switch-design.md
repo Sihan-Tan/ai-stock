@@ -26,8 +26,8 @@
 默认：
 
 - `feishu_alert_enabled = true`
-- 允许类别：`morning`, `closing`, `paper`（**不含** `risk`）
-- 未知类别：总开关开时视为允许（避免新来源被误杀）
+- 允许类别：`morning`, `closing`, `paper`, `research`（**不含** `risk`）
+- 托管类别：`morning` / `closing` / `paper` / `research` / `risk`（须在允许列表才发）；其它未知类别在总开关开时仍放行
 
 ## 配置
 
@@ -36,7 +36,7 @@
 | 字段 | 环境变量 | 类型 | 默认 |
 |------|----------|------|------|
 | `feishu_alert_enabled` | `FEISHU_ALERT_ENABLED` | bool | `true` |
-| `feishu_alert_categories` | `FEISHU_ALERT_CATEGORIES` | 逗号分隔字符串 | `morning,closing,paper` |
+| `feishu_alert_categories` | `FEISHU_ALERT_CATEGORIES` | 逗号分隔字符串 | `morning,closing,paper,research` |
 
 保存设置后热更新，与其它设置相同。
 
@@ -47,7 +47,7 @@
 顺序建议：
 
 1. 去重（保持现有 5 分钟逻辑）
-2. 若非测试推送，且（总开关关 **或** 类别不在允许列表）→ 落库 `disabled`，返回，不 POST
+2. 若非测试推送，且（总开关关 **或** 托管类别不在允许列表）→ 落库 `disabled`，返回，不 POST
 3. 否则走现有发送 / `logged_only` 逻辑
 
 测试推送判定（满足其一即可）：
@@ -66,6 +66,7 @@
    - 早盘 `morning`
    - 尾盘 `closing`
    - 纸交易 `paper`
+   - 投研精选 `research`
    - 风控 `risk`
 3. 说明文案：关闭总开关后自动告警静音；测试推送仍可用
 
@@ -76,6 +77,7 @@
 | 早盘 | `morning` | 无改，走开关 |
 | 尾盘 | `closing` | 无改 |
 | 纸交易成交等 | `paper` | 无改 |
+| 投研精选 | `research` | 全量价格字段正文；须勾选类别 |
 | 风控 | `risk` | 默认静音 |
 | 测试推送 | `test` + `force` | 绕过开关 |
 

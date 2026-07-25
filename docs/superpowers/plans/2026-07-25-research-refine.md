@@ -1,6 +1,9 @@
 # 投研精选 Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **状态：已实现**（含价格计划、飞书全量、预取 + 分批加速）。下方 checklist 全部视为完成；行为以规格为准：  
+> `docs/superpowers/specs/2026-07-25-research-refine-design.md`
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** 早盘/尾盘原筛选之后，用投研 skill + LLM 打分取可配置 TopN；页面两段展示；支持手动与自动精选。
 
@@ -47,7 +50,7 @@
 - Modify: `packages/common/desk_common/contracts.py`
 - Modify: `.env.example`
 
-- [ ] **Step 1: 追加 ORM**
+- [x] **Step 1: 追加 ORM**
 
 在 `ClosingPick` 后：
 
@@ -70,13 +73,13 @@ class ResearchPick(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 ```
 
-- [ ] **Step 2: Alembic 0010**
+- [x] **Step 2: Alembic 0010**
 
 `revision = "0010_research_picks"`，`down_revision = "0009_alerts_status_width"`，`op.create_table("research_picks", ...)` 与 ORM 列一致；downgrade drop。
 
 说明：本地若靠 `create_all`，新表也会在下次 ensure 时出现；仍提交 alembic 与仓库惯例一致。
 
-- [ ] **Step 3: Settings 四字段**
+- [x] **Step 3: Settings 四字段**
 
 ```python
     research_refine_top_n: int = 5
@@ -100,7 +103,7 @@ RESEARCH_REFINE_MAX_CANDIDATES=15
 RESEARCH_REFINE_AUTO=false
 ```
 
-- [ ] **Step 4: Contracts**
+- [x] **Step 4: Contracts**
 
 ```python
 class ResearchPickItem(BaseModel):
@@ -120,7 +123,7 @@ class ResearchRefineReport(BaseModel):
     candidates_evaluated: int = 0
 ```
 
-- [ ] **Step 5: 冒烟**
+- [x] **Step 5: 冒烟**
 
 ```bash
 python -c "from desk_common.settings import Settings; s=Settings(); print(s.research_refine_top_n, s.research_refine_auto)"
@@ -128,7 +131,7 @@ python -c "from desk_common.settings import Settings; s=Settings(); print(s.rese
 
 Expected: `5 False`
 
-- [ ] **Step 6: Commit**（仅用户要求时）
+- [x] **Step 6: Commit**（仅用户要求时）
 
 ---
 
@@ -140,7 +143,7 @@ Expected: `5 False`
 - Modify: `packages/ai/desk_ai/__init__.py`
 - Create: `tests/test_research_refine.py`
 
-- [ ] **Step 1: 写失败单测**
+- [x] **Step 1: 写失败单测**
 
 `tests/test_research_refine.py`（sqlite memory fixture 对齐 `test_feishu_alert` / `test_closing_pick`）：
 
@@ -168,11 +171,11 @@ def test_refine_overwrite_same_asof_source(db):
     # 跑两次，第二次条数覆盖第一次
 ```
 
-- [ ] **Step 2: 跑测确认失败**
+- [x] **Step 2: 跑测确认失败**
 
 `pytest tests/test_research_refine.py -v` → ImportError / fail
 
-- [ ] **Step 3: 实现 `parse_score_payload` + `ResearchRefineService`**
+- [x] **Step 3: 实现 `parse_score_payload` + `ResearchRefineService`**
 
 `packages/ai/desk_ai/refine.py` 要点：
 
@@ -213,7 +216,7 @@ class ResearchRefineService:
 
 无 API Key 且使用 default scorer：返回 `errors=["llm_api_key_missing"]`，picks=[]。
 
-- [ ] **Step 4: `NanobotResearchSession.score_pick_json`**
+- [x] **Step 4: `NanobotResearchSession.score_pick_json`**
 
 ```python
 async def score_pick_json(self, symbol: str, name: str, context: dict[str, Any]) -> dict[str, Any] | None:
@@ -234,11 +237,11 @@ async def score_pick_json(self, symbol: str, name: str, context: dict[str, Any])
 
 测试不调用真实 LLM：注入 `scorer=`。
 
-- [ ] **Step 5: 导出并跑通测试**
+- [x] **Step 5: 导出并跑通测试**
 
 `pytest tests/test_research_refine.py -v` → PASS
 
-- [ ] **Step 6: Commit**（仅用户要求时）
+- [x] **Step 6: Commit**（仅用户要求时）
 
 ---
 
@@ -248,7 +251,7 @@ async def score_pick_json(self, symbol: str, name: str, context: dict[str, Any])
 - Modify: `apps/api/app/routes/morning.py`
 - Modify: `apps/api/app/routes/closing.py`
 
-- [ ] **Step 1: 共享序列化 helper**（可放在各自文件或 `desk_ai.refine`）
+- [x] **Step 1: 共享序列化 helper**（可放在各自文件或 `desk_ai.refine`）
 
 ```python
 def list_research_picks(db, asof: date, source: str) -> list[dict]:
@@ -270,11 +273,11 @@ def list_research_picks(db, asof: date, source: str) -> list[dict]:
     ]
 ```
 
-- [ ] **Step 2: latest 增加字段**
+- [x] **Step 2: latest 增加字段**
 
 `_latest_payload` / closing 等价物返回增加 `"research_picks": list_research_picks(...)`。
 
-- [ ] **Step 3: POST refine**
+- [x] **Step 3: POST refine**
 
 ```python
 class ResearchRefineIn(BaseModel):
@@ -297,7 +300,7 @@ def research_refine(body: ResearchRefineIn | None = None, db: Session = Depends(
 
 无候选时返回空 picks + errors 可选 `no_candidates`。
 
-- [ ] **Step 4: API 烟测（可选小测）**
+- [x] **Step 4: API 烟测（可选小测）**
 
 在 `tests/test_research_refine.py` 用 FastAPI TestClient + mock scorer via monkeypatch `ResearchRefineService._default_scorer` 或构造时注入困难则 patch `refine.ResearchRefineService.run` 仅测路由挂载——优先测 service，路由用轻量：
 
@@ -307,7 +310,7 @@ def test_morning_latest_includes_research_picks_key(client, ...):
     assert "research_picks" in data
 ```
 
-- [ ] **Step 5: Commit**（仅用户要求时）
+- [x] **Step 5: Commit**（仅用户要求时）
 
 ---
 
@@ -317,7 +320,7 @@ def test_morning_latest_includes_research_picks_key(client, ...):
 - Modify: `packages/morning_brief/desk_morning_brief/__init__.py`
 - Modify: `packages/closing_pick/desk_closing_pick/__init__.py`
 
-- [ ] **Step 1: helper**
+- [x] **Step 1: helper**
 
 在 `desk_ai/refine.py`：
 
@@ -336,12 +339,12 @@ def maybe_auto_refine(db: Session, source: str, asof: date) -> None:
         logger.exception("auto research refine failed source=%s asof=%s", source, asof)
 ```
 
-- [ ] **Step 2: 钩子位置**
+- [x] **Step 2: 钩子位置**
 
 - `MorningBriefService.run_post_auction`：在 flush / return **之前**，若 `stocks` 非空则 `maybe_auto_refine(self.db, "morning", asof)`  
 - `ClosingPickService.run`：在飞书之后、return 前，若 `stocks` 非空则 `maybe_auto_refine(..., "closing", asof)`
 
-- [ ] **Step 3: 单测 auto**
+- [x] **Step 3: 单测 auto**
 
 ```python
 def test_maybe_auto_refine_respects_flag(db, monkeypatch):
@@ -353,7 +356,7 @@ def test_maybe_auto_refine_respects_flag(db, monkeypatch):
     # spy 被调用
 ```
 
-- [ ] **Step 4: Commit**（仅用户要求时）
+- [x] **Step 4: Commit**（仅用户要求时）
 
 ---
 
@@ -365,7 +368,7 @@ def test_maybe_auto_refine_respects_flag(db, monkeypatch):
 - Modify: `apps/web/src/pages/Morning.tsx`
 - Modify: `apps/web/src/pages/Closing.tsx`
 
-- [ ] **Step 1: Settings**
+- [x] **Step 1: Settings**
 
 `AppSettings` / `EMPTY` / `save` body 增加四字段。飞书 Tab 旁或新小节「投研精选」：
 
@@ -374,7 +377,7 @@ def test_maybe_auto_refine_respects_flag(db, monkeypatch):
 - 候选上限  
 - 自动精选 checkbox  
 
-- [ ] **Step 2: shared 面板**
+- [x] **Step 2: shared 面板**
 
 ```tsx
 /**
@@ -386,14 +389,14 @@ export function ResearchPicksPanel({ picks, busy, onRun, emptyHint }: {...}) { .
 
 列：#、代码、名称、score、confidence、理由。
 
-- [ ] **Step 3: Morning / Closing**
+- [x] **Step 3: Morning / Closing**
 
 - latest 类型增加 `research_picks`  
 - Hero actions 增加「投研精选」→ `POST /api/morning/research-refine`（closing 对应）  
 - 原个股表下方渲染 `ResearchPicksPanel`  
 - 选拔 `runAll` 成功后若需：再 `loadLatest`（auto 时服务端已写好）
 
-- [ ] **Step 4: Commit**（仅用户要求时）
+- [x] **Step 4: Commit**（仅用户要求时）
 
 ---
 
@@ -402,7 +405,7 @@ export function ResearchPicksPanel({ picks, busy, onRun, emptyHint }: {...}) { .
 **Files:**
 - Modify: `docs/superpowers/specs/2026-07-25-research-refine-design.md` → 状态「已实现」
 
-- [ ] **Step 1: 跑测**
+- [x] **Step 1: 跑测**
 
 ```bash
 pytest tests/test_research_refine.py -v --tb=line
@@ -410,9 +413,9 @@ pytest tests/test_research_refine.py -v --tb=line
 
 Expected: all PASS
 
-- [ ] **Step 2: 更新规格状态**
+- [x] **Step 2: 更新规格状态**
 
-- [ ] **Step 3: Commit**（仅用户要求时）
+- [x] **Step 3: Commit**（仅用户要求时）
 
 ---
 
