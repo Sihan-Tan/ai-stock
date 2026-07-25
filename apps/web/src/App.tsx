@@ -9,6 +9,7 @@ import Factors from "./pages/Factors";
 import Knowledge from "./pages/Knowledge";
 import Lhb from "./pages/Lhb";
 import MarketSync from "./pages/MarketSync";
+import Closing from "./pages/Closing";
 import Morning from "./pages/Morning";
 import Paper from "./pages/Paper";
 import Research from "./pages/Research";
@@ -91,6 +92,7 @@ export default function App() {
         <Route path="/alerts" element={<Alerts setLog={setLog} />} />
         <Route path="/ai" element={<Research setLog={setLog} />} />
         <Route path="/morning" element={<Morning setLog={setLog} />} />
+        <Route path="/closing" element={<Closing setLog={setLog} />} />
         <Route path="/review" element={<Review setLog={setLog} />} />
         <Route path="/knowledge" element={<Knowledge setLog={setLog} />} />
         <Route path="/settings" element={<Settings setLog={setLog} />} />
