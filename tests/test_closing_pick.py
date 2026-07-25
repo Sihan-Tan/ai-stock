@@ -220,3 +220,51 @@ def test_run_replaces_same_day_brief(db: Session):
         )
     ).all()
     assert len(briefs) == 1
+
+
+def test_bind_closing_picks_dedupes_symbols(db: Session):
+    """按 score 降序写入自选，同 symbol 去重。"""
+    from desk_closing_pick.bind import bind_closing_picks
+    from desk_db.models import WatchlistItem
+
+    today = date.today()
+    db.add(
+        ClosingPick(
+            asof=today,
+            strategy_id="s1",
+            pick_type="stock",
+            code="600519.SH",
+            name="茅台",
+            score=90.0,
+            meta_json="{}",
+        )
+    )
+    db.add(
+        ClosingPick(
+            asof=today,
+            strategy_id="s2",
+            pick_type="stock",
+            code="600519.SH",
+            name="茅台",
+            score=80.0,
+            meta_json="{}",
+        )
+    )
+    db.add(
+        ClosingPick(
+            asof=today,
+            strategy_id="s1",
+            pick_type="stock",
+            code="000001.SZ",
+            name="平安",
+            score=70.0,
+            meta_json="{}",
+        )
+    )
+    db.commit()
+    out = bind_closing_picks(db, asof=today, limit=10)
+    assert out["count"] == 2
+    assert "600519.SH" in out["added"]
+    assert "000001.SZ" in out["added"]
+    rows = db.scalars(select(WatchlistItem)).all()
+    assert {r.symbol for r in rows} == {"600519.SH", "000001.SZ"}

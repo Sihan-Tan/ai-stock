@@ -8,6 +8,7 @@ from app.routes import (
     backtest,
     broker,
     calendar,
+    closing,
     factor_ml,
     knowledge,
     market,
@@ -29,6 +30,7 @@ api_router.include_router(alerts.router, tags=["alerts"])
 api_router.include_router(factor_ml.router, tags=["factor-ml"])
 api_router.include_router(ai.router, tags=["ai"])
 api_router.include_router(morning.router, tags=["morning"])
+api_router.include_router(closing.router, tags=["closing"])
 api_router.include_router(review.router, tags=["review"])
 api_router.include_router(knowledge.router, tags=["knowledge"])
 api_router.include_router(settings.router, tags=["settings"])
