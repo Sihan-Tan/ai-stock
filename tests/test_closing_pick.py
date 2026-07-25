@@ -169,6 +169,26 @@ def test_run_explicit_strategy_ids_bypasses_closing_role(db: Session):
     assert len(picks) >= 1
 
 
+def test_run_empty_strategy_ids_uses_all_closing(db: Session):
+    """strategy_ids=[] 与 None 一样，使用全部 closing 角色策略。"""
+    asof = _seed_trade_day(db)
+    db.add(SecurityMeta(symbol="600519.SH", name="茅台", is_delisted=False, status="listed"))
+    db.commit()
+    _seed_bars(db, "600519.SH")
+    _seed_factor_yaml(db, "close_always_buy", ALWAYS_BUY_YAML, roles=["closing"])
+    _seed_factor_yaml(
+        db,
+        "no_role",
+        ALWAYS_BUY_YAML.replace("close_always_buy", "no_role"),
+        roles=[],
+    )
+
+    report = ClosingPickService(db).run(strategy_ids=[], asof=asof)
+    assert "close_always_buy" in report.strategy_ids
+    assert "no_role" not in report.strategy_ids
+    assert len(report.stocks) >= 1
+
+
 def test_set_closing_role_persists_and_lists(db: Session):
     """set_closing_role 写入 params_json，list_closing_strategy_ids 随之变化。"""
     from desk_strategy import StrategyRegistry

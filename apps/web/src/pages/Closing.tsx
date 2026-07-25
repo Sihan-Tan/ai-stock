@@ -82,7 +82,8 @@ export default function Closing({ setLog }: PageLogProps) {
   };
 
   /**
-   * 立即跑尾盘选股（携带已选策略）。
+   * 立即跑尾盘选股。
+   * 空勾选时后端按全部 closing 策略执行。
    */
   const runNow = async () => {
     setBusy(true);
@@ -93,8 +94,8 @@ export default function Closing({ setLog }: PageLogProps) {
       });
       setLog(
         selectedIds.length
-          ? `尾盘选股已完成（${selectedIds.length} 个策略）`
-          : "尾盘选股已完成（全部 closing 策略）"
+          ? `尾盘选股已完成（勾选 ${selectedIds.length} 个策略）`
+          : "尾盘选股已完成（未勾选，按全部 closing 策略）"
       );
       await loadLatest();
     } catch (error) {
@@ -105,14 +106,18 @@ export default function Closing({ setLog }: PageLogProps) {
   };
 
   /**
-   * 将当日尾盘命中写入自选。
+   * 将当日尾盘命中写入自选；有勾选时仅绑定对应策略。
    */
   const bindWatchlist = async () => {
     setBusy(true);
     try {
       const result = await api<{ count: number; added: string[] }>("/api/closing/bind", {
         method: "POST",
-        body: JSON.stringify({ asof: data?.asof || undefined, limit: 20 }),
+        body: JSON.stringify({
+          asof: data?.asof || undefined,
+          limit: 20,
+          strategy_ids: selectedIds.length ? selectedIds : undefined,
+        }),
       });
       setLog(`已写入自选 ${result.count} 只：${(result.added || []).slice(0, 8).join(", ")}`);
     } catch (error) {
@@ -123,6 +128,13 @@ export default function Closing({ setLog }: PageLogProps) {
   };
 
   const brief = data?.briefs?.closing;
+  /** 有勾选时按所选策略过滤展示；空勾选 = 全部。 */
+  const displayStocks =
+    selectedIds.length > 0
+      ? (data?.stocks ?? []).filter(
+          (stock) => stock.strategy_id != null && selectedIds.includes(stock.strategy_id)
+        )
+      : (data?.stocks ?? []);
 
   return (
     <div className="space-y-4">
@@ -143,12 +155,17 @@ export default function Closing({ setLog }: PageLogProps) {
             <Button
               size="sm"
               variant="secondary"
-              isDisabled={busy || !(data?.stocks?.length)}
+              isDisabled={busy || !displayStocks.length}
               onPress={() => void bindWatchlist()}
             >
               一键进自选
             </Button>
-            <Button size="sm" variant="primary" isDisabled={busy} onPress={() => void runNow()}>
+            <Button
+              size="sm"
+              variant="primary"
+              isDisabled={busy || !strategies.length}
+              onPress={() => void runNow()}
+            >
               立即跑
             </Button>
           </div>
@@ -162,7 +179,7 @@ export default function Closing({ setLog }: PageLogProps) {
         <CardHeader className="p-5 pb-3">
           <CardTitle className="text-base text-[var(--desk-text)]">策略选择</CardTitle>
           <p className="mt-1 text-xs text-[var(--desk-mist)]">
-            默认勾选带 closing 角色的策略；「立即跑」将使用当前勾选列表
+            默认勾选带 closing 角色的策略；未勾选时「立即跑」按全部 closing 策略执行
           </p>
         </CardHeader>
         <CardContent className="p-5 pt-2">
@@ -197,13 +214,13 @@ export default function Closing({ setLog }: PageLogProps) {
           <div>
             <CardTitle className="text-base text-[var(--desk-text)]">命中个股</CardTitle>
             <p className="mt-1 text-xs text-[var(--desk-mist)]">
-              「一键进自选」写入监控池，可用策略 Runner 扫描
+              库内保留当日全部 picks；勾选非空时仅展示所选策略。「一键进自选」同理过滤。
             </p>
           </div>
           <Button
             size="sm"
             variant="primary"
-            isDisabled={busy || !(data?.stocks?.length)}
+            isDisabled={busy || !displayStocks.length}
             onPress={() => void bindWatchlist()}
           >
             一键进自选
@@ -222,7 +239,7 @@ export default function Closing({ setLog }: PageLogProps) {
                 </tr>
               </thead>
               <tbody>
-                {(data?.stocks ?? []).map((stock) => {
+                {displayStocks.map((stock) => {
                   const symbol = stock.symbol || stock.code || "";
                   return (
                     <tr
@@ -240,10 +257,10 @@ export default function Closing({ setLog }: PageLogProps) {
                     </tr>
                   );
                 })}
-                {!data?.stocks?.length && (
+                {!displayStocks.length && (
                   <tr>
                     <td colSpan={5} className="px-3 py-8 text-center text-[var(--desk-mist)]">
-                      暂无命中个股。请勾选策略后点击「立即跑」。
+                      暂无命中个股。未勾选时将按全部 closing 策略「立即跑」。
                     </td>
                   </tr>
                 )}

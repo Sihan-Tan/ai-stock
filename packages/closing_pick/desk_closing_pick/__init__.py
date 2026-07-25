@@ -65,10 +65,11 @@ class ClosingPickService:
         """
         扫宇宙、落库 picks/brief，并尝试飞书推送。
 
-        显式传入 strategy_ids 时可包含未打标策略（页面重跑）。
+        ``strategy_ids`` 为 None 或空列表时，使用全部 closing 角色策略；
+        非空列表视为子集（可含未打标策略，供页面重跑）。
 
         @param asof: 业务日
-        @param strategy_ids: 可选策略列表；缺省用 closing 角色
+        @param strategy_ids: 可选策略列表；None/空 = 全部 closing
         """
         asof = asof or date.today()
         if not self.calendar.is_trade_day(asof):
@@ -77,12 +78,17 @@ class ClosingPickService:
             self._store_brief(asof, content, {})
             return ClosingPickReport(asof=asof, content=content)
 
-        ids = list(strategy_ids) if strategy_ids is not None else self.list_closing_strategy_ids()
+        use_all_closing = not strategy_ids
+        ids = (
+            self.list_closing_strategy_ids()
+            if use_all_closing
+            else list(strategy_ids)
+        )
         universe = self.listed_universe()
         stocks: list[dict[str, Any]] = []
 
         q = select(ClosingPick).where(ClosingPick.asof == asof)
-        if strategy_ids is not None:
+        if not use_all_closing:
             q = q.where(ClosingPick.strategy_id.in_(ids))
         for old in self.db.scalars(q).all():
             self.db.delete(old)
