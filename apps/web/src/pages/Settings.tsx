@@ -205,6 +205,31 @@ export default function Settings({ setLog }: PageLogProps) {
     }
   };
 
+  /**
+   * 使用服务端当前 Webhook 发送一条测试告警。
+   */
+  const testFeishu = async () => {
+    setBusy(true);
+    try {
+      const result = await api<{ status?: string; id?: number }>("/api/alerts/send", {
+        method: "POST",
+        body: JSON.stringify({
+          title: "飞书测试推送",
+          body: "来自设置页的连通性测试",
+          category: "test",
+          dedupe_key: `settings-test-${Date.now()}`,
+        }),
+      });
+      setLog(
+        `飞书测试：${result.status ?? "ok"}${result.id != null ? ` #${result.id}` : ""}`
+      );
+    } catch (error) {
+      setLog(String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="space-y-4">
       <Card className="border border-[var(--desk-line)] bg-[var(--desk-panel)]">
@@ -630,6 +655,19 @@ export default function Settings({ setLog }: PageLogProps) {
                       onChange={(e) => patch("feishu_sign_secret", e.target.value)}
                     />
                   </Field>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    isDisabled={busy}
+                    onPress={() => void testFeishu()}
+                  >
+                    测试推送
+                  </Button>
+                  <p className="text-xs text-[var(--desk-mist)]">
+                    使用当前服务端已保存的 Webhook（请先保存设置）；未配置则仅落库。
+                  </p>
                 </div>
               </TabPanel>
             )}

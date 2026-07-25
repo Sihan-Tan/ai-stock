@@ -462,4 +462,21 @@ def test_knowledge_and_review(client):
 def test_alerts_log(client):
     r = client.post("/api/alerts/send", json={"title": "测试", "body": "hello", "dedupe_key": "t1"})
     assert r.status_code == 200
+    body = r.json()
+    assert body.get("status") in ("sent", "logged_only", "failed", "deduped") or str(
+        body.get("status", "")
+    ).startswith("failed")
     assert len(client.get("/api/alerts").json()) >= 1
+
+
+def test_alerts_dedupe(client):
+    a = client.post(
+        "/api/alerts/send",
+        json={"title": "a", "body": "1", "dedupe_key": "same-key"},
+    )
+    b = client.post(
+        "/api/alerts/send",
+        json={"title": "b", "body": "2", "dedupe_key": "same-key"},
+    )
+    assert a.status_code == 200
+    assert b.json().get("status") == "deduped"

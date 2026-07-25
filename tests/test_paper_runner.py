@@ -76,6 +76,44 @@ def test_run_once_ma_cross_places_or_skips(db: Session):
     assert result["last_price"] is not None
 
 
+def test_run_once_alerts_when_order_filled(db: Session, monkeypatch: pytest.MonkeyPatch):
+    """成交或拒绝时会调用告警（不依赖真实飞书）。"""
+    calls: list[dict] = []
+
+    def _capture(self, *, title: str, body: str, category: str, dedupe_key: str) -> None:
+        calls.append(
+            {"title": title, "body": body, "category": category, "dedupe_key": dedupe_key}
+        )
+
+    monkeypatch.setattr(PaperStrategyRunner, "_alert_paper", _capture)
+    _seed_uptrend(db)
+    # 晋升闸门默认 incubating 可能挡买；把策略标为 probation 以便有机会下单
+    from desk_strategy import StrategyRegistry
+
+    reg = StrategyRegistry(db)
+    meta = reg.load("ma_cross")
+    if meta and meta.meta:
+        # 通过 ORM 更新 lifecycle
+        from sqlalchemy import select
+
+        from desk_db.models import StrategyRow
+
+        row = db.scalar(
+            select(StrategyRow)
+            .where(StrategyRow.strategy_id == "ma_cross")
+            .order_by(StrategyRow.id.desc())
+        )
+        if row is not None:
+            row.lifecycle_stage = "probation"
+            db.commit()
+
+    result = PaperStrategyRunner(db).run_once(strategy_id="ma_cross", symbol="600519.SH")
+    assert result["status"] == "ok"
+    if result.get("orders"):
+        assert any(c["category"] in ("paper", "risk") for c in calls)
+        assert any("paper:" in c["dedupe_key"] or "reject:" in c["dedupe_key"] for c in calls)
+
+
 def test_run_once_unknown_strategy(db: Session):
     """未知策略应返回 error。"""
     result = PaperStrategyRunner(db).run_once(strategy_id="no_such", symbol="600519.SH")

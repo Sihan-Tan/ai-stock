@@ -106,6 +106,16 @@ class PaperStrategyRunner:
                 continue
             if side == Side.BUY and not can_buy(stage):
                 gate_msg = buy_block_reason(stage)
+                reason = getattr(sig, "reason", "") or ""
+                self._alert_paper(
+                    title=f"纸交易·闸门拒绝买入 {symbol}",
+                    body=(
+                        f"策略 {strategy_id} · {symbol} · buy\n"
+                        f"原因：{gate_msg}\n信号：{reason}"
+                    ),
+                    category="risk",
+                    dedupe_key=f"reject:{strategy_id}:{symbol}:buy:{date.today().isoformat()}",
+                )
                 continue
             qty = float(sig.qty) if getattr(sig, "qty", None) else None
             if qty is None or qty <= 0:
@@ -133,6 +143,29 @@ class PaperStrategyRunner:
             )
             result = self.broker.place_order(intent)
             orders.append(result.model_dump())
+            side_s = side.value if isinstance(side, Side) else str(side)
+            asof = date.today().isoformat()
+            if result.status in ("accepted", "filled", "partial"):
+                self._alert_paper(
+                    title=f"纸交易·{side_s.upper()} {symbol}",
+                    body=(
+                        f"策略 {strategy_id} · {symbol} · {side_s}\n"
+                        f"数量 {qty:g} @ {last_price:g} · 状态 {result.status}\n"
+                        f"{result.message or ''}".strip()
+                    ),
+                    category="paper",
+                    dedupe_key=f"paper:{strategy_id}:{symbol}:{side_s}:{asof}",
+                )
+            elif result.status == "rejected":
+                self._alert_paper(
+                    title=f"纸交易·下单拒绝 {symbol}",
+                    body=(
+                        f"策略 {strategy_id} · {symbol} · {side_s}\n"
+                        f"数量 {qty:g} · {result.message or 'rejected'}"
+                    ),
+                    category="risk",
+                    dedupe_key=f"reject:{strategy_id}:{symbol}:{side_s}:{asof}",
+                )
             break
 
         self.db.flush()
@@ -148,6 +181,19 @@ class PaperStrategyRunner:
             }
         )
         return base
+
+    def _alert_paper(
+        self, *, title: str, body: str, category: str, dedupe_key: str
+    ) -> None:
+        """发送飞书告警；失败不影响下单主路径。"""
+        try:
+            from desk_alert import FeishuWebhookChannel
+
+            FeishuWebhookChannel(self.db).send(
+                title, body, category=category, dedupe_key=dedupe_key
+            )
+        except Exception:  # noqa: BLE001
+            pass
 
     def _strategy_stage(self, strategy_id: str) -> str:
         """读取策略生命周期阶段，缺省 incubating。"""

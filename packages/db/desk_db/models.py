@@ -392,7 +392,7 @@ class AlertRow(Base):
     title: Mapped[str] = mapped_column(String(128))
     body: Mapped[str] = mapped_column(Text)
     dedupe_key: Mapped[str] = mapped_column(String(128), index=True, default="")
-    status: Mapped[str] = mapped_column(String(16), default="sent")
+    status: Mapped[str] = mapped_column(String(128), default="sent")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
