@@ -39,7 +39,18 @@ __all__ = [
     "StrategyKPI",
     "StrategyRegistry",
     "register_strategy",
+    "strategy_has_closing_role",
 ]
+
+
+def strategy_has_closing_role(params: dict[str, Any] | None) -> bool:
+    """
+    判断策略 params 是否含 closing 角色。
+
+    @param params: 策略 params 字典
+    """
+    roles = (params or {}).get("roles") or []
+    return isinstance(roles, list) and "closing" in roles
 
 
 @dataclass
@@ -302,6 +313,32 @@ class StrategyRegistry:
             return None
         self._ensure_lifecycle_defaults(row)
         return self._row_to_meta(row)
+
+    def set_closing_role(self, strategy_id: str, enabled: bool) -> StrategyMeta | None:
+        """
+        开关策略 params.roles 中的 closing 标记。
+
+        @param strategy_id: 策略 ID
+        @param enabled: True 加入 closing；False 移除
+        """
+        row = self._latest_row(strategy_id)
+        if not row:
+            return None
+        try:
+            params = json.loads(row.params_json or "{}")
+        except json.JSONDecodeError:
+            params = {}
+        if not isinstance(params, dict):
+            params = {}
+        roles = list(params.get("roles") or [])
+        if enabled and "closing" not in roles:
+            roles.append("closing")
+        if not enabled:
+            roles = [r for r in roles if r != "closing"]
+        params["roles"] = roles
+        row.params_json = json.dumps(params, ensure_ascii=False)
+        self.db.flush()
+        return self.get_meta(strategy_id)
 
     def get_source_text(self, strategy_id: str) -> dict[str, Any] | None:
         """

@@ -14,9 +14,12 @@ os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 from desk_common.settings import get_settings
 from desk_db import Base, get_engine, reset_engine
 import desk_db.models  # noqa: F401
-from desk_db.models import SecurityMeta, StrategyRow
-from desk_market import MarketService
+from sqlalchemy import select
+
+from desk_closing_pick import ClosingPickService
 from desk_closing_pick.screen import eval_buy_signals
+from desk_db.models import ClosingBriefRow, ClosingPick, SecurityMeta, StrategyRow, TradeCalendar
+from desk_market import MarketService
 
 
 @pytest.fixture()
@@ -99,3 +102,45 @@ def test_eval_buy_signals_returns_buy(db: Session):
     assert out["ok"] is True
     assert len(out["signals"]) >= 1
     assert out["bar_date"] is not None
+
+
+def _seed_trade_day(db: Session, day: date | None = None) -> date:
+    """将指定日标为交易日，避免周末门闸跳过。"""
+    asof = day or date.today()
+    db.add(TradeCalendar(cal_date=asof, is_open=True, note=""))
+    db.commit()
+    return asof
+
+
+def test_run_scans_universe_and_stores_picks(db: Session):
+    asof = _seed_trade_day(db)
+    db.add(SecurityMeta(symbol="600519.SH", name="茅台", is_delisted=False, status="listed"))
+    db.add(SecurityMeta(symbol="000001.SZ", name="平安", is_delisted=False, status="listed"))
+    db.commit()
+    _seed_bars(db, "600519.SH", trend=1.01)
+    _seed_bars(db, "000001.SZ", trend=1.01)
+    _seed_factor_yaml(db, "close_always_buy", ALWAYS_BUY_YAML, roles=["closing"])
+
+    report = ClosingPickService(db).run(asof=asof)
+    assert "close_always_buy" in report.strategy_ids
+    assert len(report.stocks) >= 1
+    picks = db.scalars(select(ClosingPick).where(ClosingPick.asof == asof)).all()
+    assert len(picks) >= 1
+    briefs = db.scalars(select(ClosingBriefRow).where(ClosingBriefRow.asof == asof)).all()
+    assert len(briefs) >= 1
+
+
+def test_run_skips_strategies_without_closing_role(db: Session):
+    asof = _seed_trade_day(db)
+    db.add(SecurityMeta(symbol="600519.SH", name="茅台", is_delisted=False, status="listed"))
+    db.commit()
+    _seed_bars(db, "600519.SH")
+    _seed_factor_yaml(
+        db,
+        "no_role",
+        ALWAYS_BUY_YAML.replace("close_always_buy", "no_role"),
+        roles=[],
+    )
+    report = ClosingPickService(db).run(asof=asof)
+    assert report.strategy_ids == []
+    assert report.stocks == []
