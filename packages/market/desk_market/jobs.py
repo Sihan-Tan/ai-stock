@@ -377,3 +377,27 @@ class MarketJobs:
         except Exception as exc:  # noqa: BLE001
             self.store.finish(row, status="failed", error_summary=str(exc))
             return {"status": "failed", "error": str(exc), "run_id": row.id}
+
+    def run_closing_pick(
+        self, asof: date | None = None, *, run_id: int | None = None
+    ) -> dict[str, Any]:
+        """调度：尾盘选股。"""
+        from desk_closing_pick import ClosingPickService
+
+        row = self._begin("run_closing_pick", run_id)
+        asof = asof or date.today()
+        try:
+            if not CalendarService(self.db).require_trade_day(asof):
+                self.store.finish(row, status="ok", message="skipped_non_trade_day")
+                return {"status": "ok", "skipped": True, "run_id": row.id}
+            report = ClosingPickService(self.db).run(asof)
+            self.store.finish(
+                row,
+                status="ok",
+                symbols_done=len(report.stocks),
+                message=report.content[:200],
+            )
+            return {"status": "ok", "report": report.model_dump(), "run_id": row.id}
+        except Exception as exc:  # noqa: BLE001
+            self.store.finish(row, status="failed", error_summary=str(exc))
+            return {"status": "failed", "error": str(exc), "run_id": row.id}

@@ -25,6 +25,7 @@ const JOB_LABELS: Record<string, string> = {
   run_morning_preopen: "晨会开盘前",
   ingest_auction_snapshots: "竞价快照",
   run_morning_post_auction: "晨会竞价选拔",
+  run_closing_pick: "尾盘选股",
 };
 
 /**

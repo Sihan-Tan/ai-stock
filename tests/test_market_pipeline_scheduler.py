@@ -21,6 +21,7 @@ def test_build_scheduler_registers_job_ids():
         "run_morning_preopen",
         "ingest_auction_snapshots",
         "run_morning_post_auction",
+        "run_closing_pick",
     }
     assert expected <= set(job_ids)
     if sched.running:

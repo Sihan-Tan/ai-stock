@@ -130,4 +130,5 @@ def build_market_scheduler(
     _add("run_morning_preopen", "run_morning_preopen")
     _add("ingest_auction_snapshots", "ingest_auction_snapshots")
     _add("run_morning_post_auction", "run_morning_post_auction")
+    _add("run_closing_pick", "run_closing_pick")
     return sched, job_ids

@@ -14,4 +14,5 @@ jobs:
   run_morning_preopen: { cron: "20 8 * * 1-5" }
   ingest_auction_snapshots: { cron: "26 9 * * 1-5" }
   run_morning_post_auction: { cron: "28 9 * * 1-5" }
+  run_closing_pick: { cron: "40 14 * * 1-5" }
   purge_with_minute: true
