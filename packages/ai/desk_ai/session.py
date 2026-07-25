@@ -218,6 +218,13 @@ class NanobotResearchSession:
             return
 
         system = self._build_system(skill_hint=skill_hint, enabled_skills=enabled_skills)
+        all_names = {i["name"] for i in self.skills.list()}
+        from desk_ai.pattern_prefetch import pattern_skill_active, prefetch_pattern_knowledge
+
+        if pattern_skill_active(skill_hint, enabled_skills, all_names):
+            block = prefetch_pattern_knowledge(self.db, user)
+            if block:
+                system = f"{system}\n\n{block}"
         working: list[dict[str, Any]] = [{"role": "system", "content": system}, *messages]
         tool_specs = tools if tools is not None else TOOL_SPECS
         model = resolve_llm_model(self.settings.llm_provider, self.settings.llm_model)

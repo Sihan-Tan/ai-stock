@@ -1,36 +1,28 @@
 # 项目待办
 
-## 文档同步（2026-07-25）
+## 进行中
 
-已与代码对齐的规格（状态 → 已实现 / 行为已更新）：
+- [x] **投研形态手册（知识库预检索）** — skill `pattern-playbook`；启用时预检索笔记对照形态/走势  
+  - 设计：`docs/superpowers/specs/2026-07-25-pattern-playbook-design.md`
 
-- [x] 投研精选（含价格计划、飞书全量、分批加速）— `specs/2026-07-25-research-refine-design.md`
-- [x] 飞书告警开关（含托管类别 `research`）— `specs/2026-07-25-feishu-alert-switch-design.md`
-- [x] 分时开盘集合竞价 — `specs/2026-07-18-intraday-auction-design.md`
-- [x] 登记模型删除与放入因子列表 — `specs/2026-07-21-ml-model-factor-list-design.md`
+## 后续（暂不做）
 
-说明：部分历史 plan 文件顶部 checkbox 可能仍为草稿痕迹；以对应 **spec 状态** 为准。
+- [ ] **知识库纯本地向量** — `sentence-transformers` 离线 embedding / 索引（不依赖云端 API）  
+  - 前置：知识库工作台落地后再做
 
-## 策略（已完成）
+## 已完成（策略）
 
-- [x] **规则策略构建器（因子条件 → 策略）**  
-  - 设计：`docs/superpowers/specs/2026-07-22-factor-rule-strategy-builder-design.md`  
-  - 计划：`docs/superpowers/plans/2026-07-22-factor-rule-strategy-builder.md`  
-  - 入口：策略页「新建规则策略」→ `/strategies/new/rules`
+- [x] **知识库工作台 + PDF + 可切换检索**  
+  - 设计：`docs/superpowers/specs/2026-07-25-knowledge-workbench-design.md`  
+  - 范围：CRUD、PDF/md/txt 上传、keyword/vector/hybrid（云端 embedding）
+- [x] 规则策略构建器 — `specs/2026-07-22-factor-rule-strategy-builder-design.md`
+- [x] 规则策略支持 ML 因子 — `specs/2026-07-23-ml-factor-in-rule-strategy-design.md`
+- [x] 因子一键生成 + 完整净值寻优 — `specs/2026-07-25-factor-rule-optimize-design.md`
 
-- [x] **规则策略支持 ML 因子（as_factor）**  
-  - 设计：`docs/superpowers/specs/2026-07-23-ml-factor-in-rule-strategy-design.md`  
-  - 计划：`docs/superpowers/plans/2026-07-23-ml-factor-in-rule-strategy.md`  
-  - 范围：`ml:` 进 factor_rules；下拉 `名（说明）`；回测预打分
+## 文档同步（摘录）
 
-## 下一期功能（已实现 2026-07-25）
-
-- [x] **因子页「一键生成策略」** — 从已放入的 ML/TA 因子一键跳到规则策略并预填条件  
-  - 设计：`docs/superpowers/specs/2026-07-25-factor-rule-optimize-design.md`
-- [x] **自动寻优阈值、仓位/持仓天数** — 网格/搜索买卖阈值与简易仓位、最长持仓，写入策略参数  
-  - 设计：`docs/superpowers/specs/2026-07-25-factor-rule-optimize-design.md`
+- [x] 投研精选 / 飞书开关 / 分时竞价 / ML 因子列表等规格已与代码对齐（见 `docs/superpowers/specs/`）
 
 ## 备注
 
-完成一项后请勾选，并视情况补实现计划到 `docs/superpowers/plans/`。  
-完成「规则策略支持 ML 因子」后，请主动提醒用户推进上方「下一期」两项。
+完成一项后请勾选，并视情况补实现计划到 `docs/superpowers/plans/`。

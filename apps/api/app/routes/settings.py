@@ -23,6 +23,10 @@ class SettingsPatch(BaseModel):
     llm_api_key: str | None = None
     llm_base_url: str | None = None
     llm_model: str | None = None
+    knowledge_retrieval: str | None = None
+    embedding_api_key: str | None = None
+    embedding_base_url: str | None = None
+    embedding_model: str | None = None
     feishu_webhook_url: str | None = None
     feishu_sign_secret: str | None = None
     feishu_alert_enabled: bool | None = None

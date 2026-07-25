@@ -12,6 +12,26 @@ export async function api<T = unknown>(path: string, init?: RequestInit): Promis
   return (await res.json()) as T;
 }
 
+/**
+ * 以 multipart FormData 调用 API（不手动设置 Content-Type，由浏览器带 boundary）。
+ * @param path API 路径
+ * @param formData 表单数据
+ * @param init 额外 fetch 选项（method 默认 POST）
+ */
+export async function apiFormData<T = unknown>(
+  path: string,
+  formData: FormData,
+  init?: Omit<RequestInit, "body">,
+): Promise<T> {
+  const res = await fetch(path, {
+    method: "POST",
+    ...init,
+    body: formData,
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return (await res.json()) as T;
+}
+
 /** 系统展示时区：北京时间 */
 export const BEIJING_TZ = "Asia/Shanghai";
 

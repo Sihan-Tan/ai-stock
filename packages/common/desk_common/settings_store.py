@@ -18,6 +18,10 @@ EDITABLE_ENV: dict[str, str] = {
     "llm_api_key": "LLM_API_KEY",
     "llm_base_url": "LLM_BASE_URL",
     "llm_model": "LLM_MODEL",
+    "knowledge_retrieval": "KNOWLEDGE_RETRIEVAL",
+    "embedding_api_key": "EMBEDDING_API_KEY",
+    "embedding_base_url": "EMBEDDING_BASE_URL",
+    "embedding_model": "EMBEDDING_MODEL",
     "feishu_webhook_url": "FEISHU_WEBHOOK_URL",
     "feishu_sign_secret": "FEISHU_SIGN_SECRET",
     "feishu_alert_enabled": "FEISHU_ALERT_ENABLED",
@@ -50,7 +54,7 @@ EDITABLE_ENV: dict[str, str] = {
     "risk_whitelist": "RISK_WHITELIST",
 }
 
-SECRET_FIELDS = frozenset({"llm_api_key", "feishu_sign_secret"})
+SECRET_FIELDS = frozenset({"llm_api_key", "embedding_api_key", "feishu_sign_secret"})
 
 
 def _env_path() -> Path:
@@ -91,6 +95,11 @@ def public_settings() -> dict[str, Any]:
         "llm_api_key_set": bool(s.llm_api_key),
         "llm_base_url": s.llm_base_url,
         "llm_model": s.llm_model,
+        "knowledge_retrieval": s.knowledge_retrieval,
+        "embedding_api_key": _mask_secret(s.embedding_api_key),
+        "embedding_api_key_set": bool(s.embedding_api_key),
+        "embedding_base_url": s.embedding_base_url,
+        "embedding_model": s.embedding_model,
         "feishu_webhook_url": s.feishu_webhook_url,
         "feishu_sign_secret": _mask_secret(s.feishu_sign_secret),
         "feishu_sign_secret_set": bool(s.feishu_sign_secret),
@@ -260,7 +269,7 @@ def apply_settings_patch(patch: dict[str, Any]) -> dict[str, Any]:
                 cleaned[field] = raw
             else:
                 cleaned[field] = str(raw).strip().lower() in ("1", "true", "yes", "on")
-        elif field in ("trade_mode", "ml_engine", "llm_provider"):
+        elif field in ("trade_mode", "ml_engine", "llm_provider", "knowledge_retrieval"):
             cleaned[field] = str(raw).strip().lower()
         else:
             cleaned[field] = str(raw).strip()
@@ -275,6 +284,12 @@ def apply_settings_patch(patch: dict[str, Any]) -> dict[str, Any]:
         "chatgpt",
     ):
         raise ValueError("llm_provider 无效")
+    if "knowledge_retrieval" in cleaned and cleaned["knowledge_retrieval"] not in (
+        "keyword",
+        "vector",
+        "hybrid",
+    ):
+        raise ValueError("knowledge_retrieval 须为 keyword / vector / hybrid")
     if "risk_max_order_position_pct" in cleaned:
         pct = cleaned["risk_max_order_position_pct"]
         if pct <= 0 or pct > 100:

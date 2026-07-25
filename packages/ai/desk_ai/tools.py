@@ -26,6 +26,7 @@ ALLOWED_TOOLS: frozenset[str] = frozenset(
         "get_valuation",
         "web_search",
         "save_research_note",
+        "get_candlestick_patterns",
     }
 )
 
@@ -63,8 +64,11 @@ TOOL_SPECS: list[dict[str, Any]] = [
     _fn("list_skills", "列出可用 skills", {}),
     _fn(
         "search_knowledge",
-        "检索知识库",
-        {"query": {"type": "string", "description": "检索关键词"}},
+        "检索知识库（模式取自全局 knowledge_retrieval 设置）",
+        {
+            "query": {"type": "string", "description": "检索关键词"},
+            "top_k": {"type": "integer", "description": "返回条数，默认 5"},
+        },
         ["query"],
     ),
     _fn(
@@ -117,6 +121,27 @@ TOOL_SPECS: list[dict[str, Any]] = [
         ["query"],
     ),
     _fn(
+        "get_candlestick_patterns",
+        "扫描标的近 N 日 TA-Lib K 线形态（CDL）；可筛选形态名/中文短名；only_hits 默认只返回非零信号",
+        {
+            "symbol": {"type": "string", "description": "股票代码"},
+            "lookback_bars": {
+                "type": "integer",
+                "description": "回看交易日根数，默认 30，范围 5–120",
+            },
+            "patterns": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "可选：CDLENGULFING / ENGULFING / 吞没 等；空=全部 CDL",
+            },
+            "only_hits": {
+                "type": "boolean",
+                "description": "仅返回非 0 信号，默认 true",
+            },
+        },
+        ["symbol"],
+    ),
+    _fn(
         "save_research_note",
         "保存投研笔记到知识库",
         {
@@ -157,7 +182,9 @@ def dispatch_tool(db: Session, name: str, arguments: dict[str, Any] | None = Non
         return SkillLoader().list()
 
     if name == "search_knowledge":
-        return KnowledgeStore(db).search(args.get("query", ""))
+        top_k = int(args.get("top_k") or 5)
+        # mode=None → Store 内取 get_settings().knowledge_retrieval
+        return KnowledgeStore(db).search(str(args.get("query") or ""), top_k=top_k)
 
     if name == "save_strategy_draft":
         meta = StrategyRegistry(db).save_agent_draft(args)
@@ -193,6 +220,23 @@ def dispatch_tool(db: Session, name: str, arguments: dict[str, Any] | None = Non
             content=str(args.get("body") or ""),
             doc_type="research_note",
             tags=tags,
+        )
+
+    if name == "get_candlestick_patterns":
+        from desk_ai.candlestick_patterns import get_candlestick_patterns
+
+        patterns = args.get("patterns")
+        if patterns is not None and not isinstance(patterns, list):
+            return {"error": "patterns must be a list of strings"}
+        only_hits = args.get("only_hits")
+        if only_hits is None:
+            only_hits = True
+        return get_candlestick_patterns(
+            db,
+            str(args.get("symbol") or ""),
+            lookback_bars=int(args.get("lookback_bars") or 30),
+            patterns=[str(p) for p in patterns] if patterns else None,
+            only_hits=bool(only_hits),
         )
 
     return {"error": f"unknown tool {name}"}

@@ -16,6 +16,7 @@ description: 投研场景索引与路由；不确定用户意图时先读本 ski
 | 估值、PE/PB/PS、分位、相对估值 | `valuation` | `get_valuation` |
 | 深度研报、五步法、护城河、预期差 | `write-report` | `get_financials`、`get_valuation`、`web_search`、`search_knowledge`、`save_research_note` |
 | 检索已有研报/笔记 | `knowledge-rag` | `search_knowledge` |
+| 形态、走势、K线、技术形态对照 | `pattern-playbook` | `get_candlestick_patterns`、`search_knowledge` + 只读行情/估值 |
 
 ## 工作流
 

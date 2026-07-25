@@ -26,6 +26,15 @@ class Settings(BaseSettings):
     llm_base_url: str = "https://api.deepseek.com/v1"
     llm_model: str = "deepseek-v4-flash"
 
+    """知识库检索模式：keyword / vector / hybrid。"""
+    knowledge_retrieval: Literal["keyword", "vector", "hybrid"] = "keyword"
+    """Embedding API Key；空则回退 llm_api_key。"""
+    embedding_api_key: str = ""
+    """Embedding Base URL；空则回退 llm_base_url。"""
+    embedding_base_url: str = ""
+    """Embedding 模型名；空则默认 text-embedding-3-small（需有 key）。"""
+    embedding_model: str = ""
+
     feishu_webhook_url: str = ""
     feishu_sign_secret: str = ""
     """飞书告警总开关；False 时自动告警不发 Webhook。"""

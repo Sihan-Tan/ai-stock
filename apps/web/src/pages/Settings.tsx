@@ -23,6 +23,11 @@ type AppSettings = {
   llm_api_key_set?: boolean;
   llm_base_url: string;
   llm_model: string;
+  knowledge_retrieval: "keyword" | "vector" | "hybrid" | string;
+  embedding_api_key: string;
+  embedding_api_key_set?: boolean;
+  embedding_base_url: string;
+  embedding_model: string;
   feishu_webhook_url: string;
   feishu_sign_secret: string;
   feishu_sign_secret_set?: boolean;
@@ -65,6 +70,10 @@ const EMPTY: AppSettings = {
   llm_api_key: "",
   llm_base_url: "",
   llm_model: "",
+  knowledge_retrieval: "keyword",
+  embedding_api_key: "",
+  embedding_base_url: "",
+  embedding_model: "",
   feishu_webhook_url: "",
   feishu_sign_secret: "",
   feishu_alert_enabled: true,
@@ -242,6 +251,9 @@ export default function Settings({ setLog }: PageLogProps) {
         llm_provider: form.llm_provider,
         llm_base_url: form.llm_base_url,
         llm_model: form.llm_model,
+        knowledge_retrieval: form.knowledge_retrieval || "keyword",
+        embedding_base_url: form.embedding_base_url || "",
+        embedding_model: form.embedding_model || "",
         feishu_webhook_url: form.feishu_webhook_url,
         feishu_alert_enabled: Boolean(form.feishu_alert_enabled),
         feishu_alert_categories: form.feishu_alert_categories || "",
@@ -281,6 +293,9 @@ export default function Settings({ setLog }: PageLogProps) {
       };
       if (form.llm_api_key && !form.llm_api_key.includes("*")) {
         body.llm_api_key = form.llm_api_key;
+      }
+      if (form.embedding_api_key && !form.embedding_api_key.includes("*")) {
+        body.embedding_api_key = form.embedding_api_key;
       }
       if (form.feishu_sign_secret && !form.feishu_sign_secret.includes("*")) {
         body.feishu_sign_secret = form.feishu_sign_secret;
@@ -727,6 +742,59 @@ export default function Settings({ setLog }: PageLogProps) {
                   DeepSeek 请使用 <code>deepseek-v4-flash</code> 或 <code>deepseek-v4-pro</code>
                   ；旧名 <code>deepseek-chat</code> 会在调用时自动映射到 flash。
                 </p>
+                <div className="mt-4 space-y-3 rounded-lg border border-[var(--desk-line)] bg-[var(--desk-ink)] p-4">
+                  <div className="text-sm font-medium text-[var(--desk-text)]">知识库检索</div>
+                  <p className="text-xs text-[var(--desk-mist)]">
+                    Embedding 空则回退 LLM 凭证；无 Key 时仅关键词可用；混合模式无凭证时自动降级为关键词。
+                    DeepSeek 等 Chat API 不提供 embeddings，需单独填写 Embedding Base
+                    URL（如 OpenAI / 硅基流动等）与对应 Key，否则入库只会做关键词切片、不写向量。
+                  </p>
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <Field label="检索模式">
+                      <select
+                        className={inputClass}
+                        value={form.knowledge_retrieval || "keyword"}
+                        onChange={(e) => patch("knowledge_retrieval", e.target.value)}
+                      >
+                        <option value="keyword">关键词</option>
+                        <option value="vector">向量</option>
+                        <option value="hybrid">混合</option>
+                      </select>
+                    </Field>
+                    <Field label="Embedding 模型">
+                      <input
+                        className={inputClass}
+                        value={form.embedding_model || ""}
+                        onChange={(e) => patch("embedding_model", e.target.value)}
+                        placeholder="text-embedding-3-small"
+                      />
+                    </Field>
+                    <Field label="Embedding Base URL">
+                      <input
+                        className={inputClass}
+                        value={form.embedding_base_url || ""}
+                        onChange={(e) => patch("embedding_base_url", e.target.value)}
+                        placeholder="空则回退 LLM（DeepSeek 不会回退）"
+                      />
+                    </Field>
+                    <Field
+                      label={`Embedding API Key${form.embedding_api_key_set ? "（已配置，留空不改）" : ""}`}
+                    >
+                      <input
+                        className={inputClass}
+                        type="password"
+                        autoComplete="off"
+                        placeholder={
+                          form.embedding_api_key_set ? "••••••••" : "空则回退 LLM API Key"
+                        }
+                        value={
+                          form.embedding_api_key.includes("*") ? "" : form.embedding_api_key
+                        }
+                        onChange={(e) => patch("embedding_api_key", e.target.value)}
+                      />
+                    </Field>
+                  </div>
+                </div>
               </TabPanel>
             )}
 

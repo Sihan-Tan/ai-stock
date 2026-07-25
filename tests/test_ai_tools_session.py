@@ -123,6 +123,106 @@ def test_skill_loader_includes_research_skills():
     names = {s["name"] for s in SkillLoader().list()}
     assert "write-report" in names
     assert "financial-analysis" in names
+    assert "pattern-playbook" in names
+
+
+@pytest.mark.asyncio
+async def test_session_prefetch_when_pattern_enabled(db_session, monkeypatch):
+    """启用 pattern-playbook 时 system 含知识库预检索。"""
+    from desk_ai.session import NanobotResearchSession
+    from desk_knowledge import KnowledgeStore
+
+    captured: dict = {}
+
+    class Msg:
+        def __init__(self, content=None, tool_calls=None):
+            self.content = content
+            self.tool_calls = tool_calls
+
+    class Choice:
+        def __init__(self, message):
+            self.message = message
+
+    class Resp:
+        def __init__(self, message):
+            self.choices = [Choice(message)]
+
+    async def fake_create(**kwargs):
+        captured["system"] = kwargs["messages"][0]["content"]
+        return Resp(Msg(content="根据笔记，需观察颈线。"))
+
+    monkeypatch.setattr(
+        KnowledgeStore,
+        "search",
+        lambda self, query, top_k=5, mode=None: [
+            {
+                "doc_id": "d1",
+                "title": "形态笔记",
+                "chunk_index": 0,
+                "content": "头肩顶颈线跌破确认",
+                "score": 2.0,
+                "mode": "keyword",
+            }
+        ],
+    )
+
+    session = NanobotResearchSession(db_session)
+    monkeypatch.setattr(session, "_chat_create", fake_create)
+    monkeypatch.setattr(session.settings, "llm_api_key", "test")
+
+    chunks = []
+    async for c in session.run(
+        [{"role": "user", "content": "这像不像头肩顶"}],
+        enabled_skills=["pattern-playbook"],
+    ):
+        chunks.append(c)
+    assert "头肩顶" in captured.get("system", "")
+    assert "知识库预检索" in captured.get("system", "")
+    assert "颈线" in "".join(chunks)
+
+
+@pytest.mark.asyncio
+async def test_session_no_prefetch_when_pattern_disabled(db_session, monkeypatch):
+    """未启用 pattern-playbook 时不做预检索。"""
+    from desk_ai.session import NanobotResearchSession
+
+    captured: dict = {}
+    called = {"n": 0}
+
+    class Msg:
+        def __init__(self, content=None, tool_calls=None):
+            self.content = content
+            self.tool_calls = tool_calls
+
+    class Choice:
+        def __init__(self, message):
+            self.message = message
+
+    class Resp:
+        def __init__(self, message):
+            self.choices = [Choice(message)]
+
+    async def fake_create(**kwargs):
+        captured["system"] = kwargs["messages"][0]["content"]
+        return Resp(Msg(content="ok"))
+
+    def boom_search(*args, **kwargs):
+        called["n"] += 1
+        raise AssertionError("不应预检索")
+
+    monkeypatch.setattr("desk_knowledge.KnowledgeStore.search", boom_search)
+
+    session = NanobotResearchSession(db_session)
+    monkeypatch.setattr(session, "_chat_create", fake_create)
+    monkeypatch.setattr(session.settings, "llm_api_key", "test")
+
+    async for _ in session.run(
+        [{"role": "user", "content": "这像不像头肩顶"}],
+        enabled_skills=["financial-analysis"],
+    ):
+        pass
+    assert called["n"] == 0
+    assert "知识库预检索" not in captured.get("system", "")
 
 
 def test_skill_detail_api(client):
