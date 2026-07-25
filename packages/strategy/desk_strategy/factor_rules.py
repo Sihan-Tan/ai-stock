@@ -193,6 +193,19 @@ def enrich_history_with_factors(
     return apply_factor_specs(out, specs)
 
 
+def get_rule_params(data: dict[str, Any]) -> dict[str, Any]:
+    """
+    读取 params.position_pct / max_hold_bars。
+
+    缺省 position_pct=None，max_hold_bars=0。
+    """
+    raw = data.get("params") if isinstance(data.get("params"), dict) else {}
+    pos = _as_float(raw.get("position_pct"))
+    hold = _as_float(raw.get("max_hold_bars"))
+    max_hold = int(hold) if hold is not None and hold >= 0 and int(hold) == hold else 0
+    return {"position_pct": pos, "max_hold_bars": max_hold}
+
+
 def _parse_lag(operand: dict[str, Any]) -> int:
     """操作数 lag（交易日）；非法/缺失 → 0。"""
     raw = operand.get("lag")
@@ -453,8 +466,16 @@ def eval_factor_rules(data: dict[str, Any], ctx: Any) -> list[Signal]:
     sell_on = _side_triggered(data.get("sell"), enriched, today_i)
     buy_on = _side_triggered(data.get("buy"), enriched, today_i)
 
-    if sell_on:
-        return [Signal(symbol=symbol, side=Side.SELL, reason="factor_rules_sell")]
+    rule_params = get_rule_params(data)
+    max_hold_bars = int(rule_params.get("max_hold_bars") or 0)
+    bars_held = int((ctx.get("bars_held") if isinstance(ctx, dict) else 0) or 0)
+    max_hold_sell = max_hold_bars > 0 and bars_held >= max_hold_bars
+
+    if sell_on or max_hold_sell:
+        reason = "factor_rules_sell"
+        if max_hold_sell and not sell_on:
+            reason = f"factor_rules_max_hold_bars_{max_hold_bars}"
+        return [Signal(symbol=symbol, side=Side.SELL, reason=reason)]
     if buy_on:
         return [Signal(symbol=symbol, side=Side.BUY, reason="factor_rules_buy")]
     return []

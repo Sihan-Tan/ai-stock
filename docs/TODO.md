@@ -23,10 +23,12 @@
   - 计划：`docs/superpowers/plans/2026-07-23-ml-factor-in-rule-strategy.md`  
   - 范围：`ml:` 进 factor_rules；下拉 `名（说明）`；回测预打分
 
-## 下一期功能（暂未做）
+## 下一期功能（已实现 2026-07-25）
 
-- [ ] **因子页「一键生成策略」** — 从已放入的 ML/TA 因子一键跳到规则策略并预填条件  
-- [ ] **自动寻优阈值、仓位/持仓天数** — 网格/搜索买卖阈值与简易仓位、最长持仓，写入策略参数  
+- [x] **因子页「一键生成策略」** — 从已放入的 ML/TA 因子一键跳到规则策略并预填条件  
+  - 设计：`docs/superpowers/specs/2026-07-25-factor-rule-optimize-design.md`
+- [x] **自动寻优阈值、仓位/持仓天数** — 网格/搜索买卖阈值与简易仓位、最长持仓，写入策略参数  
+  - 设计：`docs/superpowers/specs/2026-07-25-factor-rule-optimize-design.md`
 
 ## 备注
 

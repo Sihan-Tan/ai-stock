@@ -70,6 +70,7 @@ class _SignalStrategy(bt.Strategy):
     def __init__(self):
         self._order = None
         self._entry: dict[str, Any] | None = None
+        self._bars_held = 0
         self.equity_curve: list[dict[str, Any]] = []
         self.trade_list: list[dict[str, Any]] = []
 
@@ -82,6 +83,11 @@ class _SignalStrategy(bt.Strategy):
         )
         if self._order or not self.p.desk_on_bar:
             return
+
+        if self.position:
+            self._bars_held += 1
+        else:
+            self._bars_held = 0
 
         from desk_strategy.bar_context import build_bar_row
 
@@ -112,7 +118,12 @@ class _SignalStrategy(bt.Strategy):
             history = hist_df.iloc[: idx + 1].copy()
 
         signals = self.p.desk_on_bar(
-            {"row": row, "history": history, "db": self.p.db}
+            {
+                "row": row,
+                "history": history,
+                "db": self.p.db,
+                "bars_held": self._bars_held,
+            }
         ) or []
         for sig in signals:
             if sig.side.value == "buy" and not self.position:
@@ -315,6 +326,21 @@ def _downsample_curve(curve: list[dict[str, Any]], max_points: int = 1500) -> li
     return out
 
 
+def resolve_sizer_percents(parsed: dict[str, Any]) -> float:
+    """
+    从策略 YAML 解析 dict 得到 _ASharePercentSizer 的 percents。
+
+    position_pct 缺省或 None → 95.0；否则钳制到 [1, 100]。
+    """
+    from desk_strategy.factor_rules import get_rule_params
+
+    data = parsed if isinstance(parsed, dict) else {}
+    pos = get_rule_params(data).get("position_pct")
+    if pos is None:
+        return 95.0
+    return max(1.0, min(100.0, float(pos)))
+
+
 class BacktraderRunner:
     """回测运行器。"""
 
@@ -352,19 +378,59 @@ class BacktraderRunner:
             return 252.0 * 240.0
         return 252.0
 
-    def run(self, req: BacktestRequest, *, persist: bool = True) -> BacktestReport:
+    def run(
+        self,
+        req: BacktestRequest,
+        *,
+        persist: bool = True,
+        yaml_override: str | None = None,
+    ) -> BacktestReport:
         """
         执行回测并可落库。
 
         @param req: 回测请求
         @param persist: 是否写入 BacktestRun（Walk-Forward 子段可关）
+        @param yaml_override: 可选 YAML 文本；提供时用其构造 on_bar，可不依赖注册表
         @returns: 归一化报告
         """
-        reg = self.registry.load(req.strategy_id)
-        if not reg or not reg.on_bar:
-            raise ValueError(f"strategy not found or not runnable: {req.strategy_id}")
+        import yaml
+        from desk_strategy.factor_rules import (
+            attach_ml_factor_columns,
+            collect_factor_names,
+            eval_factor_rules,
+        )
 
-        period = self._resolve_bar_period(req, reg)
+        parsed: dict[str, Any] | None = None
+        on_bar = None
+        reg = None
+
+        if yaml_override is not None:
+            loaded = yaml.safe_load(yaml_override)
+            if not isinstance(loaded, dict):
+                raise ValueError("yaml_override must be a mapping")
+            parsed = loaded
+            on_bar = lambda ctx, d=parsed: eval_factor_rules(d, ctx)
+            # 尝试加载注册表元数据（周期等）；失败则仅用 override
+            reg = self.registry.load(req.strategy_id)
+        else:
+            reg = self.registry.load(req.strategy_id)
+            if not reg or not reg.on_bar:
+                raise ValueError(f"strategy not found or not runnable: {req.strategy_id}")
+            on_bar = reg.on_bar
+            body = getattr(reg.meta, "yaml_body", None) or ""
+            loaded = yaml.safe_load(body) if body else None
+            parsed = loaded if isinstance(loaded, dict) else None
+
+        if reg is not None:
+            period = self._resolve_bar_period(req, reg)
+        elif req.bar_period:
+            period = req.bar_period
+        else:
+            params = (parsed or {}).get("params") if isinstance(parsed, dict) else {}
+            period = str((params or {}).get("bar_period") or "1d")
+            if period not in ("1d", "1m", "5m"):
+                period = "1d"
+
         df = self._load_bars(req, period)
         if df.empty:
             hint = (
@@ -376,11 +442,6 @@ class BacktraderRunner:
         df = compute(df)
         history_df = df.copy()
 
-        import yaml
-        from desk_strategy.factor_rules import attach_ml_factor_columns, collect_factor_names
-
-        body = getattr(reg.meta, "yaml_body", None) or ""
-        parsed = yaml.safe_load(body) if body else None
         if isinstance(parsed, dict):
             history_df = attach_ml_factor_columns(
                 history_df, collect_factor_names(parsed), self.db
@@ -393,12 +454,13 @@ class BacktraderRunner:
         cerebro.adddata(data)
         cerebro.addstrategy(
             _SignalStrategy,
-            desk_on_bar=reg.on_bar,
+            desk_on_bar=on_bar,
             symbol=req.symbol,
             history_df=history_df,
             db=self.db,
         )
-        cerebro.addsizer(_ASharePercentSizer, percents=95.0)
+        percents = resolve_sizer_percents(parsed if isinstance(parsed, dict) else {})
+        cerebro.addsizer(_ASharePercentSizer, percents=percents)
         cerebro.broker.setcash(req.initial_cash)
         fee = get_settings()
         cerebro.broker.addcommissioninfo(

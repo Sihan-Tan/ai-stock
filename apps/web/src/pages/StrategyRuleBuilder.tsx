@@ -1,8 +1,19 @@
 import { Button, Card, CardContent, CardHeader, CardTitle, Chip } from "@heroui/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import type { FactorMeta } from "../factors/types";
+import { DateRangePresetSelect } from "../ui/DateRangePresetSelect";
+import {
+  defaultDateRangeValue,
+  type DateRangeValue,
+  validateDateRange,
+} from "../ui/dateRange";
+import {
+  buildPrefillRuleDoc,
+  normalizeRuleDocFromApi,
+  type PrefillRuleDoc,
+} from "./rulePrefill";
 import type { PageLogProps } from "./types";
 
 type Operand =
@@ -38,13 +49,40 @@ type RuleSide = {
   stages?: RuleStage[];
 };
 
-type RuleDoc = {
+/** 规则顶层 params（仓位% / 最长持仓 bars）。 */
+export type RuleParams = {
+  position_pct?: number;
+  max_hold_bars?: number;
+};
+
+/** 规则构建器文档（含可选 params，与 dump/parse 对齐）。 */
+export type RuleDoc = {
   id: string;
   name: string;
   version: string;
   kind: "factor_rules";
+  params?: RuleParams;
   buy: RuleSide;
   sell: RuleSide;
+};
+
+/** 寻优 API 成功响应。 */
+type OptimizeRulesResult = {
+  best?: {
+    yaml_body?: unknown;
+    metrics?: {
+      total_return?: number;
+      max_drawdown?: number;
+      trades?: number;
+      sharpe?: number | null;
+    };
+    buy_threshold?: number | null;
+    sell_threshold?: number | null;
+    position_pct?: number;
+    max_hold_bars?: number;
+  };
+  tried?: number;
+  skipped?: number;
 };
 
 const OPS: ReadonlyArray<{ value: string; label: string }> = [
@@ -140,6 +178,7 @@ function defaultDoc(): RuleDoc {
     name: "新规则策略",
     version: "v1.0",
     kind: "factor_rules",
+    params: { position_pct: 100, max_hold_bars: 0 },
     buy: {
       combine: "all",
       conditions: [
@@ -182,15 +221,25 @@ function dumpOperand(op: Operand, indent: string): string {
 
 /**
  * 将规则文档序列化为 YAML（手写，避免依赖 js-yaml）。
- * @param doc 规则文档
+ * @param doc 规则文档（含 PrefillRuleDoc）
  */
-export function dumpFactorRulesYaml(doc: RuleDoc): string {
+export function dumpFactorRulesYaml(doc: RuleDoc | PrefillRuleDoc): string {
   const lines: string[] = [
     `id: ${JSON.stringify(doc.id.trim() || "rule_new")}`,
     `name: ${JSON.stringify(doc.name.trim() || "规则策略")}`,
     `version: ${JSON.stringify(doc.version.trim() || "v1.0")}`,
     `kind: factor_rules`,
   ];
+
+  if (doc.params && typeof doc.params === "object") {
+    lines.push(`params:`);
+    if (doc.params.position_pct != null && Number.isFinite(Number(doc.params.position_pct))) {
+      lines.push(`  position_pct: ${Number(doc.params.position_pct)}`);
+    }
+    if (doc.params.max_hold_bars != null && Number.isFinite(Number(doc.params.max_hold_bars))) {
+      lines.push(`  max_hold_bars: ${Math.max(0, Math.floor(Number(doc.params.max_hold_bars)))}`);
+    }
+  }
 
   /**
    * @param key buy|sell
@@ -263,11 +312,27 @@ export function parseFactorRulesYaml(text: string): RuleDoc | null {
   if (nameM) base.name = unquote(nameM[1]);
   if (verM) base.version = unquote(verM[1]);
 
+  const paramsBlock = text.match(
+    /(?:^|\r?\n)params:\r?\n((?:[ \t]+[^\r\n]*\r?\n?)*)/
+  )?.[1];
+  if (paramsBlock) {
+    const posM = paramsBlock.match(/position_pct:\s*([-\d.]+)/);
+    const holdM = paramsBlock.match(/max_hold_bars:\s*([-\d.]+)/);
+    base.params = {
+      ...(posM && Number.isFinite(Number(posM[1]))
+        ? { position_pct: Number(posM[1]) }
+        : {}),
+      ...(holdM && Number.isFinite(Number(holdM[1]))
+        ? { max_hold_bars: Math.max(0, Math.floor(Number(holdM[1]))) }
+        : {}),
+    };
+  }
+
   /**
    * @param section buy|sell
    */
   const parseSide = (section: "buy" | "sell"): RuleSide => {
-    const side =
+    const side: RuleSide =
       section === "buy"
         ? { ...base.buy, conditions: [] as RuleCondition[], stages: undefined }
         : { ...base.sell, conditions: [] as RuleCondition[], stages: undefined };
@@ -485,11 +550,19 @@ export function filterFactorOptions(options: FactorOption[], query: string): Fac
 export default function StrategyRuleBuilder({ setLog }: PageLogProps) {
   const navigate = useNavigate();
   const { strategyId } = useParams();
+  const [searchParams] = useSearchParams();
   const isNew = !strategyId;
   const [doc, setDoc] = useState<RuleDoc>(() => defaultDoc());
   const [factors, setFactors] = useState<FactorMeta[]>([]);
+  const [factorsReady, setFactorsReady] = useState(false);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(!isNew);
+  const [optOpen, setOptOpen] = useState(false);
+  const [optSymbol, setOptSymbol] = useState("");
+  const [optRange, setOptRange] = useState<DateRangeValue>(() => defaultDateRangeValue());
+  const [optBusy, setOptBusy] = useState(false);
+  const [optError, setOptError] = useState<string | null>(null);
+  const prefillAppliedRef = useRef(false);
 
   const factorOptions = useMemo(
     () =>
@@ -506,8 +579,22 @@ export default function StrategyRuleBuilder({ setLog }: PageLogProps) {
   useEffect(() => {
     void api<{ factors: FactorMeta[] }>("/api/factors")
       .then((res) => setFactors(res.factors ?? []))
-      .catch((error) => setLog(String(error)));
+      .catch((error) => setLog(String(error)))
+      .finally(() => setFactorsReady(true));
   }, [setLog]);
+
+  useEffect(() => {
+    if (!isNew || !factorsReady || prefillAppliedRef.current) return;
+    if (searchParams.get("from") !== "factors") return;
+    const names = (searchParams.get("factors") || "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (!names.length) return;
+    prefillAppliedRef.current = true;
+    setDoc(buildPrefillRuleDoc(names));
+    setLog(`已从因子预填规则：${names.join(", ")}`);
+  }, [isNew, factorsReady, searchParams, setLog]);
 
   useEffect(() => {
     if (isNew || !strategyId) return;
@@ -569,6 +656,67 @@ export default function StrategyRuleBuilder({ setLog }: PageLogProps) {
     }
   };
 
+  /**
+   * 提交阈值寻优。
+   */
+  const runOptimize = async () => {
+    const symbol = optSymbol.trim();
+    if (!symbol) {
+      setOptError("请填写标的代码");
+      return;
+    }
+    const rangeError = validateDateRange(optRange.start, optRange.end);
+    if (rangeError) {
+      setOptError(rangeError);
+      return;
+    }
+    setOptBusy(true);
+    setOptError(null);
+    try {
+      const res = await api<OptimizeRulesResult>("/api/strategies/optimize-rules", {
+        method: "POST",
+        body: JSON.stringify({
+          symbol,
+          start: optRange.start,
+          end: optRange.end,
+          yaml_body: doc,
+        }),
+      });
+      const body = res.best?.yaml_body;
+      if (typeof body === "string") {
+        const parsed = parseFactorRulesYaml(body);
+        if (parsed) setDoc(parsed);
+        else throw new Error("寻优结果 YAML 无法解析");
+      } else {
+        const normalized = normalizeRuleDocFromApi(body);
+        if (normalized) setDoc(normalized);
+        else if (body && typeof body === "object" && (body as RuleDoc).kind === "factor_rules") {
+          setDoc(body as RuleDoc);
+        } else {
+          throw new Error("寻优结果缺少有效 yaml_body");
+        }
+      }
+      const m = res.best?.metrics;
+      const ret = m?.total_return;
+      const dd = m?.max_drawdown;
+      const trades = m?.trades;
+      setLog(
+        `寻优完成 tried=${res.tried ?? "?"} skipped=${res.skipped ?? 0}` +
+          ` return=${ret != null ? Number(ret).toFixed(4) : "—"}` +
+          ` dd=${dd != null ? Number(dd).toFixed(4) : "—"}` +
+          ` trades=${trades ?? "—"}` +
+          (res.best?.position_pct != null ? ` pos%=${res.best.position_pct}` : "") +
+          (res.best?.max_hold_bars != null ? ` hold=${res.best.max_hold_bars}` : "")
+      );
+      setOptOpen(false);
+    } catch (error) {
+      setOptError(String(error));
+      setLog(String(error));
+    } finally {
+      setOptBusy(false);
+    }
+  };
+
   if (loading) {
     return (
       <Card className="border border-[var(--desk-line)] bg-[var(--desk-panel)]">
@@ -593,7 +741,18 @@ export default function StrategyRuleBuilder({ setLog }: PageLogProps) {
             <Button size="sm" variant="secondary" onPress={() => navigate("/strategies")}>
               返回列表
             </Button>
-            <Button size="sm" variant="primary" isDisabled={busy} onPress={() => void save()}>
+            <Button
+              size="sm"
+              variant="secondary"
+              isDisabled={busy || optBusy}
+              onPress={() => {
+                setOptError(null);
+                setOptOpen(true);
+              }}
+            >
+              阈值寻优
+            </Button>
+            <Button size="sm" variant="primary" isDisabled={busy || optBusy} onPress={() => void save()}>
               {busy ? "保存中…" : "保存"}
             </Button>
           </div>
@@ -625,6 +784,50 @@ export default function StrategyRuleBuilder({ setLog }: PageLogProps) {
               />
             </label>
           </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="block space-y-1 text-xs text-[var(--desk-mist)]">
+              仓位 %（params.position_pct）
+              <input
+                type="number"
+                min={1}
+                max={100}
+                step={1}
+                className={`${controlClass} block w-full font-mono`}
+                value={doc.params?.position_pct ?? ""}
+                onChange={(e) => {
+                  const v = e.target.value === "" ? undefined : Number(e.target.value);
+                  setDoc((p) => ({
+                    ...p,
+                    params: {
+                      ...p.params,
+                      position_pct: v != null && Number.isFinite(v) ? v : undefined,
+                    },
+                  }));
+                }}
+              />
+            </label>
+            <label className="block space-y-1 text-xs text-[var(--desk-mist)]">
+              最长持仓 bars（params.max_hold_bars）
+              <input
+                type="number"
+                min={0}
+                step={1}
+                className={`${controlClass} block w-full font-mono`}
+                value={doc.params?.max_hold_bars ?? ""}
+                onChange={(e) => {
+                  const v = e.target.value === "" ? undefined : Number(e.target.value);
+                  setDoc((p) => ({
+                    ...p,
+                    params: {
+                      ...p.params,
+                      max_hold_bars:
+                        v != null && Number.isFinite(v) ? Math.max(0, Math.floor(v)) : undefined,
+                    },
+                  }));
+                }}
+              />
+            </label>
+          </div>
           <p className="text-xs text-[var(--desk-mist)]">
             买/卖各一组条件；同 bar 同时满足时卖优先。保存后可在回测页选用。
           </p>
@@ -644,6 +847,64 @@ export default function StrategyRuleBuilder({ setLog }: PageLogProps) {
           </div>
         </CardContent>
       </Card>
+
+      {optOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <button
+            type="button"
+            className="absolute inset-0 cursor-default bg-black/50"
+            aria-label="关闭阈值寻优"
+            onClick={() => !optBusy && setOptOpen(false)}
+          />
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="阈值寻优"
+            className="relative z-10 w-full max-w-md rounded-xl border border-[var(--desk-line)] bg-[var(--desk-panel)] shadow-2xl"
+          >
+            <div className="flex items-start justify-between gap-3 border-b border-[var(--desk-line)] px-5 py-4">
+              <div>
+                <h2 className="text-base font-medium text-[var(--desk-text)]">阈值寻优</h2>
+                <p className="mt-1 text-xs text-[var(--desk-mist)]">
+                  网格回测买卖阈值 / 仓位% / 最长持仓，写回当前规则
+                </p>
+              </div>
+              <Button size="sm" variant="ghost" isDisabled={optBusy} onPress={() => setOptOpen(false)}>
+                关闭
+              </Button>
+            </div>
+            <div className="space-y-4 px-5 py-4">
+              <label className="block space-y-1 text-xs text-[var(--desk-mist)]">
+                标的
+                <input
+                  className={`${controlClass} block w-full font-mono`}
+                  placeholder="如 600519.SH"
+                  value={optSymbol}
+                  onChange={(e) => setOptSymbol(e.target.value)}
+                  disabled={optBusy}
+                />
+              </label>
+              <div className="space-y-1">
+                <div className="text-xs text-[var(--desk-mist)]">回测区间</div>
+                <DateRangePresetSelect
+                  value={optRange}
+                  onChange={setOptRange}
+                  aria-label="寻优时间区间"
+                />
+              </div>
+              {optError ? <p className="text-sm text-red-400">{optError}</p> : null}
+              <div className="flex justify-end gap-2">
+                <Button size="sm" variant="secondary" isDisabled={optBusy} onPress={() => setOptOpen(false)}>
+                  取消
+                </Button>
+                <Button size="sm" variant="primary" isDisabled={optBusy} onPress={() => void runOptimize()}>
+                  {optBusy ? "寻优中…" : "开始寻优"}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

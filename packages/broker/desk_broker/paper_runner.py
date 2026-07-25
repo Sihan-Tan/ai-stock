@@ -16,6 +16,137 @@ from desk_strategy import StrategyRegistry
 from desk_strategy.bar_context import build_bar_row
 
 from desk_broker.promotion_gate import buy_block_reason, can_buy, max_capital_pct
+from desk_strategy.factor_rules import get_rule_params
+
+
+def _is_factor_rules_doc(parsed: Any) -> bool:
+    """是否为 factor_rules YAML 文档。"""
+    if not isinstance(parsed, dict):
+        return False
+    kind = str(parsed.get("kind") or "").strip().lower()
+    if kind == "factor_rules":
+        return True
+    buy = parsed.get("buy")
+    return isinstance(buy, dict) and "conditions" in buy
+
+
+def _resolve_position_pct(parsed: dict[str, Any]) -> float | None:
+    """
+    解析 params.position_pct；None 表示走纸交易原默认口径。
+
+    有值时钳制到 [1, 100]（与回测 sizer 一致）。
+    """
+    pos = get_rule_params(parsed).get("position_pct")
+    if pos is None:
+        return None
+    return max(1.0, min(100.0, float(pos)))
+
+
+def _bar_asof_date(df: Any) -> date:
+    """最后一根 K 的交易日；解析失败则今天。"""
+    try:
+        raw = df.iloc[-1].get("date", df.iloc[-1].name)
+    except Exception:  # noqa: BLE001
+        return date.today()
+    if hasattr(raw, "date"):
+        return raw.date()
+    if isinstance(raw, str) and len(raw) >= 10:
+        return date.fromisoformat(raw[:10])
+    return date.today()
+
+
+def _count_trade_days_inclusive(db: Session, start: date, end: date) -> int:
+    """含首尾的自然日区间内交易日个数。"""
+    if start > end:
+        return 0
+    from desk_calendar import CalendarService
+
+    cal = CalendarService(db)
+    n = 0
+    d = start
+    while d <= end:
+        if cal.is_trade_day(d):
+            n += 1
+        d += timedelta(days=1)
+    return n
+
+
+def _position_open_date_from_trades(
+    db: Session, *, account_id: int, symbol: str
+) -> date | None:
+    """
+    从 Paper 成交回放推断当前持仓的开仓日（无 opened_at 字段时的尽力方案）。
+    """
+    from desk_db.models import PaperTrade
+
+    trades = db.scalars(
+        select(PaperTrade)
+        .where(PaperTrade.account_id == account_id, PaperTrade.symbol == symbol)
+        .order_by(PaperTrade.id.asc())
+    ).all()
+    qty = 0.0
+    open_at: date | None = None
+    for t in trades:
+        q = float(t.qty)
+        side = str(t.side or "").lower()
+        if side == "buy":
+            if qty <= 1e-9:
+                created = getattr(t, "created_at", None)
+                if created is not None:
+                    open_at = created.date() if hasattr(created, "date") else created
+            qty += q
+        elif side == "sell":
+            qty -= q
+            if qty <= 1e-9:
+                qty = 0.0
+                open_at = None
+    return open_at if qty > 1e-9 else None
+
+
+def _position_open_date(
+    db: Session, broker: Any, *, symbol: str, summary_positions: list[dict[str, Any]]
+) -> date | None:
+    """
+    持仓开仓日：PaperPosition/LivePosition 无 opened_at 时从成交推断。
+
+    模型日后若增加 opened_at/created 可在此优先读取。
+    """
+    for p in summary_positions or []:
+        if str(p.get("symbol")) != symbol:
+            continue
+        for key in ("opened_at", "open_date", "created_at"):
+            raw = p.get(key)
+            if raw is None:
+                continue
+            if isinstance(raw, date):
+                return raw
+            if isinstance(raw, str) and len(raw) >= 10:
+                return date.fromisoformat(raw[:10])
+            if hasattr(raw, "date"):
+                return raw.date()
+        break
+    acc = broker._ensure_account()  # noqa: SLF001
+    return _position_open_date_from_trades(db, account_id=int(acc.id), symbol=symbol)
+
+
+def _buy_budget(
+    *,
+    parsed: dict[str, Any] | None,
+    equity: float,
+    cash: float,
+    stage: str,
+) -> float:
+    """买入预算：factor_rules 可读 position_pct，仍受阶段 cap 与现金约束。"""
+    cap = max_capital_pct(stage)
+    pct = _resolve_position_pct(parsed) if parsed and _is_factor_rules_doc(parsed) else None
+    if pct is not None:
+        budget = equity * (pct / 100.0)
+    else:
+        budget = equity * cap if cap > 0 else cash * 0.95
+    budget = min(budget, cash * 0.95)
+    if cap > 0:
+        budget = min(budget, equity * cap)
+    return budget
 
 
 class PaperStrategyRunner:
@@ -86,14 +217,38 @@ class PaperStrategyRunner:
             opens=slice_df["open"].astype(float).tolist(),
             volumes=slice_df["volume"].astype(float).tolist(),
         )
-        signals = reg.on_bar({"row": row, "history": history, "db": self.db}) or []
-        sig_dump = [
-            s.model_dump() if hasattr(s, "model_dump") else dict(s) for s in signals
-        ]
 
         summary = self.broker.summary()
         held = {p["symbol"]: float(p["qty"]) for p in summary.get("positions") or []}
         last_price = float(df.iloc[-1]["close"])
+        asof = _bar_asof_date(df)
+        notes: list[str] = []
+        bars_held = 0
+        rule_doc = parsed if isinstance(parsed, dict) and _is_factor_rules_doc(parsed) else None
+        if rule_doc and float(held.get(symbol, 0)) > 0:
+            max_hold = int(get_rule_params(rule_doc).get("max_hold_bars") or 0)
+            if max_hold > 0:
+                open_d = _position_open_date(
+                    self.db,
+                    self.broker,
+                    symbol=symbol,
+                    summary_positions=summary.get("positions") or [],
+                )
+                if open_d is None:
+                    # PaperPosition 无开仓日字段且成交无法推断时跳过强制平仓
+                    notes.append(
+                        "max_hold_bars: no position open date; skipped force sell"
+                    )
+                else:
+                    bars_held = _count_trade_days_inclusive(self.db, open_d, asof)
+
+        signals = reg.on_bar(
+            {"row": row, "history": history, "db": self.db, "bars_held": bars_held}
+        ) or []
+        sig_dump = [
+            s.model_dump() if hasattr(s, "model_dump") else dict(s) for s in signals
+        ]
+
         orders: list[dict[str, Any]] = []
         stage = self._strategy_stage(strategy_id)
         gate_msg: str | None = None
@@ -120,11 +275,12 @@ class PaperStrategyRunner:
             qty = float(sig.qty) if getattr(sig, "qty", None) else None
             if qty is None or qty <= 0:
                 if side == Side.BUY:
-                    cash = float(summary["cash"])
-                    equity = float(summary.get("equity") or cash)
-                    cap = max_capital_pct(stage)
-                    budget = equity * cap if cap > 0 else cash * 0.95
-                    budget = min(budget, cash * 0.95)
+                    budget = _buy_budget(
+                        parsed=rule_doc,
+                        equity=float(summary.get("equity") or summary["cash"]),
+                        cash=float(summary["cash"]),
+                        stage=stage,
+                    )
                     qty = float(int(budget / last_price / 100) * 100)
                 else:
                     qty = float(held.get(symbol, 0))
@@ -170,6 +326,8 @@ class PaperStrategyRunner:
 
         self.db.flush()
         message = gate_msg or ""
+        if notes:
+            base["notes"] = notes
         base.update(
             {
                 "status": "ok",

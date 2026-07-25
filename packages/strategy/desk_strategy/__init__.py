@@ -32,14 +32,31 @@ from desk_strategy.lifecycle import (
 
 _REGISTRY: dict[str, "RegisteredStrategy"] = {}
 
+from desk_strategy.rule_optimize import (  # noqa: E402
+    apply_threshold_params,
+    build_prefill_doc,
+    count_grid,
+    has_optimizable_const_compares,
+    optimize_rules_yaml,
+    pick_best_result,
+    validate_grid,
+)
+
 __all__ = [
     "LifecycleStage",
     "RegisteredStrategy",
     "STAGE_LABELS",
     "StrategyKPI",
     "StrategyRegistry",
+    "apply_threshold_params",
+    "build_prefill_doc",
+    "count_grid",
+    "has_optimizable_const_compares",
+    "optimize_rules_yaml",
+    "pick_best_result",
     "register_strategy",
     "strategy_has_closing_role",
+    "validate_grid",
 ]
 
 

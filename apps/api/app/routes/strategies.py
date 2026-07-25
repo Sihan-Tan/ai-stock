@@ -1,5 +1,6 @@
 """策略管理：清单、YAML、生命周期与 KPI 评估。"""
 
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -130,6 +131,31 @@ def load_file(db: Session = Depends(get_db)):
 @router.post("/draft")
 def draft(body: DraftIn, db: Session = Depends(get_db)):
     return StrategyRegistry(db).save_agent_draft(body.payload).model_dump()
+
+
+class OptimizeRulesIn(BaseModel):
+    symbol: str
+    start: date
+    end: date
+    yaml_body: dict | str
+    buy_grid: list[float] | None = None
+    sell_grid: list[float] | None = None
+    position_pcts: list[float] | None = None
+    max_hold_bars_list: list[int] | None = None
+    initial_cash: float | None = None
+
+
+@router.post("/optimize-rules")
+def optimize_rules(body: OptimizeRulesIn, db: Session = Depends(get_db)):
+    from desk_strategy.rule_optimize import optimize_rules_yaml
+
+    kwargs = body.model_dump()
+    if kwargs.get("initial_cash") is None:
+        kwargs.pop("initial_cash", None)
+    try:
+        return optimize_rules_yaml(db, **kwargs)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
 
 
 @router.get("/{strategy_id}")

@@ -1,5 +1,6 @@
 import { Button, Card, CardContent } from "@heroui/react";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { FactorCatalog } from "../factors/FactorCatalog";
 import { FactorCharts } from "../factors/FactorCharts";
@@ -134,6 +135,7 @@ function countSelectedPanels(selected: Set<string>, factors: FactorMeta[]): numb
  * @param props 页面日志写入方法
  */
 export default function Factors({ setLog }: PageLogProps) {
+  const navigate = useNavigate();
   const [tab, setTab] = useState<FactorTabId>("charts");
   const [factors, setFactors] = useState<FactorMeta[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -475,6 +477,17 @@ export default function Factors({ setLog }: PageLogProps) {
                       )}
                       <div className="ml-auto flex flex-wrap items-center gap-2">
                         <DateRangePresetSelect value={dateRange} onChange={setDateRange} />
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          isDisabled={selected.size === 0}
+                          onPress={() => {
+                            const q = encodeURIComponent([...selected].join(","));
+                            navigate(`/strategies/new/rules?from=factors&factors=${q}`);
+                          }}
+                        >
+                          生成规则策略
+                        </Button>
                         <Button size="sm" variant="primary" onPress={() => void loadSeries()} isDisabled={loading}>
                           {loading ? "计算中…" : "计算"}
                         </Button>
