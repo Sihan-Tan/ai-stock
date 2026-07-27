@@ -9,7 +9,6 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from desk_common.settings import get_settings
-from desk_positions_advice.format import append_advice_section
 from desk_positions_advice.llm import generate_advice_llm
 from desk_positions_advice.positions import load_positions, truncate_positions
 from desk_positions_advice.rules import rule_candidates
@@ -112,4 +111,4 @@ def advise_advice(
     }
 
 
-__all__ = ["advise_advice", "append_advice_section"]
+__all__ = ["advise_advice"]

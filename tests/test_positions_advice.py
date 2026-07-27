@@ -223,3 +223,144 @@ def test_advise_advice_llm_ok(db, monkeypatch):
     out = advise_advice(db, session_kind="closing", asof=date(2026, 7, 27), picks=[])
     assert out["status"] == "ok"
     assert out["items"][0]["action"] == "持有"
+
+
+def _advice_settings(**overrides):
+    base = {
+        "positions_advice_enabled": True,
+        "positions_advice_mode": "llm",
+        "positions_advice_source": "paper",
+        "llm_api_key": "x",
+    }
+    base.update(overrides)
+    return type("S", (), base)()
+
+
+def _sample_position(**extra):
+    row = {
+        "symbol": "600000.SH",
+        "qty": 100,
+        "cost": 10,
+        "last_price": 11,
+        "market_value": 1100,
+        "pnl": 100,
+    }
+    row.update(extra)
+    return row
+
+
+def test_advise_advice_load_error(db, monkeypatch):
+    monkeypatch.setattr(
+        "desk_positions_advice.service.get_settings",
+        lambda: _advice_settings(positions_advice_source="live"),
+    )
+    monkeypatch.setattr(
+        "desk_positions_advice.service.load_positions",
+        lambda db, source: {"ok": False, "error": "连接超时"},
+    )
+    out = advise_advice(db, session_kind="closing", asof=date(2026, 7, 27))
+    assert out["status"] == "error"
+    assert "持仓建议生成失败" in out["section"]
+
+
+def test_advise_advice_llm_error_section(db, monkeypatch):
+    monkeypatch.setattr(
+        "desk_positions_advice.service.get_settings",
+        lambda: _advice_settings(),
+    )
+    monkeypatch.setattr(
+        "desk_positions_advice.service.load_positions",
+        lambda db, source: {
+            "ok": True,
+            "source": source,
+            "positions": [_sample_position()],
+        },
+    )
+    monkeypatch.setattr(
+        "desk_positions_advice.service.generate_advice_llm",
+        lambda facts, session_kind, llm_call=None: {
+            "status": "error",
+            "error": "模型不可用",
+        },
+    )
+    out = advise_advice(db, session_kind="closing", asof=date(2026, 7, 27))
+    assert out["status"] == "error"
+    assert "持仓建议生成失败" in out["section"]
+
+
+def test_advise_advice_hybrid_rule_candidates_in_facts(db, monkeypatch):
+    monkeypatch.setattr(
+        "desk_positions_advice.service.get_settings",
+        lambda: _advice_settings(positions_advice_mode="hybrid"),
+    )
+    monkeypatch.setattr(
+        "desk_positions_advice.service.load_positions",
+        lambda db, source: {
+            "ok": True,
+            "source": source,
+            "positions": [_sample_position(day_chg_pct=0.06, last_price=10.6)],
+        },
+    )
+    captured: dict = {}
+
+    def fake_llm(facts, session_kind, llm_call=None):
+        captured["facts"] = facts
+        return {
+            "status": "ok",
+            "items": [{"symbol": "600000.SH", "action": "持有", "reason": "稳"}],
+            "market_note": None,
+        }
+
+    monkeypatch.setattr("desk_positions_advice.service.generate_advice_llm", fake_llm)
+    out = advise_advice(db, session_kind="morning", asof=date(2026, 7, 27))
+    assert out["status"] == "ok"
+    assert "rule_candidates" in captured["facts"]
+    assert any(
+        c.get("action") == "高抛低吸"
+        for c in captured["facts"]["rule_candidates"]
+    )
+
+
+def test_advise_advice_hybrid_rules_crash_still_ok(db, monkeypatch):
+    monkeypatch.setattr(
+        "desk_positions_advice.service.get_settings",
+        lambda: _advice_settings(positions_advice_mode="hybrid"),
+    )
+    monkeypatch.setattr(
+        "desk_positions_advice.service.load_positions",
+        lambda db, source: {
+            "ok": True,
+            "source": source,
+            "positions": [_sample_position()],
+        },
+    )
+
+    def boom(positions, session_kind):
+        raise RuntimeError("rules down")
+
+    monkeypatch.setattr("desk_positions_advice.service.rule_candidates", boom)
+    monkeypatch.setattr(
+        "desk_positions_advice.service.generate_advice_llm",
+        lambda facts, session_kind, llm_call=None: {
+            "status": "ok",
+            "items": [{"symbol": "600000.SH", "action": "持有", "reason": "稳"}],
+            "market_note": None,
+        },
+    )
+    out = advise_advice(db, session_kind="closing", asof=date(2026, 7, 27))
+    assert out["status"] == "ok"
+
+
+def test_rule_candidates_morning_high_sell_low_buy():
+    positions = [
+        {
+            "symbol": "600000.SH",
+            "qty": 100,
+            "cost": 10,
+            "last_price": 10.6,
+            "pnl": 60,
+            "day_chg_pct": 0.05,
+        }
+    ]
+    out = rule_candidates(positions, session_kind="morning")
+    assert out[0]["action"] == "高抛低吸"
