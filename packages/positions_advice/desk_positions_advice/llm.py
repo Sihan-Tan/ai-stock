@@ -3,8 +3,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
-from typing import Any
+from typing import Any, Callable
+
+from desk_common.settings import get_settings
+
+logger = logging.getLogger(__name__)
+LlmFn = Callable[[str, str], str]
 
 _JSON_OBJECT_RE = re.compile(r"\{[\s\S]*\}")
 
@@ -69,4 +75,74 @@ def parse_advice_payload(text: str, session_kind: str) -> dict[str, Any] | None:
     return {
         "items": items,
         "market_note": str(obj.get("market_note") or "").strip() or None,
+    }
+
+
+def _default_llm_call(system: str, user: str) -> str:
+    """同步调用 OpenAI 兼容 Chat。"""
+    from openai import OpenAI
+    from desk_ai.session import resolve_llm_model
+
+    settings = get_settings()
+    if not settings.llm_api_key:
+        raise ValueError("未配置 LLM API Key")
+    client = OpenAI(api_key=settings.llm_api_key, base_url=settings.llm_base_url or None)
+    model = resolve_llm_model(settings.llm_provider, settings.llm_model)
+    resp = client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+    )
+    return str(getattr(resp.choices[0].message, "content", None) or "")
+
+
+def generate_advice_llm(
+    facts: dict[str, Any],
+    *,
+    session_kind: str,
+    llm_call: LlmFn | None = None,
+) -> dict[str, Any]:
+    """
+    一次 LLM 生成持仓建议。
+
+    @returns: {status, items?, market_note?, error?}
+    """
+    settings = get_settings()
+    if llm_call is None and not settings.llm_api_key:
+        return {"status": "error", "error": "未配置 LLM API Key", "items": []}
+
+    actions = "、".join(sorted(allowed_actions(session_kind)))
+    label = "早盘竞价后" if session_kind == "morning" else "尾盘选股后"
+    system = (
+        f"你是刻度 Desk {label}持仓建议助手。"
+        "根据预取事实给出每只持仓的操作建议与简短理由，禁止编造未给出的数字。"
+        "只输出一个 JSON 对象。"
+    )
+    user = (
+        f"场景={session_kind}。合法 action 仅限：{actions}。\n"
+        f"事实：\n{json.dumps(facts, ensure_ascii=False, default=str)}\n\n"
+        '输出：{"items":[{"symbol":"...","action":"...","reason":"..."}],'
+        '"market_note":"可选一句市场总评"}'
+    )
+    call = llm_call or _default_llm_call
+    try:
+        raw = call(system, user)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("positions advice llm failed")
+        return {"status": "error", "error": str(exc), "items": []}
+
+    parsed = parse_advice_payload(raw, session_kind)
+    if not parsed:
+        return {
+            "status": "error",
+            "error": "模型输出无法解析为 JSON",
+            "items": [],
+            "raw_preview": (raw or "")[:300],
+        }
+    return {
+        "status": "ok",
+        "items": parsed["items"],
+        "market_note": parsed.get("market_note"),
     }

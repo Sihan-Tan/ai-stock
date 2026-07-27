@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from datetime import date
 
@@ -17,7 +18,7 @@ import desk_db.models  # noqa: F401
 
 from desk_db.models import PaperAccount, PaperPosition
 from desk_positions_advice.format import append_advice_section
-from desk_positions_advice.llm import normalize_action, parse_advice_payload
+from desk_positions_advice.llm import generate_advice_llm, normalize_action, parse_advice_payload
 from desk_positions_advice.positions import load_positions, truncate_positions
 
 
@@ -109,3 +110,42 @@ def test_rule_candidates_exception_safe(monkeypatch):
     # 若 rules 内部调用辅助失败，service 层会吞；此处保证单函数对坏数据不炸
     out = rule_candidates([{"symbol": "x"}], session_kind="morning")
     assert isinstance(out, list)
+
+
+def test_parse_advice_payload_ok():
+    raw = json.dumps(
+        {
+            "items": [{"symbol": "600000.SH", "action": "卖出", "reason": "走弱"}],
+            "market_note": "情绪偏弱",
+        },
+        ensure_ascii=False,
+    )
+    parsed = parse_advice_payload(raw, "closing")
+    assert parsed is not None
+    assert parsed["items"][0]["action"] == "卖出"
+
+
+def test_generate_advice_llm_mock():
+    facts = {"positions": [{"symbol": "600000.SH"}], "session_kind": "closing"}
+
+    def fake(system: str, user: str) -> str:
+        return json.dumps(
+            {
+                "items": [
+                    {"symbol": "600000.SH", "action": "持有", "reason": "ok"},
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    out = generate_advice_llm(facts, session_kind="closing", llm_call=fake)
+    assert out["status"] == "ok"
+    assert out["items"][0]["symbol"] == "600000.SH"
+
+
+def test_generate_advice_llm_error():
+    def boom(system: str, user: str) -> str:
+        raise RuntimeError("network")
+
+    out = generate_advice_llm({}, session_kind="closing", llm_call=boom)
+    assert out["status"] == "error"
