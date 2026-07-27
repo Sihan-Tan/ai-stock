@@ -81,3 +81,31 @@ def test_load_paper_positions(db: Session):
     assert loaded["ok"] is True
     assert loaded["source"] == "paper"
     assert any(p["symbol"] == "600000.SH" for p in loaded["positions"])
+
+
+from desk_positions_advice.rules import rule_candidates
+
+
+def test_rule_candidates_closing_sell_on_big_drop():
+    positions = [
+        {
+            "symbol": "600000.SH",
+            "qty": 100,
+            "cost": 10,
+            "last_price": 8.5,
+            "pnl": -150,
+            "day_chg_pct": -0.06,
+        }
+    ]
+    out = rule_candidates(positions, session_kind="closing")
+    assert out[0]["symbol"] == "600000.SH"
+    assert out[0]["action"] == "卖出"
+
+
+def test_rule_candidates_exception_safe(monkeypatch):
+    def boom(*a, **k):
+        raise RuntimeError("x")
+
+    # 若 rules 内部调用辅助失败，service 层会吞；此处保证单函数对坏数据不炸
+    out = rule_candidates([{"symbol": "x"}], session_kind="morning")
+    assert isinstance(out, list)
