@@ -66,6 +66,12 @@ class Settings(BaseSettings):
     research_refine_parallel: int = 2
     """日终 LLM 复盘自动开关；交易日 15:45 生成（当日已有笔记则跳过）。"""
     review_auto: bool = False
+    """早盘/尾盘选股后是否附带持仓建议。"""
+    positions_advice_enabled: bool = True
+    """持仓建议模式：llm=纯 LLM；hybrid=规则候选+LLM。"""
+    positions_advice_mode: Literal["llm", "hybrid"] = "llm"
+    """持仓源：live 或 paper。"""
+    positions_advice_source: Literal["live", "paper"] = "live"
     skills_dir: str = "skills"
     """Tavily 搜索 API Key（env ``TAVILY_API_KEY``）；空则 web_search 工具不可用。"""
     tavily_api_key: str = ""

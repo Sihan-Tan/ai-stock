@@ -41,6 +41,9 @@ EDITABLE_ENV: dict[str, str] = {
     "research_refine_batch_size": "RESEARCH_REFINE_BATCH_SIZE",
     "research_refine_parallel": "RESEARCH_REFINE_PARALLEL",
     "review_auto": "REVIEW_AUTO",
+    "positions_advice_enabled": "POSITIONS_ADVICE_ENABLED",
+    "positions_advice_mode": "POSITIONS_ADVICE_MODE",
+    "positions_advice_source": "POSITIONS_ADVICE_SOURCE",
     "backtest_buy_commission": "BACKTEST_BUY_COMMISSION",
     "backtest_sell_commission": "BACKTEST_SELL_COMMISSION",
     "backtest_stamp_duty": "BACKTEST_STAMP_DUTY",
@@ -121,6 +124,9 @@ def public_settings() -> dict[str, Any]:
         "research_refine_batch_size": int(s.research_refine_batch_size),
         "research_refine_parallel": int(s.research_refine_parallel),
         "review_auto": s.review_auto,
+        "positions_advice_enabled": s.positions_advice_enabled,
+        "positions_advice_mode": s.positions_advice_mode,
+        "positions_advice_source": s.positions_advice_source,
         "backtest_buy_commission": s.backtest_buy_commission,
         "backtest_sell_commission": s.backtest_sell_commission,
         "backtest_stamp_duty": s.backtest_stamp_duty,
@@ -267,12 +273,20 @@ def apply_settings_patch(patch: dict[str, Any]) -> dict[str, Any]:
             "feishu_alert_enabled",
             "research_refine_auto",
             "review_auto",
+            "positions_advice_enabled",
         ):
             if isinstance(raw, bool):
                 cleaned[field] = raw
             else:
                 cleaned[field] = str(raw).strip().lower() in ("1", "true", "yes", "on")
-        elif field in ("trade_mode", "ml_engine", "llm_provider", "knowledge_retrieval"):
+        elif field in (
+            "trade_mode",
+            "ml_engine",
+            "llm_provider",
+            "knowledge_retrieval",
+            "positions_advice_mode",
+            "positions_advice_source",
+        ):
             cleaned[field] = str(raw).strip().lower()
         else:
             cleaned[field] = str(raw).strip()
@@ -293,6 +307,16 @@ def apply_settings_patch(patch: dict[str, Any]) -> dict[str, Any]:
         "hybrid",
     ):
         raise ValueError("knowledge_retrieval 须为 keyword / vector / hybrid")
+    if "positions_advice_mode" in cleaned and cleaned["positions_advice_mode"] not in (
+        "llm",
+        "hybrid",
+    ):
+        raise ValueError("positions_advice_mode 须为 llm 或 hybrid")
+    if "positions_advice_source" in cleaned and cleaned["positions_advice_source"] not in (
+        "live",
+        "paper",
+    ):
+        raise ValueError("positions_advice_source 须为 live 或 paper")
     if "risk_max_order_position_pct" in cleaned:
         pct = cleaned["risk_max_order_position_pct"]
         if pct <= 0 or pct > 100:
