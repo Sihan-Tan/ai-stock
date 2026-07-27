@@ -12,6 +12,8 @@
 
 ## 已完成（策略）
 
+- [x] **早盘/尾盘选股附带持仓建议** — `desk_positions_advice`；与选股同一条飞书推送  
+  - 设计：`docs/superpowers/specs/2026-07-27-positions-advice-design.md`
 - [x] **知识库工作台 + PDF + 可切换检索**  
   - 设计：`docs/superpowers/specs/2026-07-25-knowledge-workbench-design.md`  
   - 范围：CRUD、PDF/md/txt 上传、keyword/vector/hybrid（云端 embedding）
