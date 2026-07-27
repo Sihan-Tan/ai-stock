@@ -178,6 +178,30 @@ class ClosingPickService:
             "skipped_strategy_not_runnable": skipped_strategy,
             "requested_asof": requested.isoformat(),
         }
+        from desk_positions_advice import advise_advice, append_advice_section
+
+        advice = advise_advice(
+            self.db,
+            session_kind="closing",
+            asof=asof,
+            picks=stocks,
+        )
+        if advice.get("status") != "disabled":
+            content = append_advice_section(content, advice)
+            extras["positions_advice"] = {
+                k: advice.get(k)
+                for k in (
+                    "status",
+                    "source",
+                    "mode",
+                    "items",
+                    "market_note",
+                    "truncated",
+                    "error",
+                    "section",
+                )
+                if advice.get(k) is not None
+            }
         self._clear_briefs(asof)
         if requested != asof:
             self._clear_briefs(requested)

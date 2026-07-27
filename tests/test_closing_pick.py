@@ -32,6 +32,15 @@ def db():
     get_settings.cache_clear()
 
 
+@pytest.fixture(autouse=True)
+def _disable_positions_advice(monkeypatch):
+    """默认关闭持仓建议，避免现有用例 content 被附加段改变。"""
+    monkeypatch.setattr(
+        "desk_positions_advice.advise_advice",
+        lambda *a, **k: {"status": "disabled", "source": "live", "items": []},
+    )
+
+
 def _seed_bars(db: Session, symbol: str, n: int = 60, trend: float = 1.01):
     svc = MarketService(db)
     today = date.today()
@@ -130,6 +139,28 @@ def test_run_scans_universe_and_stores_picks(db: Session):
     assert len(picks) >= 1
     briefs = db.scalars(select(ClosingBriefRow).where(ClosingBriefRow.asof == asof)).all()
     assert len(briefs) >= 1
+
+
+def test_closing_run_appends_positions_advice(db: Session, monkeypatch):
+    """尾盘选股正文附带持仓建议段。"""
+    monkeypatch.setattr(
+        "desk_positions_advice.advise_advice",
+        lambda *a, **k: {
+            "status": "empty",
+            "source": "live",
+            "section": "当前无持仓，跳过建议",
+            "items": [],
+        },
+    )
+    asof = _seed_trade_day(db)
+    db.add(SecurityMeta(symbol="600519.SH", name="茅台", is_delisted=False, status="listed"))
+    db.commit()
+    _seed_bars(db, "600519.SH")
+    _seed_factor_yaml(db, "close_always_buy", ALWAYS_BUY_YAML, roles=["closing"])
+
+    report = ClosingPickService(db).run(asof=asof)
+    assert "持仓建议" in report.content
+    assert "无持仓" in report.content
 
 
 def test_run_skips_strategies_without_closing_role(db: Session):
