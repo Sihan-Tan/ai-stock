@@ -55,6 +55,9 @@ type AppSettings = {
   research_refine_batch_size?: number;
   research_refine_parallel?: number;
   review_auto?: boolean;
+  positions_advice_enabled?: boolean;
+  positions_advice_mode?: "llm" | "hybrid";
+  positions_advice_source?: "live" | "paper";
 };
 
 const EMPTY: AppSettings = {
@@ -101,6 +104,9 @@ const EMPTY: AppSettings = {
   research_refine_batch_size: 4,
   research_refine_parallel: 2,
   review_auto: false,
+  positions_advice_enabled: true,
+  positions_advice_mode: "llm",
+  positions_advice_source: "live",
 };
 
 /** 设置页模块 Tab */
@@ -285,6 +291,9 @@ export default function Settings({ setLog }: PageLogProps) {
         ),
         research_refine_auto: Boolean(form.research_refine_auto),
         review_auto: Boolean(form.review_auto),
+        positions_advice_enabled: Boolean(form.positions_advice_enabled),
+        positions_advice_mode: form.positions_advice_mode || "llm",
+        positions_advice_source: form.positions_advice_source || "live",
         research_refine_batch_size: Math.max(
           1,
           Math.min(10, Math.floor(Number(form.research_refine_batch_size) || 4))
@@ -896,6 +905,44 @@ export default function Settings({ setLog }: PageLogProps) {
                       </span>
                     </span>
                   </label>
+                  <label className="flex items-start gap-2 text-sm text-[var(--desk-text)]">
+                    <input
+                      type="checkbox"
+                      className="mt-1"
+                      checked={Boolean(form.positions_advice_enabled)}
+                      onChange={(e) => patch("positions_advice_enabled", e.target.checked)}
+                    />
+                    <span>
+                      早盘/尾盘选股附带持仓建议
+                      <span className="mt-0.5 block text-xs text-[var(--desk-mist)]">
+                        与选股同一条飞书推送；需 LLM Key；失败不影响选股结果
+                      </span>
+                    </span>
+                  </label>
+                  <Field label="持仓建议模式">
+                    <select
+                      className={inputClass}
+                      value={form.positions_advice_mode || "llm"}
+                      onChange={(e) =>
+                        patch("positions_advice_mode", e.target.value as "llm" | "hybrid")
+                      }
+                    >
+                      <option value="llm">纯 LLM</option>
+                      <option value="hybrid">规则候选 + LLM</option>
+                    </select>
+                  </Field>
+                  <Field label="持仓来源">
+                    <select
+                      className={inputClass}
+                      value={form.positions_advice_source || "live"}
+                      onChange={(e) =>
+                        patch("positions_advice_source", e.target.value as "live" | "paper")
+                      }
+                    >
+                      <option value="live">实盘 Live</option>
+                      <option value="paper">纸交易 Paper</option>
+                    </select>
+                  </Field>
                 </div>
               </TabPanel>
             )}
