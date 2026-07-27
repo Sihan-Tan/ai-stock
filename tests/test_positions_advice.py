@@ -17,6 +17,7 @@ from desk_db import Base, get_engine, reset_engine
 import desk_db.models  # noqa: F401
 
 from desk_db.models import PaperAccount, PaperPosition
+from desk_positions_advice import advise_advice
 from desk_positions_advice.format import append_advice_section
 from desk_positions_advice.llm import generate_advice_llm, normalize_action, parse_advice_payload
 from desk_positions_advice.positions import load_positions, truncate_positions
@@ -149,3 +150,76 @@ def test_generate_advice_llm_error():
 
     out = generate_advice_llm({}, session_kind="closing", llm_call=boom)
     assert out["status"] == "error"
+
+
+def test_advise_advice_disabled(db, monkeypatch):
+    monkeypatch.setattr(
+        "desk_positions_advice.service.get_settings",
+        lambda: type("S", (), {
+            "positions_advice_enabled": False,
+            "positions_advice_mode": "llm",
+            "positions_advice_source": "live",
+            "llm_api_key": "x",
+        })(),
+    )
+    out = advise_advice(db, session_kind="closing", asof=date(2026, 7, 27))
+    assert out["status"] == "disabled"
+
+
+def test_advise_advice_empty_positions(db, monkeypatch):
+    monkeypatch.setattr(
+        "desk_positions_advice.service.get_settings",
+        lambda: type("S", (), {
+            "positions_advice_enabled": True,
+            "positions_advice_mode": "llm",
+            "positions_advice_source": "live",
+            "llm_api_key": "x",
+        })(),
+    )
+    monkeypatch.setattr(
+        "desk_positions_advice.service.load_positions",
+        lambda db, source: {"ok": True, "source": source, "positions": []},
+    )
+    out = advise_advice(db, session_kind="closing", asof=date(2026, 7, 27))
+    assert out["status"] == "empty"
+    assert "无持仓" in out["section"]
+
+
+def test_advise_advice_llm_ok(db, monkeypatch):
+    monkeypatch.setattr(
+        "desk_positions_advice.service.get_settings",
+        lambda: type("S", (), {
+            "positions_advice_enabled": True,
+            "positions_advice_mode": "llm",
+            "positions_advice_source": "paper",
+            "llm_api_key": "x",
+        })(),
+    )
+    monkeypatch.setattr(
+        "desk_positions_advice.service.load_positions",
+        lambda db, source: {
+            "ok": True,
+            "source": "paper",
+            "positions": [
+                {
+                    "symbol": "600000.SH",
+                    "qty": 100,
+                    "cost": 10,
+                    "last_price": 11,
+                    "market_value": 1100,
+                    "pnl": 100,
+                }
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        "desk_positions_advice.service.generate_advice_llm",
+        lambda facts, session_kind, llm_call=None: {
+            "status": "ok",
+            "items": [{"symbol": "600000.SH", "action": "持有", "reason": "稳"}],
+            "market_note": None,
+        },
+    )
+    out = advise_advice(db, session_kind="closing", asof=date(2026, 7, 27), picks=[])
+    assert out["status"] == "ok"
+    assert out["items"][0]["action"] == "持有"
