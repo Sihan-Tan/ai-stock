@@ -465,10 +465,10 @@ def load_positions(db: Session, source: str) -> dict[str, Any]:
                     }
                 )
             return {"ok": True, "source": "paper", "positions": positions, "message": None}
-        # live
-        from desk_broker import BrokerService
+        # live：与 /api/broker/live/positions 一致
+        from desk_broker import BrokerGateway
 
-        snap = BrokerService(db).account_snapshot()
+        snap = BrokerGateway(db).live.account_snapshot()
         positions = []
         for p in snap.get("positions") or []:
             if str(p.get("row_type") or "") == "sold":
@@ -512,9 +512,7 @@ def load_positions(db: Session, source: str) -> dict[str, Any]:
         }
 ```
 
-若 `PaperBroker` / `BrokerService` 导入路径不同，以 `packages/broker/desk_broker/__init__.py` 实际导出为准（常见为 `from desk_broker import BrokerService` 与 paper 的 `summary` 在同一服务类上——实现时核对：若只有 `BrokerService.summary()` 为 paper，则 paper 分支改用正确类）。
-
-**核对要点：** 打开 `desk_broker/__init__.py`，确认 paper `summary` 与 live `account_snapshot` 的入口类名；按实调整 `load_positions`，不要臆造 API。
+**入口约定（已与代码对齐）：** paper → `PaperBroker(db).summary()`；live → `BrokerGateway(db).live.account_snapshot()`。
 
 - [ ] **Step 4: 跑通测试**
 
