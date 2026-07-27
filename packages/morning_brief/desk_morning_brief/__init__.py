@@ -155,20 +155,46 @@ class MorningBriefService:
             f"板块：{' / '.join(b['board'] for b in boards)}\n"
             f"个股：{' · '.join(stock_bits)}"
         )
-        self._store(
-            asof,
-            "post_auction",
-            content,
-            {
-                "boards": boards,
-                "stocks": stocks,
-                **(
-                    {"day_note": day_note.strip(), "requested_asof": requested.isoformat()}
-                    if day_note
-                    else {}
-                ),
-            },
+        from desk_positions_advice import advise_advice, append_advice_section
+
+        ctx: dict[str, Any] = {}
+        try:
+            ctx["sentiment"] = self.sentiment.snapshot(asof)
+        except Exception:  # noqa: BLE001
+            pass
+        advice = advise_advice(
+            self.db,
+            session_kind="morning",
+            asof=asof,
+            picks=stocks,
+            context={**ctx, "boards": boards},
         )
+        extras: dict[str, Any] = {
+            "boards": boards,
+            "stocks": stocks,
+            **(
+                {"day_note": day_note.strip(), "requested_asof": requested.isoformat()}
+                if day_note
+                else {}
+            ),
+        }
+        if advice.get("status") != "disabled":
+            content = append_advice_section(content, advice)
+            extras["positions_advice"] = {
+                k: advice.get(k)
+                for k in (
+                    "status",
+                    "source",
+                    "mode",
+                    "items",
+                    "market_note",
+                    "truncated",
+                    "error",
+                    "section",
+                )
+                if advice.get(k) is not None
+            }
+        self._store(asof, "post_auction", content, extras)
         self.alert.send("早盘·竞价强势", content, category="morning", dedupe_key=f"auction:{asof}")
         self.db.flush()
         if stocks:

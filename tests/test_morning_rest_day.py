@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from datetime import date, timedelta
 
@@ -13,8 +14,9 @@ os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 from desk_common.settings import get_settings
 from desk_db import Base, get_engine, reset_engine
 import desk_db.models  # noqa: F401
-from desk_db.models import AuctionSnapshot, TradeCalendar
+from desk_db.models import AuctionSnapshot, MorningBriefRow, TradeCalendar
 from desk_morning_brief import MorningBriefService
+from sqlalchemy import select
 
 
 @pytest.fixture()
@@ -25,6 +27,15 @@ def db():
     yield Session(bind=get_engine())
     reset_engine()
     get_settings.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def _disable_positions_advice(monkeypatch):
+    """默认关闭持仓建议，避免现有用例 content/extras 被附加段改变。"""
+    monkeypatch.setattr(
+        "desk_positions_advice.advise_advice",
+        lambda *a, **k: {"status": "disabled", "source": "live", "items": []},
+    )
 
 
 def test_resolve_asof_falls_back_on_rest_day(db: Session):
@@ -82,6 +93,48 @@ def test_post_auction_uses_previous_trade_day_snapshots(db: Session):
     assert report.stocks[0]["symbol"] == "600519.SH"
     assert report.stocks[0].get("price") == 105.0
     assert all(float(s["auction_pct"]) > 0 for s in report.stocks)
+
+
+def test_post_auction_appends_positions_advice(db: Session, monkeypatch):
+    """竞价强势正文附带持仓建议段。"""
+    monkeypatch.setattr(
+        "desk_positions_advice.advise_advice",
+        lambda *a, **k: {
+            "status": "empty",
+            "source": "live",
+            "section": "当前无持仓，跳过建议",
+            "items": [],
+        },
+    )
+    asof = date.today()
+    while asof.weekday() >= 5:
+        asof -= timedelta(days=1)
+    db.add(TradeCalendar(cal_date=asof, is_open=True))
+    db.add(
+        AuctionSnapshot(
+            asof=asof,
+            symbol="600519.SH",
+            name="茅台",
+            auction_pct=0.05,
+            auction_amount=1e8,
+            auction_price=105.0,
+            board_code="白酒",
+            board_name="白酒",
+        )
+    )
+    db.commit()
+
+    MorningBriefService(db).run_post_auction(asof)
+    brief = db.scalars(
+        select(MorningBriefRow).where(
+            MorningBriefRow.asof == asof,
+            MorningBriefRow.stage == "post_auction",
+        )
+    ).one()
+    assert "持仓建议" in brief.content
+    assert "无持仓" in brief.content
+    extras = json.loads(brief.extras_json or "{}")
+    assert extras.get("positions_advice", {}).get("status") == "empty"
 
 
 def test_latest_skips_rest_day_skip_brief(db: Session):
