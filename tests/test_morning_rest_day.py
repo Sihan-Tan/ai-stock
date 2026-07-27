@@ -137,6 +137,46 @@ def test_post_auction_appends_positions_advice(db: Session, monkeypatch):
     assert extras.get("positions_advice", {}).get("status") == "empty"
 
 
+def test_post_auction_advice_exception_still_stores(db: Session, monkeypatch):
+    """持仓建议抛错不阻断早盘竞价选拔落库。"""
+
+    def boom(*a, **k):
+        raise RuntimeError("advice down")
+
+    monkeypatch.setattr("desk_positions_advice.advise_advice", boom)
+    asof = date.today()
+    while asof.weekday() >= 5:
+        asof -= timedelta(days=1)
+    db.add(TradeCalendar(cal_date=asof, is_open=True))
+    db.add(
+        AuctionSnapshot(
+            asof=asof,
+            symbol="600519.SH",
+            name="茅台",
+            auction_pct=0.05,
+            auction_amount=1e8,
+            auction_price=105.0,
+            board_code="白酒",
+            board_name="白酒",
+        )
+    )
+    db.commit()
+
+    report = MorningBriefService(db).run_post_auction(asof)
+    assert len(report.stocks) >= 1
+    brief = db.scalars(
+        select(MorningBriefRow).where(
+            MorningBriefRow.asof == asof,
+            MorningBriefRow.stage == "post_auction",
+        )
+    ).one()
+    assert "持仓建议生成失败" in brief.content
+    assert "advice down" in brief.content
+    extras = json.loads(brief.extras_json or "{}")
+    assert extras.get("positions_advice", {}).get("status") == "error"
+    assert extras.get("stocks")
+
+
 def test_latest_skips_rest_day_skip_brief(db: Session):
     """
     休息日若仅有旧「跳过」摘要，latest 仍应回退到上一交易日的板块/个股。

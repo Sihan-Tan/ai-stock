@@ -364,3 +364,123 @@ def test_rule_candidates_morning_high_sell_low_buy():
     ]
     out = rule_candidates(positions, session_kind="morning")
     assert out[0]["action"] == "高抛低吸"
+
+
+def test_advise_advice_enriches_day_chg_and_auction(db, monkeypatch):
+    """充实日涨跌与早盘竞价字段进入 LLM 事实。"""
+    import pandas as pd
+    from desk_market import MarketService
+
+    asof = date(2026, 7, 27)
+    prev = date(2026, 7, 24)
+    MarketService(db).upsert_daily_bars(
+        "600000.SH",
+        pd.DataFrame(
+            [
+                {
+                    "date": prev,
+                    "open": 10,
+                    "high": 10,
+                    "low": 10,
+                    "close": 10.0,
+                    "volume": 1e6,
+                    "amount": 1e7,
+                    "open_hfq": 10,
+                    "high_hfq": 10,
+                    "low_hfq": 10,
+                    "close_hfq": 10.0,
+                    "volume_hfq": 1e6,
+                },
+                {
+                    "date": asof,
+                    "open": 10.5,
+                    "high": 10.6,
+                    "low": 10.4,
+                    "close": 10.5,
+                    "volume": 1e6,
+                    "amount": 1e7,
+                    "open_hfq": 10.5,
+                    "high_hfq": 10.6,
+                    "low_hfq": 10.4,
+                    "close_hfq": 10.5,
+                    "volume_hfq": 1e6,
+                },
+            ]
+        ),
+    )
+    db.commit()
+
+    monkeypatch.setattr(
+        "desk_positions_advice.service.get_settings",
+        lambda: _advice_settings(),
+    )
+    monkeypatch.setattr(
+        "desk_positions_advice.service.load_positions",
+        lambda db, source: {
+            "ok": True,
+            "source": source,
+            "positions": [_sample_position()],
+        },
+    )
+    captured: dict = {}
+
+    def fake_llm(facts, session_kind, llm_call=None):
+        captured["facts"] = facts
+        return {
+            "status": "ok",
+            "items": [{"symbol": "600000.SH", "action": "持有", "reason": "稳"}],
+            "market_note": None,
+        }
+
+    monkeypatch.setattr("desk_positions_advice.service.generate_advice_llm", fake_llm)
+    out = advise_advice(
+        db,
+        session_kind="morning",
+        asof=asof,
+        picks=[
+            {
+                "symbol": "600000.SH",
+                "auction_pct": 0.03,
+                "auction_amount": 9e7,
+            }
+        ],
+    )
+    assert out["status"] == "ok"
+    pos = captured["facts"]["positions"][0]
+    assert pos["day_chg_pct"] == pytest.approx(0.05)
+    assert pos["auction_pct"] == 0.03
+    assert pos["auction_amount"] == 9e7
+
+
+def test_advise_advice_enrich_failure_still_ok(db, monkeypatch):
+    """日涨跌取数失败不影响建议编排。"""
+    monkeypatch.setattr(
+        "desk_positions_advice.service.get_settings",
+        lambda: _advice_settings(),
+    )
+    monkeypatch.setattr(
+        "desk_positions_advice.service.load_positions",
+        lambda db, source: {
+            "ok": True,
+            "source": source,
+            "positions": [_sample_position()],
+        },
+    )
+
+    def boom(*a, **k):
+        raise RuntimeError("bars down")
+
+    monkeypatch.setattr(
+        "desk_positions_advice.positions._day_chg_pct_from_bars",
+        boom,
+    )
+    monkeypatch.setattr(
+        "desk_positions_advice.service.generate_advice_llm",
+        lambda facts, session_kind, llm_call=None: {
+            "status": "ok",
+            "items": [{"symbol": "600000.SH", "action": "持有", "reason": "稳"}],
+            "market_note": None,
+        },
+    )
+    out = advise_advice(db, session_kind="closing", asof=date(2026, 7, 27))
+    assert out["status"] == "ok"

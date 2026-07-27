@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from desk_common.settings import get_settings
 from desk_positions_advice.llm import generate_advice_llm
-from desk_positions_advice.positions import load_positions, truncate_positions
+from desk_positions_advice.positions import enrich_positions, load_positions, truncate_positions
 from desk_positions_advice.rules import rule_candidates
 
 logger = logging.getLogger(__name__)
@@ -60,6 +60,17 @@ def advise_advice(
         }
 
     positions, truncated = truncate_positions(positions)
+    try:
+        positions = enrich_positions(
+            db,
+            positions,
+            asof=asof,
+            session_kind=session_kind,
+            picks=picks,
+            context=context,
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("enrich_positions failed; continue without enrich")
 
     pick_symbols = {
         str(p.get("symbol") or p.get("code") or "")

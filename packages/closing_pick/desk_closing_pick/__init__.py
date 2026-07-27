@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import date
 from typing import Any
 
@@ -16,6 +17,8 @@ from desk_closing_pick.screen import eval_buy_signals
 from desk_common.contracts import ClosingPickReport
 from desk_db.models import ClosingBriefRow, ClosingPick, SecurityMeta, StrategyRow
 from desk_strategy import strategy_has_closing_role
+
+logger = logging.getLogger(__name__)
 
 
 class ClosingPickService:
@@ -180,26 +183,42 @@ class ClosingPickService:
         }
         from desk_positions_advice import advise_advice, append_advice_section
 
-        advice = advise_advice(
-            self.db,
-            session_kind="closing",
-            asof=asof,
-            picks=stocks,
-        )
-        if advice.get("status") != "disabled":
+        try:
+            advice = advise_advice(
+                self.db,
+                session_kind="closing",
+                asof=asof,
+                picks=stocks,
+            )
+            if advice.get("status") != "disabled":
+                content = append_advice_section(content, advice)
+                extras["positions_advice"] = {
+                    k: advice.get(k)
+                    for k in (
+                        "status",
+                        "source",
+                        "mode",
+                        "items",
+                        "market_note",
+                        "truncated",
+                        "error",
+                        "section",
+                    )
+                    if advice.get(k) is not None
+                }
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("positions advice failed after closing pick")
+            advice = {
+                "status": "error",
+                "source": "live",
+                "section": f"持仓建议生成失败：{exc}",
+                "items": [],
+                "error": str(exc),
+            }
             content = append_advice_section(content, advice)
             extras["positions_advice"] = {
                 k: advice.get(k)
-                for k in (
-                    "status",
-                    "source",
-                    "mode",
-                    "items",
-                    "market_note",
-                    "truncated",
-                    "error",
-                    "section",
-                )
+                for k in ("status", "source", "items", "error", "section")
                 if advice.get(k) is not None
             }
         self._clear_briefs(asof)

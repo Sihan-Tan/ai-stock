@@ -163,6 +163,29 @@ def test_closing_run_appends_positions_advice(db: Session, monkeypatch):
     assert "无持仓" in report.content
 
 
+def test_closing_run_advice_exception_still_stores(db: Session, monkeypatch):
+    """持仓建议抛错不阻断尾盘选股落库与推送正文。"""
+
+    def boom(*a, **k):
+        raise RuntimeError("advice down")
+
+    monkeypatch.setattr("desk_positions_advice.advise_advice", boom)
+    asof = _seed_trade_day(db)
+    db.add(SecurityMeta(symbol="600519.SH", name="茅台", is_delisted=False, status="listed"))
+    db.commit()
+    _seed_bars(db, "600519.SH")
+    _seed_factor_yaml(db, "close_always_buy", ALWAYS_BUY_YAML, roles=["closing"])
+
+    report = ClosingPickService(db).run(asof=asof)
+    assert len(report.stocks) >= 1
+    assert "持仓建议生成失败" in report.content
+    assert "advice down" in report.content
+    briefs = db.scalars(select(ClosingBriefRow).where(ClosingBriefRow.asof == asof)).all()
+    assert len(briefs) >= 1
+    extras = json.loads(briefs[0].extras_json or "{}")
+    assert extras.get("positions_advice", {}).get("status") == "error"
+
+
 def test_run_skips_strategies_without_closing_role(db: Session):
     asof = _seed_trade_day(db)
     db.add(SecurityMeta(symbol="600519.SH", name="茅台", is_delisted=False, status="listed"))

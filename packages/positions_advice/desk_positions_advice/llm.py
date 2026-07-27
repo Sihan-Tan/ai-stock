@@ -86,7 +86,11 @@ def _default_llm_call(system: str, user: str) -> str:
     settings = get_settings()
     if not settings.llm_api_key:
         raise ValueError("未配置 LLM API Key")
-    client = OpenAI(api_key=settings.llm_api_key, base_url=settings.llm_base_url or None)
+    client = OpenAI(
+        api_key=settings.llm_api_key,
+        base_url=settings.llm_base_url or None,
+        timeout=60,
+    )
     model = resolve_llm_model(settings.llm_provider, settings.llm_model)
     resp = client.chat.completions.create(
         model=model,

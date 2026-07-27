@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import date
 from typing import Any
 
@@ -16,6 +17,8 @@ from desk_common.contracts import MorningBrief, StrongPickReport
 from desk_db.models import AuctionSnapshot, MorningBriefRow, MorningStrongPick
 from desk_lhb import LhbService
 from desk_sentiment import SentimentService
+
+logger = logging.getLogger(__name__)
 
 
 class MorningBriefService:
@@ -162,13 +165,6 @@ class MorningBriefService:
             ctx["sentiment"] = self.sentiment.snapshot(asof)
         except Exception:  # noqa: BLE001
             pass
-        advice = advise_advice(
-            self.db,
-            session_kind="morning",
-            asof=asof,
-            picks=stocks,
-            context={**ctx, "boards": boards},
-        )
         extras: dict[str, Any] = {
             "boards": boards,
             "stocks": stocks,
@@ -178,20 +174,43 @@ class MorningBriefService:
                 else {}
             ),
         }
-        if advice.get("status") != "disabled":
+        try:
+            advice = advise_advice(
+                self.db,
+                session_kind="morning",
+                asof=asof,
+                picks=stocks,
+                context={**ctx, "boards": boards},
+            )
+            if advice.get("status") != "disabled":
+                content = append_advice_section(content, advice)
+                extras["positions_advice"] = {
+                    k: advice.get(k)
+                    for k in (
+                        "status",
+                        "source",
+                        "mode",
+                        "items",
+                        "market_note",
+                        "truncated",
+                        "error",
+                        "section",
+                    )
+                    if advice.get(k) is not None
+                }
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("positions advice failed after morning post_auction")
+            advice = {
+                "status": "error",
+                "source": "live",
+                "section": f"持仓建议生成失败：{exc}",
+                "items": [],
+                "error": str(exc),
+            }
             content = append_advice_section(content, advice)
             extras["positions_advice"] = {
                 k: advice.get(k)
-                for k in (
-                    "status",
-                    "source",
-                    "mode",
-                    "items",
-                    "market_note",
-                    "truncated",
-                    "error",
-                    "section",
-                )
+                for k in ("status", "source", "items", "error", "section")
                 if advice.get(k) is not None
             }
         self._store(asof, "post_auction", content, extras)
