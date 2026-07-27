@@ -15,8 +15,10 @@ from desk_common.settings import get_settings
 from desk_db import Base, get_engine, reset_engine
 import desk_db.models  # noqa: F401
 
+from desk_db.models import PaperAccount, PaperPosition
 from desk_positions_advice.format import append_advice_section
 from desk_positions_advice.llm import normalize_action, parse_advice_payload
+from desk_positions_advice.positions import load_positions, truncate_positions
 
 
 @pytest.fixture()
@@ -56,3 +58,26 @@ def test_normalize_action_morning():
     assert normalize_action("高抛低吸", "morning") == ("高抛低吸", False)
     assert normalize_action("低吸", "morning") == ("低吸", False)
     assert normalize_action("观望", "morning") == ("持有", True)
+
+
+def test_truncate_positions_by_market_value():
+    rows = [
+        {"symbol": f"s{i}", "qty": 100, "cost": 10, "market_value": float(i), "pnl": 0}
+        for i in range(25)
+    ]
+    out, truncated = truncate_positions(rows, limit=20)
+    assert truncated is True
+    assert len(out) == 20
+    assert out[0]["symbol"] == "s24"
+
+
+def test_load_paper_positions(db: Session):
+    acc = PaperAccount(name="default", cash=1_000_000, equity=1_000_000)
+    db.add(acc)
+    db.flush()
+    db.add(PaperPosition(account_id=acc.id, symbol="600000.SH", qty=100, cost=10.0))
+    db.commit()
+    loaded = load_positions(db, "paper")
+    assert loaded["ok"] is True
+    assert loaded["source"] == "paper"
+    assert any(p["symbol"] == "600000.SH" for p in loaded["positions"])
