@@ -157,6 +157,22 @@ def _ensure_alerts_status_width() -> None:
         conn.execute(text("ALTER TABLE alerts ALTER COLUMN status TYPE VARCHAR(128)"))
 
 
+def _ensure_auction_price_column() -> None:
+    """已有库补列：auction_snapshots.auction_price（竞价现价）。"""
+    engine = get_engine()
+    dialect = engine.dialect.name
+    if dialect == "sqlite":
+        _ensure_sqlite_column("auction_snapshots", "auction_price", "FLOAT")
+        return
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "ALTER TABLE auction_snapshots "
+                "ADD COLUMN IF NOT EXISTS auction_price FLOAT"
+            )
+        )
+
+
 def try_ensure_schema() -> bool:
     """
     尝试 create_all；失败只记日志，不抛出。
@@ -181,6 +197,10 @@ def try_ensure_schema() -> bool:
             _ensure_alerts_status_width()
         except Exception as exc:  # noqa: BLE001
             logger.warning("加宽 alerts.status 失败：%s", exc)
+        try:
+            _ensure_auction_price_column()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("补齐 auction_snapshots.auction_price 失败：%s", exc)
         return True
     except Exception as exc:  # noqa: BLE001
         logger.warning("数据库不可达或建表失败，服务仍继续启动：%s", exc)
