@@ -46,6 +46,10 @@ class SettingsPatch(BaseModel):
     research_refine_batch_size: int | None = None
     research_refine_parallel: int | None = None
     review_auto: bool | None = None
+    positions_advice_enabled: bool | None = None
+    positions_advice_mode: str | None = None
+    positions_advice_source: str | None = None
+    intraday_poll_interval_sec: int | None = None
     backtest_buy_commission: float | None = None
     backtest_sell_commission: float | None = None
     backtest_stamp_duty: float | None = None

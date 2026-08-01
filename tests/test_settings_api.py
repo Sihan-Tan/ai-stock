@@ -53,3 +53,20 @@ def test_apply_patch_writes_env(_db):
     s = get_settings()
     assert s.trade_mode == "live"
     assert s.risk_max_order_position_pct == 15.0
+
+
+def test_intraday_poll_interval_clamped(_db):
+    """分时轮询间隔钳制到 [5, 60]。"""
+    assert public_settings()["intraday_poll_interval_sec"] == 10
+
+    apply_settings_patch({"intraday_poll_interval_sec": 3})
+    assert get_settings().intraday_poll_interval_sec == 5
+    assert "INTRADAY_POLL_INTERVAL_SEC=5" in _db.read_text(encoding="utf-8")
+
+    apply_settings_patch({"intraday_poll_interval_sec": 100})
+    assert get_settings().intraday_poll_interval_sec == 60
+    assert "INTRADAY_POLL_INTERVAL_SEC=60" in _db.read_text(encoding="utf-8")
+
+    apply_settings_patch({"intraday_poll_interval_sec": 10})
+    assert get_settings().intraday_poll_interval_sec == 10
+    assert public_settings()["intraday_poll_interval_sec"] == 10

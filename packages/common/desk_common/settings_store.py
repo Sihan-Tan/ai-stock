@@ -44,6 +44,7 @@ EDITABLE_ENV: dict[str, str] = {
     "positions_advice_enabled": "POSITIONS_ADVICE_ENABLED",
     "positions_advice_mode": "POSITIONS_ADVICE_MODE",
     "positions_advice_source": "POSITIONS_ADVICE_SOURCE",
+    "intraday_poll_interval_sec": "INTRADAY_POLL_INTERVAL_SEC",
     "backtest_buy_commission": "BACKTEST_BUY_COMMISSION",
     "backtest_sell_commission": "BACKTEST_SELL_COMMISSION",
     "backtest_stamp_duty": "BACKTEST_STAMP_DUTY",
@@ -127,6 +128,7 @@ def public_settings() -> dict[str, Any]:
         "positions_advice_enabled": s.positions_advice_enabled,
         "positions_advice_mode": s.positions_advice_mode,
         "positions_advice_source": s.positions_advice_source,
+        "intraday_poll_interval_sec": int(s.intraday_poll_interval_sec),
         "backtest_buy_commission": s.backtest_buy_commission,
         "backtest_sell_commission": s.backtest_sell_commission,
         "backtest_stamp_duty": s.backtest_stamp_duty,
@@ -251,6 +253,8 @@ def apply_settings_patch(patch: dict[str, Any]) -> dict[str, Any]:
             cleaned[field] = float(raw)
         elif field == "paper_runner_interval_minutes":
             cleaned[field] = max(5, int(float(raw)))
+        elif field == "intraday_poll_interval_sec":
+            cleaned[field] = max(5, min(60, int(float(raw))))
         elif field == "research_refine_top_n":
             cleaned[field] = max(1, min(20, int(float(raw))))
         elif field == "research_refine_max_candidates":

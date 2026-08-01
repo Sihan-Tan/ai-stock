@@ -72,6 +72,8 @@ class Settings(BaseSettings):
     positions_advice_mode: Literal["llm", "hybrid"] = "llm"
     """持仓源：live 或 paper。"""
     positions_advice_source: Literal["live", "paper"] = "live"
+    """分时槽宽兼报价轮询间隔（秒，5–60）。"""
+    intraday_poll_interval_sec: int = 10
     skills_dir: str = "skills"
     """Tavily 搜索 API Key（env ``TAVILY_API_KEY``）；空则 web_search 工具不可用。"""
     tavily_api_key: str = ""
