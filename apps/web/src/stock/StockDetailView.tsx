@@ -1,8 +1,13 @@
 import { Alert, Button, Card, CardContent, CardHeader, CardTitle, Chip, Spinner } from "@heroui/react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { api, beijingToday, formatBeijingTime } from "../api";
-import { summarizeIntradayBars, buildMacdSeries, buildSmaSeries, DAILY_MA_LINES, MACD_LINE_COLORS, toChartBars } from "./format";
+import { summarizeIntradayBars, buildMacdSeries, MACD_LINE_COLORS, toChartBars } from "./format";
 import { calcPctChg, detectLimitTag } from "./limitStatus";
+import {
+  getMainOverlay,
+  listOverlaysForPeriod,
+  shouldShowMainOverlaySelect,
+} from "./mainOverlays";
 import { StockChart } from "./StockChart";
 import type { ChartPeriod, OhlcvBar, PositionContext } from "./types";
 import { chgToneClass } from "../ui/chgTone";
@@ -101,6 +106,7 @@ export function StockDetailView({
 }: Props) {
   const normalizedSymbol = symbol.trim().toUpperCase();
   const [period, setPeriod] = useState<ChartPeriod>("intraday");
+  const [mainOverlayId, setMainOverlayId] = useState("sma");
   const [positionCollapsed, setPositionCollapsed] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const [notFound, setNotFound] = useState(false);
@@ -118,15 +124,16 @@ export function StockDetailView({
     return summarizeIntradayBars(bars.data);
   }, [bars.data, period]);
 
-  const dailyMaPrices = useMemo(() => {
-    if (period !== "day" || !bars.data?.length) return [];
-    const chartBars = toChartBars(bars.data, "day");
-    return DAILY_MA_LINES.map((ma) => {
-      const points = buildSmaSeries(chartBars, ma.window);
-      const latest = points.length > 0 ? points[points.length - 1].value : null;
-      return { ...ma, value: latest };
-    });
-  }, [bars.data, period]);
+  const overlayLegend = useMemo(() => {
+    if (!shouldShowMainOverlaySelect(period) || !bars.data?.length) return [];
+    const chartBars = toChartBars(bars.data, period);
+    const overlay = getMainOverlay(mainOverlayId);
+    return overlay.buildLines(chartBars).map((line) => ({
+      label: line.label,
+      color: line.color,
+      value: line.points.length ? line.points[line.points.length - 1].value : null,
+    }));
+  }, [bars.data, period, mainOverlayId]);
 
   const dailyMacdLatest = useMemo(() => {
     if ((period !== "day" && period !== "intraday") || !bars.data?.length) return null;
@@ -134,6 +141,13 @@ export function StockDetailView({
     if (points.length === 0) return null;
     return points[points.length - 1];
   }, [bars.data, period]);
+
+  useEffect(() => {
+    const opts = listOverlaysForPeriod(period);
+    if (opts.length && !opts.some((o) => o.id === mainOverlayId)) {
+      setMainOverlayId(opts[0].id);
+    }
+  }, [period, mainOverlayId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -404,7 +418,7 @@ export function StockDetailView({
       <Card className="border border-[var(--desk-line)] bg-[var(--desk-panel)]">
         <CardContent className="space-y-3 p-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="inline-flex rounded-lg border border-[var(--desk-line)] bg-[var(--desk-ink)] p-1">
+            <div className="inline-flex items-center rounded-lg border border-[var(--desk-line)] bg-[var(--desk-ink)] p-1">
               {PERIODS.map((item) => (
                 <button
                   key={item.value}
@@ -420,6 +434,26 @@ export function StockDetailView({
                   {item.label}
                 </button>
               ))}
+              {shouldShowMainOverlaySelect(period) && (
+                <>
+                  <span
+                    className="mx-1 h-5 w-px shrink-0 bg-[var(--desk-line)]"
+                    aria-hidden
+                  />
+                  <select
+                    className="rounded-md bg-transparent px-2 py-1.5 text-sm text-[var(--desk-text)] outline-none"
+                    value={mainOverlayId}
+                    aria-label="主图指标"
+                    onChange={(e) => setMainOverlayId(e.target.value)}
+                  >
+                    {listOverlaysForPeriod(period).map((o) => (
+                      <option key={o.id} value={o.id}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                </>
+              )}
             </div>
             <div className="flex min-w-0 flex-wrap items-center justify-end gap-x-3 gap-y-1 text-xs">
               {intradaySummary && (
@@ -431,7 +465,7 @@ export function StockDetailView({
                   <PriceChip label="收" value={formatNumber(intradaySummary.close)} />
                 </>
               )}
-              {dailyMaPrices.map((ma) => (
+              {overlayLegend.map((ma) => (
                 <span key={ma.label} className="inline-flex items-center gap-1 font-mono whitespace-nowrap">
                   <span className="inline-block h-0.5 w-3 rounded" style={{ backgroundColor: ma.color }} />
                   <span style={{ color: ma.color }}>
@@ -464,7 +498,12 @@ export function StockDetailView({
           ) : bars.error ? (
             <ErrorBlock message={`行情数据加载失败：${bars.error}`} />
           ) : (
-            <StockChart period={period} bars={bars.data ?? []} compact={compact} />
+            <StockChart
+              period={period}
+              bars={bars.data ?? []}
+              compact={compact}
+              mainOverlayId={mainOverlayId}
+            />
           )}
         </CardContent>
       </Card>
