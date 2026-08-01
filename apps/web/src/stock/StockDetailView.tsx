@@ -14,10 +14,12 @@ import { api, beijingToday, formatBeijingTime } from "../api";
 import { summarizeIntradayBars, buildMacdSeries, MACD_LINE_COLORS, toChartBars } from "./format";
 import { calcPctChg, detectLimitTag } from "./limitStatus";
 import {
+  buildMainOverlay,
   getMainOverlay,
   listOverlaysForPeriod,
   shouldShowMainOverlaySelect,
 } from "./mainOverlays";
+import { shiftTradingDaysBack } from "./overlayMath";
 import { StockChart } from "./StockChart";
 import type { ChartPeriod, OhlcvBar, PositionContext } from "./types";
 import { chgToneClass } from "../ui/chgTone";
@@ -116,7 +118,8 @@ export function StockDetailView({
 }: Props) {
   const normalizedSymbol = symbol.trim().toUpperCase();
   const [period, setPeriod] = useState<ChartPeriod>("intraday");
-  const [mainOverlayId, setMainOverlayId] = useState("sma");
+  const [mainOverlayId, setMainOverlayId] = useState("none");
+  const [overlayCalcBars, setOverlayCalcBars] = useState<OhlcvBar[]>([]);
   const [positionCollapsed, setPositionCollapsed] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const [notFound, setNotFound] = useState(false);
@@ -136,14 +139,23 @@ export function StockDetailView({
 
   const overlayLegend = useMemo(() => {
     if (!shouldShowMainOverlaySelect(period) || !bars.data?.length) return [];
+    if (mainOverlayId === "none") return [];
     const chartBars = toChartBars(bars.data, period);
     const overlay = getMainOverlay(mainOverlayId);
-    return overlay.buildLines(chartBars).map((line) => ({
-      label: line.label,
-      color: line.color,
-      value: line.points.length ? line.points[line.points.length - 1].value : null,
-    }));
-  }, [bars.data, period, mainOverlayId]);
+    const built = buildMainOverlay(overlay, {
+      chartBars,
+      calcBars: period === "intraday" ? overlayCalcBars : undefined,
+      preClose: quote.data?.pre_close,
+      sessionDate: period === "intraday" ? beijingToday() : undefined,
+    });
+    return built.lines
+      .filter((line) => line.points.length > 0)
+      .map((line) => ({
+        label: line.label,
+        color: line.color,
+        value: line.points[line.points.length - 1]!.value,
+      }));
+  }, [bars.data, period, mainOverlayId, overlayCalcBars, quote.data?.pre_close]);
 
   const dailyMacdLatest = useMemo(() => {
     if ((period !== "day" && period !== "intraday") || !bars.data?.length) return null;
@@ -217,6 +229,34 @@ export function StockDetailView({
       cancelled = true;
     };
   }, [normalizedSymbol, period, reloadKey]);
+
+  useEffect(() => {
+    if (period !== "intraday" || mainOverlayId !== "intraday_dip") {
+      setOverlayCalcBars([]);
+      return;
+    }
+
+    let cancelled = false;
+
+    /**
+     * 拉取约 5 个交易日分钟线，供分时抄底 EMA 预热。
+     */
+    const load = async () => {
+      const toDate = beijingToday();
+      const fromDate = shiftTradingDaysBack(toDate, 5);
+      try {
+        const data = await loadMinuteBarsRange(normalizedSymbol, fromDate, toDate);
+        if (!cancelled) setOverlayCalcBars(data);
+      } catch {
+        if (!cancelled) setOverlayCalcBars([]);
+      }
+    };
+
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [normalizedSymbol, period, mainOverlayId, reloadKey]);
 
   useEffect(() => {
     if (period !== "intraday") return;
@@ -534,6 +574,9 @@ export function StockDetailView({
               bars={bars.data ?? []}
               compact={compact}
               mainOverlayId={mainOverlayId}
+              overlayCalcBars={period === "intraday" ? overlayCalcBars : undefined}
+              preClose={quote.data?.pre_close}
+              sessionDate={period === "intraday" ? beijingToday() : undefined}
             />
           )}
         </CardContent>
@@ -662,12 +705,7 @@ export function StockDetailView({
 async function loadBars(symbol: string, period: ChartPeriod): Promise<OhlcvBar[]> {
   if (period === "intraday") {
     const date = beijingToday();
-    const params = new URLSearchParams({
-      symbol,
-      from: `${date}T09:15:00+08:00`,
-      to: `${date}T15:00:00+08:00`,
-    });
-    return api<OhlcvBar[]>(`/api/market/bars/minute?${params}`);
+    return loadMinuteBarsRange(symbol, date, date);
   }
 
   const end = beijingToday();
@@ -680,6 +718,25 @@ async function loadBars(symbol: string, period: ChartPeriod): Promise<OhlcvBar[]
     ...(period === "day" ? {} : { period }),
   });
   return api<OhlcvBar[]>(`/api/market/bars/daily?${params}`);
+}
+
+/**
+ * 按日期区间拉取分钟 K 线（含集合竞价起始 09:15）。
+ * @param symbol 股票代码
+ * @param fromDate 起始日 YYYY-MM-DD（北京）
+ * @param toDate 结束日 YYYY-MM-DD（北京）
+ */
+async function loadMinuteBarsRange(
+  symbol: string,
+  fromDate: string,
+  toDate: string
+): Promise<OhlcvBar[]> {
+  const params = new URLSearchParams({
+    symbol,
+    from: `${fromDate}T09:15:00+08:00`,
+    to: `${toDate}T15:00:00+08:00`,
+  });
+  return api<OhlcvBar[]>(`/api/market/bars/minute?${params}`);
 }
 
 /**
