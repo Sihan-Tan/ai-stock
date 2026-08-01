@@ -12,7 +12,7 @@
 | 项 | 选择 |
 |----|------|
 | 布局 | C：与周期按钮同一工具条，竖线分隔后接下拉 |
-| 可见周期 | 仅 `day` / `week` / `month`；`intraday` 隐藏 |
+| 可见周期 | 仅 `day` / `week` / `month`（分时另见 [2026-08-01-intraday-main-overlay-design.md](./2026-08-01-intraday-main-overlay-design.md)） |
 | 架构 | 方案 1：`mainOverlays` 注册表 + 下拉切族 |
 | 选项 | 「移动均线」（`sma`）、「均线战法」（`ma_tactic`） |
 
@@ -41,7 +41,7 @@ STD 采用通达信总体标准差（除以 N）；EMA 采用 α=2/(N+1)。
 | 单元 | 职责 |
 |------|------|
 | `apps/web/src/stock/mainOverlays.ts` | 注册表：`id`、`label`、适用 `periods`、`buildLines(bars)` |
-| `StockDetailView` | 工具条下拉；`mainOverlayId` 状态；分时隐藏 |
+| `StockDetailView` | 工具条下拉；`mainOverlayId` 状态（分时另见 [2026-08-01-intraday-main-overlay-design.md](./2026-08-01-intraday-main-overlay-design.md)） |
 | `StockChart` | 接收当前族线条（或 `mainOverlayId`），主图叠加，不再写死「仅 day 画 MA」 |
 
 ### 扩展约定
@@ -58,7 +58,7 @@ STD 采用通达信总体标准差（除以 N）；EMA 采用 α=2/(N+1)。
 [ 分时 ] [ 日 K ] [ 周 K ] [ 月 K ]  |  [ 移动均线 ▾ ]
 ```
 
-- 分时选中：隐藏分隔线 + 下拉
+- 分时主图指标下拉：另见 [2026-08-01-intraday-main-overlay-design.md](./2026-08-01-intraday-main-overlay-design.md)
 - 默认 `mainOverlayId = "sma"`
 - 日↔周↔月切换保留当前族；分时往返后恢复
 
@@ -74,11 +74,11 @@ STD 采用通达信总体标准差（除以 N）；EMA 采用 α=2/(N+1)。
 1. 注册表含 `sma` + `ma_tactic`；day/week/month 可列，intraday 空  
 2. `sma.buildLines` 与现有 `buildSmaSeries` 数值一致  
 3. `ma_tactic`：上轨 = MA60+2*STD60；红/绿线宽 3/2  
-4. `shouldShowMainOverlaySelect(period)`：K 线 true，分时 false  
+4. `shouldShowMainOverlaySelect(period)`：K 线 true；分时行为见 [2026-08-01-intraday-main-overlay-design.md](./2026-08-01-intraday-main-overlay-design.md)  
 
 ### 手工验收
 
 - 日 K 默认移动均线；可切换「均线战法」见 7 条线  
 - 周 / 月同样可切换  
-- 分时无下拉  
+- 分时主图指标：见 [2026-08-01-intraday-main-overlay-design.md](./2026-08-01-intraday-main-overlay-design.md)  
 
