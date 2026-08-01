@@ -17,21 +17,22 @@ import {
   buildIntradayAvgSeries,
   buildIntradaySessionPlaceholders,
   buildMacdSeries,
-  buildSmaSeries,
   type ChartBar,
-  DAILY_MA_LINES,
   formatDailyCrosshairTime,
   formatIntradayCrosshairTime,
   formatIntradayTickMark,
   MACD_LINE_COLORS,
   toChartBars,
 } from "./format";
+import { getMainOverlay } from "./mainOverlays";
 import type { ChartPeriod, OhlcvBar } from "./types";
 
 export type StockChartProps = {
   period: ChartPeriod;
   bars: OhlcvBar[];
   compact?: boolean;
+  /** 主图指标族；分时可忽略。默认 sma */
+  mainOverlayId?: string;
 };
 
 const INTRADAY_TIME_BASE = 1_000_000;
@@ -150,7 +151,12 @@ function formatHoverPrice(price: number): string {
  * 根据行情周期渲染分时走势或日周月 K 线图。
  * @param props 图表周期、数据与紧凑展示选项
  */
-export function StockChart({ period, bars, compact = false }: StockChartProps) {
+export function StockChart({
+  period,
+  bars,
+  compact = false,
+  mainOverlayId = "sma",
+}: StockChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const auctionBandRef = useRef<HTMLDivElement>(null);
   const auctionLineRef = useRef<HTMLDivElement>(null);
@@ -295,18 +301,18 @@ export function StockChart({ period, bars, compact = false }: StockChartProps) {
         }))
       );
 
-      if (period === "day") {
-        for (const ma of DAILY_MA_LINES) {
-          const points = buildSmaSeries(chartBars, ma.window);
-          if (points.length === 0) continue;
+      if (period === "day" || period === "week" || period === "month") {
+        const overlay = getMainOverlay(mainOverlayId);
+        for (const line of overlay.buildLines(chartBars)) {
+          if (line.points.length === 0) continue;
           const maSeries = chart.addSeries(LineSeries, {
-            color: ma.color,
+            color: line.color,
             lineWidth: 1,
             priceLineVisible: false,
             lastValueVisible: false,
             crosshairMarkerVisible: false,
           });
-          maSeries.setData(points);
+          maSeries.setData(line.points);
         }
       }
 
@@ -390,7 +396,7 @@ export function StockChart({ period, bars, compact = false }: StockChartProps) {
       chart.remove();
       setHoverLabel(null);
     };
-  }, [bars, chartBars, chartHeight, period, showMacd, showVolume]);
+  }, [bars, chartBars, chartHeight, mainOverlayId, period, showMacd, showVolume]);
 
   const heightClass = showMacd
     ? compact
