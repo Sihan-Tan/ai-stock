@@ -7,6 +7,7 @@ import {
   formatAshareSessionLabel,
   formatDailyCrosshairTime,
   formatIntradayCrosshairTime,
+  formatIntradayTickMark,
   summarizeIntradayBars,
   toAshareSessionIndex,
   toChartBars,
@@ -146,6 +147,26 @@ describe("ashare session axis", () => {
     expect(formatIntradayCrosshairTime(1_000_015 as never)).toBe("09:30");
     expect(formatIntradayCrosshairTime(1_000_046 as never)).toBe("10:01");
     expect(formatIntradayCrosshairTime(1_000_135 as never)).toBe("11:30/13:00");
+  });
+
+  it("formats intraday tick marks for key session nodes", () => {
+    expect(formatIntradayTickMark(1_000_000 as never)).toBe("09:15");
+    expect(formatIntradayTickMark(1_000_015 as never)).toBe("09:30");
+    expect(formatIntradayTickMark(1_000_135 as never)).toBe("11:30/13:00");
+    expect(formatIntradayTickMark(1_000_255 as never)).toBe("15:00");
+    expect(formatIntradayTickMark(1_000_046 as never)).toBe("");
+  });
+
+  it("maps slot index via slotSec when formatting labels", () => {
+    const slotSec = 10;
+    // 09:30:00 → slot 90；09:30:10 → slot 91 → 仍显示 09:30 分钟标签
+    expect(formatIntradayCrosshairTime((1_000_000 + 90) as never, slotSec)).toBe("09:30");
+    expect(formatIntradayCrosshairTime((1_000_000 + 91) as never, slotSec)).toBe("09:30");
+    // 10:01:00 = 分钟 index 46 → sessionSecond 2760 → slot 276
+    expect(formatIntradayCrosshairTime((1_000_000 + 276) as never, slotSec)).toBe("10:01");
+    expect(formatIntradayTickMark((1_000_000 + 90) as never, slotSec)).toBe("09:30");
+    expect(formatIntradayTickMark((1_000_000 + 810) as never, slotSec)).toBe("11:30/13:00");
+    expect(formatIntradayTickMark((1_000_000 + 1530) as never, slotSec)).toBe("15:00");
   });
 });
 

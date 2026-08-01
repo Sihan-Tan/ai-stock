@@ -167,22 +167,86 @@ export function chartTimeToSessionIndex(chartTime: Time): number {
 /**
  * 分时图时间轴刻度：仅展示关键节点。
  * @param chartTime 图表时间
+ * @param slotSec 槽宽（秒）；默认 60 保持分钟轴行为
  */
-export function formatIntradayTickMark(chartTime: Time): string {
+export function formatIntradayTickMark(chartTime: Time, slotSec = 60): string {
   const idx = Math.round(chartTimeToSessionIndex(chartTime));
+  const width = Math.max(1, Math.floor(slotSec));
+  if (width === 60) {
+    if (idx === 0) return "09:15";
+    if (idx === ASHARE_CONTINUOUS_START_INDEX) return "09:30";
+    if (idx === ASHARE_AUCTION_SPAN + AM_SPAN) return "11:30/13:00";
+    if (idx === ASHARE_SESSION_LAST_INDEX) return "15:00";
+    return "";
+  }
+  const continuousSlot = Math.floor((ASHARE_CONTINUOUS_START_INDEX * 60) / width);
+  const lunchSlot = Math.floor(((ASHARE_AUCTION_SPAN + AM_SPAN) * 60) / width);
+  const lastSlot = Math.floor((ASHARE_SESSION_LAST_INDEX * 60) / width);
   if (idx === 0) return "09:15";
-  if (idx === ASHARE_CONTINUOUS_START_INDEX) return "09:30";
-  if (idx === ASHARE_AUCTION_SPAN + AM_SPAN) return "11:30/13:00";
-  if (idx === ASHARE_SESSION_LAST_INDEX) return "15:00";
+  if (idx === continuousSlot) return "09:30";
+  if (idx === lunchSlot) return "11:30/13:00";
+  if (idx === lastSlot) return "15:00";
   return "";
 }
 
 /**
  * 分时图十字光标悬浮：展示具体交易时间（HH:mm）。
  * @param chartTime 图表时间
+ * @param slotSec 槽宽（秒）；默认 60 保持分钟轴行为
  */
-export function formatIntradayCrosshairTime(chartTime: Time): string {
-  return formatAshareSessionLabel(chartTimeToSessionIndex(chartTime));
+export function formatIntradayCrosshairTime(chartTime: Time, slotSec = 60): string {
+  const idx = Math.round(chartTimeToSessionIndex(chartTime));
+  const width = Math.max(1, Math.floor(slotSec));
+  if (width === 60) {
+    return formatAshareSessionLabel(idx);
+  }
+  const sessionSecond = idx * width;
+  return formatAshareSessionLabel(Math.floor(sessionSecond / 60));
+}
+
+/**
+ * 读取北京时分秒（来自 Date）。
+ * @param date 时刻
+ */
+export function getBeijingHMS(date: Date = new Date()): {
+  hour: number;
+  minute: number;
+  second: number;
+} {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Shanghai",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).formatToParts(date);
+  const hour = Number(parts.find((p) => p.type === "hour")?.value);
+  const minute = Number(parts.find((p) => p.type === "minute")?.value);
+  const second = Number(parts.find((p) => p.type === "second")?.value);
+  return {
+    hour: Number.isFinite(hour) ? hour : 0,
+    minute: Number.isFinite(minute) ? minute : 0,
+    second: Number.isFinite(second) ? second : 0,
+  };
+}
+
+/**
+ * 将会话分钟序号还原为北京时分。
+ * @param sessionIndex 会话分钟序号
+ */
+export function sessionMinuteIndexToHourMinute(
+  sessionIndex: number
+): { hour: number; minute: number } {
+  const idx = Math.round(sessionIndex);
+  let mins: number;
+  if (idx < ASHARE_CONTINUOUS_START_INDEX) {
+    mins = 9 * 60 + 15 + idx;
+  } else if (idx < ASHARE_AUCTION_SPAN + AM_SPAN) {
+    mins = 9 * 60 + 30 + (idx - ASHARE_AUCTION_SPAN);
+  } else {
+    mins = 13 * 60 + (idx - ASHARE_AUCTION_SPAN - AM_SPAN);
+  }
+  return { hour: Math.floor(mins / 60), minute: mins % 60 };
 }
 
 /**
