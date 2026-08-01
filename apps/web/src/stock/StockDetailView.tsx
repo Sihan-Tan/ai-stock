@@ -19,6 +19,7 @@ import {
   listOverlaysForPeriod,
   shouldShowMainOverlaySelect,
 } from "./mainOverlays";
+import { resolveIndexSymbol } from "./indexSymbol";
 import { sessionDateFromBars, shiftTradingDaysBack } from "./overlayMath";
 import { StockChart } from "./StockChart";
 import type { ChartPeriod, OhlcvBar, PositionContext } from "./types";
@@ -119,7 +120,10 @@ export function StockDetailView({
   const normalizedSymbol = symbol.trim().toUpperCase();
   const [period, setPeriod] = useState<ChartPeriod>("intraday");
   const [mainOverlayId, setMainOverlayId] = useState("none");
-  const [overlayCalcBars, setOverlayCalcBars] = useState<OhlcvBar[]>([]);
+  /** 分时约 5 日个股分钟预热：抄底叠加与资金趋势共用 */
+  const [warmupBars, setWarmupBars] = useState<OhlcvBar[]>([]);
+  /** 分时指数分钟（含预热），供资金趋势大盘侧 */
+  const [indexBars, setIndexBars] = useState<OhlcvBar[]>([]);
   const [positionCollapsed, setPositionCollapsed] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const [notFound, setNotFound] = useState(false);
@@ -150,8 +154,8 @@ export function StockDetailView({
     const overlay = getMainOverlay(mainOverlayId);
     const calcBars =
       period === "intraday"
-        ? overlayCalcBars.length > 0
-          ? overlayCalcBars
+        ? warmupBars.length > 0
+          ? warmupBars
           : bars.data
         : undefined;
     const built = buildMainOverlay(overlay, {
@@ -171,7 +175,7 @@ export function StockDetailView({
     bars.data,
     period,
     mainOverlayId,
-    overlayCalcBars,
+    warmupBars,
     quote.data?.pre_close,
     intradaySessionDate,
   ]);
@@ -250,25 +254,24 @@ export function StockDetailView({
   }, [normalizedSymbol, period, reloadKey]);
 
   useEffect(() => {
-    if (period !== "intraday" || mainOverlayId !== "intraday_dip") {
-      setOverlayCalcBars([]);
+    if (period !== "intraday") {
+      setWarmupBars([]);
       return;
     }
 
     let cancelled = false;
 
     /**
-     * 拉取约 5 个交易日分钟线，供分时抄底 EMA 预热。
-     * toDate 用实际会话日（非交易日回退日），避免与 beijingToday 错位。
+     * 分时始终拉取约 5 个交易日个股分钟，供抄底叠加与资金趋势预热。
+     * toDate 用实际会话日（非交易日 API 会回退），避免与 beijingToday 错位。
      */
     const load = async () => {
       const toDate = intradaySessionDate ?? beijingToday();
-      const fromDate = shiftTradingDaysBack(toDate, 5);
       try {
-        const data = await loadMinuteBarsRange(normalizedSymbol, fromDate, toDate);
-        if (!cancelled) setOverlayCalcBars(data);
+        const data = await loadWarmupMinuteBars(normalizedSymbol, toDate);
+        if (!cancelled) setWarmupBars(data);
       } catch {
-        if (!cancelled) setOverlayCalcBars([]);
+        if (!cancelled) setWarmupBars([]);
       }
     };
 
@@ -276,7 +279,40 @@ export function StockDetailView({
     return () => {
       cancelled = true;
     };
-  }, [normalizedSymbol, period, mainOverlayId, reloadKey, intradaySessionDate]);
+  }, [normalizedSymbol, period, reloadKey, intradaySessionDate]);
+
+  useEffect(() => {
+    if (period !== "intraday") {
+      setIndexBars([]);
+      return;
+    }
+
+    const indexSym = resolveIndexSymbol(normalizedSymbol);
+    if (!indexSym) {
+      setIndexBars([]);
+      return;
+    }
+
+    let cancelled = false;
+
+    /**
+     * 拉取对应大盘指数约 5 日分钟线，供资金趋势副图大盘侧。
+     */
+    const load = async () => {
+      const toDate = intradaySessionDate ?? beijingToday();
+      try {
+        const data = await loadWarmupMinuteBars(indexSym, toDate);
+        if (!cancelled) setIndexBars(data);
+      } catch {
+        if (!cancelled) setIndexBars([]);
+      }
+    };
+
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [normalizedSymbol, period, reloadKey, intradaySessionDate]);
 
   useEffect(() => {
     if (period !== "intraday") return;
@@ -596,11 +632,12 @@ export function StockDetailView({
               mainOverlayId={mainOverlayId}
               overlayCalcBars={
                 period === "intraday"
-                  ? overlayCalcBars.length > 0
-                    ? overlayCalcBars
+                  ? warmupBars.length > 0
+                    ? warmupBars
                     : bars.data ?? []
                   : undefined
               }
+              indexBars={period === "intraday" ? indexBars : undefined}
               preClose={quote.data?.pre_close}
               sessionDate={period === "intraday" ? intradaySessionDate : undefined}
             />
@@ -763,6 +800,16 @@ async function loadMinuteBarsRange(
     to: `${toDate}T15:00:00+08:00`,
   });
   return api<OhlcvBar[]>(`/api/market/bars/minute?${params}`);
+}
+
+/**
+ * 拉取约 5 个交易日分钟线，供分时抄底 / 资金趋势预热。
+ * @param symbol 个股或指数代码
+ * @param toDate 会话结束日 YYYY-MM-DD（北京）
+ */
+async function loadWarmupMinuteBars(symbol: string, toDate: string): Promise<OhlcvBar[]> {
+  const fromDate = shiftTradingDaysBack(toDate, 5);
+  return loadMinuteBarsRange(symbol, fromDate, toDate);
 }
 
 /**
