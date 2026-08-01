@@ -58,6 +58,7 @@ type AppSettings = {
   positions_advice_enabled?: boolean;
   positions_advice_mode?: "llm" | "hybrid";
   positions_advice_source?: "live" | "paper";
+  intraday_poll_interval_sec?: number;
 };
 
 const EMPTY: AppSettings = {
@@ -107,6 +108,7 @@ const EMPTY: AppSettings = {
   positions_advice_enabled: true,
   positions_advice_mode: "llm",
   positions_advice_source: "live",
+  intraday_poll_interval_sec: 10,
 };
 
 /** 设置页模块 Tab */
@@ -301,6 +303,10 @@ export default function Settings({ setLog }: PageLogProps) {
         research_refine_parallel: Math.max(
           1,
           Math.min(4, Math.floor(Number(form.research_refine_parallel) || 2))
+        ),
+        intraday_poll_interval_sec: Math.max(
+          5,
+          Math.min(60, Math.floor(Number(form.intraday_poll_interval_sec) || 10))
         ),
       };
       if (form.llm_api_key && !form.llm_api_key.includes("*")) {
@@ -551,6 +557,30 @@ export default function Settings({ setLog }: PageLogProps) {
                         value={String(form.paper_runner_interval_minutes ?? 30)}
                         onChange={(e) =>
                           patch("paper_runner_interval_minutes", Number(e.target.value) || 30)
+                        }
+                      />
+                    </Field>
+                  </div>
+                </div>
+                <div className="mt-4 space-y-3 rounded-lg border border-[var(--desk-line)] bg-[var(--desk-ink)] p-4">
+                  <div className="text-sm font-medium text-[var(--desk-text)]">分时行情</div>
+                  <p className="text-xs text-[var(--desk-mist)]">
+                    自选/持仓分时槽与报价轮询间隔；保存后立即生效于新轮询周期。
+                  </p>
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <Field label="分时刷新间隔（秒）">
+                      <input
+                        className={inputClass}
+                        type="number"
+                        min={5}
+                        max={60}
+                        inputMode="numeric"
+                        value={String(form.intraday_poll_interval_sec ?? 10)}
+                        onChange={(e) =>
+                          patch(
+                            "intraday_poll_interval_sec",
+                            Math.max(5, Math.min(60, Number(e.target.value) || 10))
+                          )
                         }
                       />
                     </Field>
