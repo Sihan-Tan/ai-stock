@@ -1,4 +1,14 @@
-import { Alert, Button, Card, CardContent, CardHeader, CardTitle, Chip, Spinner } from "@heroui/react";
+import {
+  Alert,
+  Button,
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  Chip,
+  Dropdown,
+  Spinner,
+} from "@heroui/react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { api, beijingToday, formatBeijingTime } from "../api";
 import { summarizeIntradayBars, buildMacdSeries, MACD_LINE_COLORS, toChartBars } from "./format";
@@ -440,18 +450,39 @@ export function StockDetailView({
                     className="mx-1 h-5 w-px shrink-0 bg-[var(--desk-line)]"
                     aria-hidden
                   />
-                  <select
-                    className="rounded-md bg-transparent px-2 py-1.5 text-sm text-[var(--desk-text)] outline-none"
-                    value={mainOverlayId}
-                    aria-label="主图指标"
-                    onChange={(e) => setMainOverlayId(e.target.value)}
-                  >
-                    {listOverlaysForPeriod(period).map((o) => (
-                      <option key={o.id} value={o.id}>
-                        {o.label}
-                      </option>
-                    ))}
-                  </select>
+                  <Dropdown>
+                    <Dropdown.Trigger
+                      className="inline-flex items-center gap-1 rounded-md px-2 py-1.5 text-sm text-[var(--desk-text)] outline-none hover:bg-[var(--desk-panel)]/60"
+                      aria-label="主图指标"
+                    >
+                      {getMainOverlay(mainOverlayId).label}
+                      <span className="text-[var(--desk-mist)]" aria-hidden>
+                        ▾
+                      </span>
+                    </Dropdown.Trigger>
+                    <Dropdown.Popover
+                      placement="bottom start"
+                      className="min-w-[8.5rem] border border-[var(--desk-line)] bg-[var(--desk-panel)] text-[var(--desk-text)] shadow-lg"
+                    >
+                      <Dropdown.Menu
+                        aria-label="主图指标"
+                        selectedKeys={new Set([mainOverlayId])}
+                        selectionMode="single"
+                        onAction={(key) => setMainOverlayId(String(key))}
+                      >
+                        {listOverlaysForPeriod(period).map((o) => (
+                          <Dropdown.Item
+                            key={o.id}
+                            id={o.id}
+                            textValue={o.label}
+                            className="text-[var(--desk-text)] data-[hovered=true]:bg-[var(--desk-ink)] data-[selected=true]:bg-[var(--desk-ink)] data-[selected=true]:text-[var(--desk-accent)]"
+                          >
+                            {o.label}
+                          </Dropdown.Item>
+                        ))}
+                      </Dropdown.Menu>
+                    </Dropdown.Popover>
+                  </Dropdown>
                 </>
               )}
             </div>
