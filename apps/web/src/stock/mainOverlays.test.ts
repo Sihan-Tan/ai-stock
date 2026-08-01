@@ -8,6 +8,7 @@ import {
   buildIntradayDipOverlay,
   buildMainOverlay,
   getMainOverlay,
+  INTRADAY_DIP_SHOW_STRENGTH_BANDS,
 } from "./mainOverlays";
 import {
   buildEmaSeries,
@@ -96,18 +97,21 @@ describe("buildIntradayDipOverlay", () => {
     const support = result.lines.find((l) => l.label === "支撑")!;
     expect(resist.points[resist.points.length - 1].value).toBeCloseTo(11.5, 8);
     expect(support.points[support.points.length - 1].value).toBeCloseTo(8.25, 8);
-    expect(result.sticks.length).toBeGreaterThan(0);
 
-    /** 分时抄底 STICKLINE 仅允许强弱色带与信号色 */
+    /** 分时抄底 STICKLINE：强弱色带受开关控制，信号色始终允许 */
     const dipStickColors = ["#0000FF", "#00FF00", "#EAB308"] as const;
     for (const stick of result.sticks) {
       expect(dipStickColors).toContain(stick.color);
     }
     const strengthSticks = result.sticks.filter((s) => s.color !== "#EAB308");
     const signalSticks = result.sticks.filter((s) => s.color === "#EAB308");
-    expect(strengthSticks.length).toBeGreaterThan(0);
-    for (const stick of strengthSticks) {
-      expect(["#0000FF", "#00FF00"]).toContain(stick.color);
+    if (INTRADAY_DIP_SHOW_STRENGTH_BANDS) {
+      expect(strengthSticks.length).toBeGreaterThan(0);
+      for (const stick of strengthSticks) {
+        expect(["#0000FF", "#00FF00"]).toContain(stick.color);
+      }
+    } else {
+      expect(strengthSticks).toHaveLength(0);
     }
     for (const stick of signalSticks) {
       expect(stick.color).toBe("#EAB308");
@@ -119,6 +123,37 @@ describe("buildIntradayDipOverlay", () => {
       chartBars: [],
     });
     expect(empty).toEqual({ lines: [], sticks: [], markers: [] });
+  });
+
+  it("returns empty when sessionDate mismatches bar dates (non-trading-day bug)", () => {
+    const mk = (ts: string, close: number): OhlcvBar => ({
+      ts,
+      open: close,
+      high: close + 1,
+      low: close - 1,
+      close,
+      volume: 100,
+    });
+    const calc = [
+      mk("2026-07-31T09:31:00+08:00", 10),
+      mk("2026-07-31T09:32:00+08:00", 10.5),
+      mk("2026-07-31T09:33:00+08:00", 11),
+    ];
+    const chartBars = toChartBars(calc, "intraday");
+    const wrong = buildIntradayDipOverlay({
+      chartBars,
+      calcBars: calc,
+      preClose: 10,
+      sessionDate: "2026-08-01", // 周六日历日，数据实为周五
+    });
+    expect(wrong.lines.every((l) => l.points.length === 0)).toBe(true);
+    const ok = buildIntradayDipOverlay({
+      chartBars,
+      calcBars: calc,
+      preClose: 10,
+      sessionDate: "2026-07-31",
+    });
+    expect(ok.lines.some((l) => l.points.length > 0)).toBe(true);
   });
 });
 

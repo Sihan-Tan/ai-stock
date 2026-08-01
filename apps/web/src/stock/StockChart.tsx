@@ -26,11 +26,18 @@ import {
   MACD_LINE_COLORS,
   toChartBars,
 } from "./format";
-import { buildMainOverlay, getMainOverlay } from "./mainOverlays";
+import {
+  buildMainOverlay,
+  getMainOverlay,
+  INTRADAY_DIP_SHOW_STRENGTH_BANDS,
+} from "./mainOverlays";
 import type { ChartPeriod, OhlcvBar } from "./types";
 
-/** 分时色带/信号竖条按颜色拆成最多 3 组 BarSeries。 */
-const INTRADAY_STICK_COLORS = ["#0000FF", "#00FF00", "#EAB308"] as const;
+/** 分时色带/信号竖条按颜色拆组；强弱色带受 {@link INTRADAY_DIP_SHOW_STRENGTH_BANDS} 控制。 */
+const INTRADAY_STICK_COLORS = [
+  ...(INTRADAY_DIP_SHOW_STRENGTH_BANDS ? (["#0000FF", "#00FF00"] as const) : []),
+  "#EAB308",
+] as const;
 
 export type StockChartProps = {
   period: ChartPeriod;
@@ -284,9 +291,12 @@ export function StockChart({
         );
       }
 
+      // 预热线未到时先用当日 bars；sessionDate 须与 bars 实际日期一致（非交易日回退）
+      const calcBars =
+        overlayCalcBars && overlayCalcBars.length > 0 ? overlayCalcBars : bars;
       const built = buildMainOverlay(getMainOverlay(mainOverlayId), {
         chartBars,
-        calcBars: overlayCalcBars,
+        calcBars,
         preClose,
         sessionDate,
       });

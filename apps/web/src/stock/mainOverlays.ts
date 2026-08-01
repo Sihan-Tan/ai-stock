@@ -84,6 +84,12 @@ const DIP = {
 } as const;
 
 /**
+ * 是否展示强弱色带 STICKLINE（MA30↔强弱）。
+ * 暂时关闭以免遮挡分时；改 `true` 即可恢复，勿删下方生成逻辑。
+ */
+export const INTRADAY_DIP_SHOW_STRENGTH_BANDS = false;
+
+/**
  * 是否显示主图指标下拉。
  * @param period 当前周期
  */
@@ -278,12 +284,14 @@ export function buildIntradayDipOverlay(
     resistPoints.push({ time, value: resistance });
     supportPoints.push({ time, value: support });
 
-    sticks.push({
-      time,
-      low: Math.min(ma30, strength),
-      high: Math.max(ma30, strength),
-      color: ma30 > strength ? DIP.bandUp : DIP.bandDown,
-    });
+    if (INTRADAY_DIP_SHOW_STRENGTH_BANDS) {
+      sticks.push({
+        time,
+        low: Math.min(ma30, strength),
+        high: Math.max(ma30, strength),
+        color: ma30 > strength ? DIP.bandUp : DIP.bandDown,
+      });
+    }
 
     closes.push(bar.close);
     supports.push(support);

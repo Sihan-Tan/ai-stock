@@ -5,6 +5,7 @@ import {
   shiftTradingDaysBack,
   beijingDateFromTs,
   filterBarsOnBeijingDate,
+  sessionDateFromBars,
 } from "./overlayMath";
 import type { OhlcvBar } from "./types";
 
@@ -56,5 +57,30 @@ describe("filterBarsOnBeijingDate", () => {
     ];
     expect(filterBarsOnBeijingDate(bars, "2026-07-27")).toHaveLength(1);
     expect(beijingDateFromTs("2026-07-27T15:00:00+08:00")).toBe("2026-07-27");
+  });
+});
+
+describe("sessionDateFromBars", () => {
+  it("uses the last bar Beijing date (not calendar today)", () => {
+    const bars: OhlcvBar[] = [
+      {
+        ts: "2026-07-31T09:31:00+08:00",
+        open: 1,
+        high: 1,
+        low: 1,
+        close: 1,
+        volume: 1,
+      },
+      {
+        ts: "2026-07-31T15:00:00+08:00",
+        open: 2,
+        high: 2,
+        low: 2,
+        close: 2,
+        volume: 1,
+      },
+    ];
+    expect(sessionDateFromBars(bars)).toBe("2026-07-31");
+    expect(sessionDateFromBars([])).toBeUndefined();
   });
 });

@@ -62,6 +62,21 @@ export function filterBarsOnBeijingDate(bars: OhlcvBar[], date: string): OhlcvBa
 }
 
 /**
+ * 从分钟线推断会话日（取最后一根有效 ts 的北京日历日）。
+ * 非交易日接口可能回退到上一交易日数据，故不能用 beijingToday() 当 sessionDate。
+ * @param bars 分钟线
+ */
+export function sessionDateFromBars(bars: OhlcvBar[]): string | undefined {
+  for (let i = bars.length - 1; i >= 0; i -= 1) {
+    const ts = bars[i]?.ts;
+    if (!ts) continue;
+    const day = beijingDateFromTs(ts);
+    if (day) return day;
+  }
+  return undefined;
+}
+
+/**
  * 自 `date` 回推 `n` 个交易日（跳过周六日；不处理法定假日）。
  * @param date YYYY-MM-DD
  * @param n 交易日数

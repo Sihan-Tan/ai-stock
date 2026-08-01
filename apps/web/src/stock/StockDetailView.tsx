@@ -19,7 +19,7 @@ import {
   listOverlaysForPeriod,
   shouldShowMainOverlaySelect,
 } from "./mainOverlays";
-import { shiftTradingDaysBack } from "./overlayMath";
+import { sessionDateFromBars, shiftTradingDaysBack } from "./overlayMath";
 import { StockChart } from "./StockChart";
 import type { ChartPeriod, OhlcvBar, PositionContext } from "./types";
 import { chgToneClass } from "../ui/chgTone";
@@ -137,16 +137,28 @@ export function StockDetailView({
     return summarizeIntradayBars(bars.data);
   }, [bars.data, period]);
 
+  /** 分时会话日：取实际 bars 日期（非交易日 API 会回退到上一交易日）。 */
+  const intradaySessionDate = useMemo(() => {
+    if (period !== "intraday" || !bars.data?.length) return undefined;
+    return sessionDateFromBars(bars.data);
+  }, [bars.data, period]);
+
   const overlayLegend = useMemo(() => {
     if (!shouldShowMainOverlaySelect(period) || !bars.data?.length) return [];
     if (mainOverlayId === "none") return [];
     const chartBars = toChartBars(bars.data, period);
     const overlay = getMainOverlay(mainOverlayId);
+    const calcBars =
+      period === "intraday"
+        ? overlayCalcBars.length > 0
+          ? overlayCalcBars
+          : bars.data
+        : undefined;
     const built = buildMainOverlay(overlay, {
       chartBars,
-      calcBars: period === "intraday" ? overlayCalcBars : undefined,
+      calcBars,
       preClose: quote.data?.pre_close,
-      sessionDate: period === "intraday" ? beijingToday() : undefined,
+      sessionDate: period === "intraday" ? intradaySessionDate : undefined,
     });
     return built.lines
       .filter((line) => line.points.length > 0)
@@ -155,7 +167,14 @@ export function StockDetailView({
         color: line.color,
         value: line.points[line.points.length - 1]!.value,
       }));
-  }, [bars.data, period, mainOverlayId, overlayCalcBars, quote.data?.pre_close]);
+  }, [
+    bars.data,
+    period,
+    mainOverlayId,
+    overlayCalcBars,
+    quote.data?.pre_close,
+    intradaySessionDate,
+  ]);
 
   const dailyMacdLatest = useMemo(() => {
     if ((period !== "day" && period !== "intraday") || !bars.data?.length) return null;
@@ -240,9 +259,10 @@ export function StockDetailView({
 
     /**
      * 拉取约 5 个交易日分钟线，供分时抄底 EMA 预热。
+     * toDate 用实际会话日（非交易日回退日），避免与 beijingToday 错位。
      */
     const load = async () => {
-      const toDate = beijingToday();
+      const toDate = intradaySessionDate ?? beijingToday();
       const fromDate = shiftTradingDaysBack(toDate, 5);
       try {
         const data = await loadMinuteBarsRange(normalizedSymbol, fromDate, toDate);
@@ -256,7 +276,7 @@ export function StockDetailView({
     return () => {
       cancelled = true;
     };
-  }, [normalizedSymbol, period, mainOverlayId, reloadKey]);
+  }, [normalizedSymbol, period, mainOverlayId, reloadKey, intradaySessionDate]);
 
   useEffect(() => {
     if (period !== "intraday") return;
@@ -574,9 +594,15 @@ export function StockDetailView({
               bars={bars.data ?? []}
               compact={compact}
               mainOverlayId={mainOverlayId}
-              overlayCalcBars={period === "intraday" ? overlayCalcBars : undefined}
+              overlayCalcBars={
+                period === "intraday"
+                  ? overlayCalcBars.length > 0
+                    ? overlayCalcBars
+                    : bars.data ?? []
+                  : undefined
+              }
               preClose={quote.data?.pre_close}
-              sessionDate={period === "intraday" ? beijingToday() : undefined}
+              sessionDate={period === "intraday" ? intradaySessionDate : undefined}
             />
           )}
         </CardContent>
