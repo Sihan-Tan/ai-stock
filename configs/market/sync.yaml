@@ -12,7 +12,7 @@ jobs:
   sync_lhb_daily: { cron: "0 18 * * 1-5" }
   # 晨会：开盘前综述 + 竞价快照/选拔（北京时间）
   run_morning_preopen: { cron: "20 8 * * 1-5" }
-  ingest_auction_snapshots: { cron: "26 9 * * 1-5" }
-  run_morning_post_auction: { cron: "28 9 * * 1-5" }
+  ingest_auction_snapshots: { cron: "25 9 * * 1-5" }
+  run_morning_post_auction: { cron: "26 9 * * 1-5" }
   run_closing_pick: { cron: "40 14 * * 1-5" }
   purge_with_minute: true
