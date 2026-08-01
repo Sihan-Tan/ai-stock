@@ -1,8 +1,9 @@
 /**
  * 分时「资金趋势」副图：通达信公式（T=1）纯函数计算。
  */
-import type { Time } from "lightweight-charts";
-import { getBeijingHourMinute, toIntradayChartTime } from "./format";
+import type { Time, UTCTimestamp } from "lightweight-charts";
+import { getBeijingHourMinute, getBeijingHMS, toIntradayChartTime } from "./format";
+import { INTRADAY_TIME_BASE, toAshareSessionSlot } from "./intradaySlots";
 import { beijingDateFromTs } from "./overlayMath";
 import { filterSignal, hhv, llv, refAt, smaTdx } from "./tdxMath";
 import type { OhlcvBar } from "./types";
@@ -64,7 +65,27 @@ export type FundFlowBuildInput = {
   indexBars: OhlcvBar[];
   /** 当天 YYYY-MM-DD */
   sessionDate: string;
+  /** 槽宽（秒）；传入时当日上图时间按槽轴对齐 */
+  slotSec?: number;
 };
+
+/**
+ * 将 bar ts 映射为分时图时间（分钟轴或槽轴）。
+ * @param ts ISO 时间
+ * @param slotSec 可选槽宽
+ */
+function toFundFlowChartTime(ts: string | undefined, slotSec?: number): UTCTimestamp | null {
+  if (!ts) return null;
+  if (slotSec == null) {
+    return toIntradayChartTime(ts);
+  }
+  const ms = Date.parse(ts);
+  if (Number.isNaN(ms)) return null;
+  const { hour, minute, second } = getBeijingHMS(new Date(ms));
+  const slot = toAshareSessionSlot(hour, minute, second, slotSec);
+  if (slot == null) return null;
+  return (INTRADAY_TIME_BASE + slot) as UTCTimestamp;
+}
 
 /**
  * 对数值序列做 EMA，α=2/(n+1)，与 buildEmaSeries 一致。
@@ -219,7 +240,7 @@ export function buildIntradayFundFlow(
     const bar = stockBars[i]!;
     const day = beijingDateFromTs(bar.ts!);
     if (day !== sessionDate) continue;
-    const time = toIntradayChartTime(bar.ts);
+    const time = toFundFlowChartTime(bar.ts, input.slotSec);
     if (time == null) continue;
 
     const t = trend[i]!;

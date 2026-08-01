@@ -14,10 +14,7 @@ import {
 } from "lightweight-charts";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  ASHARE_CONTINUOUS_START_INDEX,
-  ASHARE_SESSION_LAST_INDEX,
   buildIntradayAvgSeries,
-  buildIntradaySessionPlaceholders,
   buildMacdSeries,
   type ChartBar,
   formatDailyCrosshairTime,
@@ -27,6 +24,13 @@ import {
   toChartBars,
 } from "./format";
 import { buildIntradayFundFlow } from "./intradayFundFlow";
+import {
+  ashareContinuousStartSlot,
+  ashareSessionLastSlot,
+  buildIntradaySlotPlaceholders,
+  INTRADAY_TIME_BASE,
+  mapMinuteBarsToSlots,
+} from "./intradaySlots";
 import {
   buildMainOverlay,
   getMainOverlay,
@@ -46,8 +50,14 @@ export type StockChartProps = {
   compact?: boolean;
   /** 主图指标族 id；日线默认 sma，分时默认由调用方传入（如 none / intraday_dip） */
   mainOverlayId?: string;
+  /** 分时槽宽（秒）；默认 60 兼容旧分钟轴 */
+  slotSec?: number;
+  /** 父组件已合并的分时槽序列（分钟映射 + 报价补点）；优先于内部 map */
+  intradayChartBars?: ChartBar[];
   /** 分时叠加计算用的原始分钟线（可含预热日）；仅 period=intraday 时使用 */
   overlayCalcBars?: OhlcvBar[];
+  /** 资金趋势用个股序列（预热非当日 + 当日槽伪 OHLCV）；缺省回退 overlayCalcBars/bars */
+  fundStockBars?: OhlcvBar[];
   /** 昨收价；分时抄底等指标的基准价 */
   preClose?: number | null;
   /** 当天会话日期 YYYY-MM-DD（北京）；用于从 calcBars 截取当日 */
@@ -56,7 +66,20 @@ export type StockChartProps = {
   indexBars?: OhlcvBar[];
 };
 
-const INTRADAY_TIME_BASE = 1_000_000;
+/**
+ * 将分钟轴伪时间重映射到槽轴伪时间。
+ * @param time 分钟轴时间
+ * @param slotSec 槽宽
+ */
+function remapMinuteChartTimeToSlot(time: Time, slotSec: number): UTCTimestamp {
+  const width = Math.max(1, Math.floor(slotSec));
+  if (width === 60) {
+    return time as UTCTimestamp;
+  }
+  const minuteIndex = Number(time) - INTRADAY_TIME_BASE;
+  const slotIndex = Math.floor((minuteIndex * 60) / width);
+  return (INTRADAY_TIME_BASE + slotIndex) as UTCTimestamp;
+}
 
 type HoverPriceLabel = {
   x: number;
@@ -156,12 +179,14 @@ function addMacdPane(chart: IChartApi, chartBars: ChartBar[], withFundFlow = fal
  * @param stockBars 个股分钟线（可含预热）
  * @param indexBars 指数分钟线（可含预热；可空）
  * @param sessionDate 当天 YYYY-MM-DD（北京）；缺省则不绘制
+ * @param slotSec 槽宽（秒）
  */
 function addFundFlowPane(
   chart: IChartApi,
   stockBars: OhlcvBar[],
   indexBars: OhlcvBar[] | undefined,
-  sessionDate: string | undefined
+  sessionDate: string | undefined,
+  slotSec?: number
 ): void {
   if (!sessionDate) {
     return;
@@ -171,6 +196,7 @@ function addFundFlowPane(
     stockBars,
     indexBars: indexBars ?? [],
     sessionDate,
+    slotSec,
   });
 
   const histByColor = new Map<string, Array<{ time: Time; value: number; color: string }>>();
@@ -290,7 +316,10 @@ export function StockChart({
   bars,
   compact = false,
   mainOverlayId = "sma",
+  slotSec = 60,
+  intradayChartBars,
   overlayCalcBars,
+  fundStockBars,
   preClose,
   sessionDate,
   indexBars,
@@ -299,7 +328,18 @@ export function StockChart({
   const auctionBandRef = useRef<HTMLDivElement>(null);
   const auctionLineRef = useRef<HTMLDivElement>(null);
   const [hoverLabel, setHoverLabel] = useState<HoverPriceLabel | null>(null);
-  const chartBars = useMemo(() => toChartBars(bars, period), [bars, period]);
+  const resolvedSlotSec = Math.max(1, Math.floor(slotSec));
+  const continuousStartSlot = ashareContinuousStartSlot(resolvedSlotSec);
+  const sessionLastSlot = ashareSessionLastSlot(resolvedSlotSec);
+  const chartBars = useMemo(() => {
+    if (period !== "intraday") {
+      return toChartBars(bars, period);
+    }
+    if (intradayChartBars && intradayChartBars.length > 0) {
+      return intradayChartBars;
+    }
+    return mapMinuteBarsToSlots(bars, resolvedSlotSec);
+  }, [bars, period, intradayChartBars, resolvedSlotSec]);
   const showVolume =
     period === "intraday" || period === "day" || period === "week" || period === "month";
   const showMacd = period === "intraday" || period === "day";
@@ -362,7 +402,7 @@ export function StockChart({
       localization: {
         timeFormatter:
           period === "intraday"
-            ? (time: Time) => formatIntradayCrosshairTime(time)
+            ? (time: Time) => formatIntradayCrosshairTime(time, resolvedSlotSec)
             : period === "day"
               ? (time: Time) => formatDailyCrosshairTime(time)
               : undefined,
@@ -372,7 +412,9 @@ export function StockChart({
         timeVisible: period === "intraday",
         secondsVisible: false,
         tickMarkFormatter:
-          period === "intraday" ? (time: Time) => formatIntradayTickMark(time) : undefined,
+          period === "intraday"
+            ? (time: Time) => formatIntradayTickMark(time, resolvedSlotSec)
+            : undefined,
       },
     });
 
@@ -388,8 +430,8 @@ export function StockChart({
       });
       mainSeries = series;
 
-      // 先铺全天占位，保证 09:15 / 09:30 / 11:30·13:00 / 15:00 刻度一定落在轴上
-      const placeholders = buildIntradaySessionPlaceholders();
+      // 先铺全天槽占位，保证关键时刻刻度落在轴上
+      const placeholders = buildIntradaySlotPlaceholders(resolvedSlotSec);
       const valueByTime = new Map(chartBars.map((bar) => [Number(bar.time), bar.value]));
       series.setData(
         placeholders.map((point) => {
@@ -407,7 +449,10 @@ export function StockChart({
           lastValueVisible: false,
           crosshairMarkerVisible: false,
         });
-        const avgByTime = new Map(avgPoints.map((p) => [Number(p.time), p.value]));
+        const avgByTime = new Map<number, number>();
+        for (const point of avgPoints) {
+          avgByTime.set(Number(remapMinuteChartTimeToSlot(point.time, resolvedSlotSec)), point.value);
+        }
         avgSeries.setData(
           placeholders.map((point) => {
             const value = avgByTime.get(Number(point.time));
@@ -430,6 +475,13 @@ export function StockChart({
         built.markers.length > 0 ||
         built.lines.some((line) => line.points.length > 0);
 
+      /**
+       * 抄底叠加仍按分钟 ts 出点；槽宽≠60 时把坐标重映射到槽轴，避免与主图错位。
+       * @param time 叠加原始时间
+       */
+      const mapOverlayTime = (time: Time): Time =>
+        remapMinuteChartTimeToSlot(time, resolvedSlotSec);
+
       if (hasOverlay) {
         for (const color of INTRADAY_STICK_COLORS) {
           const sticks = built.sticks.filter((stick) => stick.color === color);
@@ -444,7 +496,7 @@ export function StockChart({
           });
           stickSeries.setData(
             sticks.map((stick) => ({
-              time: stick.time,
+              time: mapOverlayTime(stick.time),
               open: stick.low,
               high: stick.high,
               low: stick.low,
@@ -462,7 +514,12 @@ export function StockChart({
             lastValueVisible: false,
             crosshairMarkerVisible: false,
           });
-          overlaySeries.setData(line.points);
+          overlaySeries.setData(
+            line.points.map((point) => ({
+              time: mapOverlayTime(point.time),
+              value: point.value,
+            }))
+          );
         }
 
         if (built.markers.length > 0) {
@@ -471,7 +528,7 @@ export function StockChart({
             [...built.markers]
               .sort((a, b) => Number(a.time) - Number(b.time))
               .map((marker) => ({
-                time: marker.time,
+                time: mapOverlayTime(marker.time),
                 position: "atPriceMiddle" as const,
                 shape: "circle" as const,
                 color: marker.color,
@@ -491,13 +548,17 @@ export function StockChart({
       }
       if (withFundFlow) {
         const stockForFund =
-          overlayCalcBars && overlayCalcBars.length > 0 ? overlayCalcBars : bars;
-        addFundFlowPane(chart, stockForFund, indexBars, sessionDate);
+          fundStockBars && fundStockBars.length > 0
+            ? fundStockBars
+            : overlayCalcBars && overlayCalcBars.length > 0
+              ? overlayCalcBars
+              : bars;
+        addFundFlowPane(chart, stockForFund, indexBars, sessionDate, resolvedSlotSec);
       }
 
       chart.timeScale().setVisibleRange({
         from: (INTRADAY_TIME_BASE + 0) as UTCTimestamp,
-        to: (INTRADAY_TIME_BASE + ASHARE_SESSION_LAST_INDEX) as UTCTimestamp,
+        to: (INTRADAY_TIME_BASE + sessionLastSlot) as UTCTimestamp,
       });
     } else {
       const series = chart.addSeries(CandlestickSeries, {
@@ -552,7 +613,7 @@ export function StockChart({
       const x0 = chart.timeScale().timeToCoordinate((INTRADAY_TIME_BASE + 0) as Time);
       const x1 = chart
         .timeScale()
-        .timeToCoordinate((INTRADAY_TIME_BASE + ASHARE_CONTINUOUS_START_INDEX) as Time);
+        .timeToCoordinate((INTRADAY_TIME_BASE + continuousStartSlot) as Time);
 
       if (auctionBandRef.current) {
         auctionBandRef.current.style.display = x0 == null || x1 == null ? "none" : "block";
@@ -618,12 +679,16 @@ export function StockChart({
     bars,
     chartBars,
     chartHeight,
+    continuousStartSlot,
+    fundStockBars,
     indexBars,
     mainOverlayId,
     overlayCalcBars,
     period,
     preClose,
+    resolvedSlotSec,
     sessionDate,
+    sessionLastSlot,
     showMacd,
     showVolume,
     withFundFlow,
