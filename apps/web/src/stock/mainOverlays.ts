@@ -1,15 +1,17 @@
 /**
  * 主图叠加指标族注册表。
  */
-import type { Time } from "lightweight-charts";
+import type { Time, UTCTimestamp } from "lightweight-charts";
 import {
   buildEmaSeries,
   buildSmaSeries,
   buildStdSeries,
   DAILY_MA_LINES,
+  toIntradayChartTime,
   type ChartBar,
 } from "./format";
-import type { ChartPeriod } from "./types";
+import { beijingDateFromTs, crossUp, longCrossUp } from "./overlayMath";
+import type { ChartPeriod, OhlcvBar } from "./types";
 
 /** 一条主图叠加线。 */
 export type MainOverlayLine = {
@@ -20,23 +22,88 @@ export type MainOverlayLine = {
   points: Array<{ time: Time; value: number }>;
 };
 
+/** STICKLINE 竖条（low→high）。 */
+export type MainOverlayStick = {
+  time: Time;
+  low: number;
+  high: number;
+  color: string;
+};
+
+/** 信号文字标记。 */
+export type MainOverlayMarker = {
+  time: Time;
+  price: number;
+  text: string;
+  color: string;
+};
+
+/** 一族完整叠加产出。 */
+export type MainOverlayBuildResult = {
+  lines: MainOverlayLine[];
+  sticks: MainOverlayStick[];
+  markers: MainOverlayMarker[];
+};
+
+/** 构建上下文。 */
+export type MainOverlayBuildContext = {
+  /** 当天会话轴 ChartBar（图上已有） */
+  chartBars: ChartBar[];
+  /** 含预热的原始分钟线（按 ts）；分时指标用 */
+  calcBars?: OhlcvBar[];
+  /** 昨收 */
+  preClose?: number | null;
+  /** 当天 YYYY-MM-DD（北京） */
+  sessionDate?: string;
+};
+
 /** 主图指标族。 */
 export type MainOverlayDef = {
   id: string;
   label: string;
   periods: readonly ChartPeriod[];
+  /** 兼容旧调用：仅线 */
   buildLines: (chartBars: ChartBar[]) => MainOverlayLine[];
+  /** 完整产出；缺省则包一层 buildLines */
+  build?: (ctx: MainOverlayBuildContext) => MainOverlayBuildResult;
 };
 
 /** 日/周/月可见。 */
 const KLINE_PERIODS = ["day", "week", "month"] as const;
+
+/** 分时抄底配色（通达信色近似）。 */
+const DIP = {
+  ma30: "#60a5fa",
+  strength: "#a78bfa",
+  bandUp: "#0000FF",
+  bandDown: "#00FF00",
+  level: "#00DD00",
+  signalStick: "#EAB308",
+  starB: "#EAB308",
+  star: "#EF4444",
+} as const;
 
 /**
  * 是否显示主图指标下拉。
  * @param period 当前周期
  */
 export function shouldShowMainOverlaySelect(period: ChartPeriod): boolean {
-  return (KLINE_PERIODS as readonly string[]).includes(period);
+  return (
+    (KLINE_PERIODS as readonly string[]).includes(period) || period === "intraday"
+  );
+}
+
+/**
+ * 统一调用 build / buildLines。
+ * @param def 族定义
+ * @param ctx 上下文
+ */
+export function buildMainOverlay(
+  def: MainOverlayDef,
+  ctx: MainOverlayBuildContext
+): MainOverlayBuildResult {
+  if (def.build) return def.build(ctx);
+  return { lines: def.buildLines(ctx.chartBars), sticks: [], markers: [] };
 }
 
 /**
@@ -127,6 +194,142 @@ export function buildMaTacticOverlayLines(chartBars: ChartBar[]): MainOverlayLin
   ];
 }
 
+/**
+ * 将多日分钟线转为临时 ChartBar（唯一顺序时间），供 EMA 预热计算。
+ * 禁止对多日 calcBars 使用 toChartBars(..., "intraday")，会话轴会撞车。
+ * @param bars 含 ts 的分钟线
+ */
+function toSequentialCalcChartBars(bars: OhlcvBar[]): ChartBar[] {
+  return bars.map((bar, i) => ({
+    time: (i + 1) as UTCTimestamp,
+    open: bar.open,
+    high: bar.high,
+    low: bar.low,
+    close: bar.close,
+    value: bar.close,
+    volume: Number(bar.volume ?? 0),
+  }));
+}
+
+/**
+ * 通达信「分时抄底」：EMA30/强弱色带、支撑阻力、交叉信号。
+ * 不产出「现价」线（沿用分时面积线）。
+ * @param ctx 构建上下文（需 calcBars + sessionDate）
+ */
+export function buildIntradayDipOverlay(
+  ctx: MainOverlayBuildContext
+): MainOverlayBuildResult {
+  const sessionDate = ctx.sessionDate;
+  const calcBars = ctx.calcBars ?? [];
+  if (!sessionDate || calcBars.length === 0) {
+    return { lines: [], sticks: [], markers: [] };
+  }
+
+  const sorted = [...calcBars]
+    .filter((b) => b.ts != null)
+    .sort((a, b) => Date.parse(a.ts!) - Date.parse(b.ts!));
+
+  if (sorted.length === 0) {
+    return { lines: [], sticks: [], markers: [] };
+  }
+
+  const tempBars = toSequentialCalcChartBars(sorted);
+  const ema30All = buildEmaSeries(tempBars, 30);
+  const ema900All = buildEmaSeries(tempBars, 900);
+
+  const ma30Points: Array<{ time: Time; value: number }> = [];
+  const strengthPoints: Array<{ time: Time; value: number }> = [];
+  const resistPoints: Array<{ time: Time; value: number }> = [];
+  const supportPoints: Array<{ time: Time; value: number }> = [];
+  const sticks: MainOverlayStick[] = [];
+  const markers: MainOverlayMarker[] = [];
+
+  const closes: number[] = [];
+  const supports: number[] = [];
+  const resists: number[] = [];
+  const times: Time[] = [];
+
+  let runHigh = ctx.preClose ?? Number.NEGATIVE_INFINITY;
+  let runLow = ctx.preClose ?? Number.POSITIVE_INFINITY;
+
+  for (let i = 0; i < sorted.length; i += 1) {
+    const bar = sorted[i];
+    if (beijingDateFromTs(bar.ts!) !== sessionDate) continue;
+
+    const time = toIntradayChartTime(bar.ts);
+    if (time == null) continue;
+
+    runHigh = Math.max(runHigh, bar.high);
+    runLow = Math.min(runLow, bar.low);
+    const p1 = runHigh - runLow;
+    const resistance = runLow + (p1 * 7) / 8;
+    const support = runLow + (p1 * 0.5) / 8;
+
+    const ma30 = ema30All[i]!.value;
+    const strength = ema900All[i]!.value;
+
+    ma30Points.push({ time, value: ma30 });
+    strengthPoints.push({ time, value: strength });
+    resistPoints.push({ time, value: resistance });
+    supportPoints.push({ time, value: support });
+
+    sticks.push({
+      time,
+      low: Math.min(ma30, strength),
+      high: Math.max(ma30, strength),
+      color: ma30 > strength ? DIP.bandUp : DIP.bandDown,
+    });
+
+    closes.push(bar.close);
+    supports.push(support);
+    resists.push(resistance);
+    times.push(time);
+  }
+
+  for (let j = 0; j < closes.length; j += 1) {
+    if (crossUp(supports, closes, j)) {
+      sticks.push({
+        time: times[j]!,
+        low: Math.min(supports[j]!, resists[j]!),
+        high: Math.max(supports[j]!, resists[j]!),
+        color: DIP.signalStick,
+      });
+    }
+    if (longCrossUp(supports, closes, j, 2)) {
+      markers.push({
+        time: times[j]!,
+        price: supports[j]! * 1.001,
+        text: "★B",
+        color: DIP.starB,
+      });
+    }
+    if (longCrossUp(closes, resists, j, 2)) {
+      markers.push({
+        time: times[j]!,
+        price: closes[j]!,
+        text: "★",
+        color: DIP.star,
+      });
+    }
+  }
+
+  return {
+    lines: [
+      { label: "MA30", color: DIP.ma30, points: ma30Points },
+      { label: "强弱", color: DIP.strength, points: strengthPoints },
+      { label: "阻力", color: DIP.level, points: resistPoints },
+      { label: "支撑", color: DIP.level, points: supportPoints },
+    ],
+    sticks,
+    markers,
+  };
+}
+
+/** 空叠加（分时默认「无」）。 */
+function buildEmptyOverlay(): MainOverlayBuildResult {
+  return { lines: [], sticks: [], markers: [] };
+}
+
 /** 全部主图族。 */
 export const MAIN_OVERLAYS: readonly MainOverlayDef[] = [
   {
@@ -140,6 +343,20 @@ export const MAIN_OVERLAYS: readonly MainOverlayDef[] = [
     label: "均线战法",
     periods: KLINE_PERIODS,
     buildLines: buildMaTacticOverlayLines,
+  },
+  {
+    id: "none",
+    label: "无",
+    periods: ["intraday"],
+    buildLines: () => [],
+    build: () => buildEmptyOverlay(),
+  },
+  {
+    id: "intraday_dip",
+    label: "分时抄底",
+    periods: ["intraday"],
+    buildLines: (chartBars) => buildIntradayDipOverlay({ chartBars }).lines,
+    build: buildIntradayDipOverlay,
   },
 ] as const;
 
