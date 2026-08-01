@@ -26,6 +26,7 @@ import {
   MACD_LINE_COLORS,
   toChartBars,
 } from "./format";
+import { buildIntradayFundFlow } from "./intradayFundFlow";
 import {
   buildMainOverlay,
   getMainOverlay,
@@ -51,6 +52,8 @@ export type StockChartProps = {
   preClose?: number | null;
   /** 当天会话日期 YYYY-MM-DD（北京）；用于从 calcBars 截取当日 */
   sessionDate?: string;
+  /** 指数分钟线（含预热）；分时资金趋势副图用 */
+  indexBars?: OhlcvBar[];
 };
 
 const INTRADAY_TIME_BASE = 1_000_000;
@@ -66,8 +69,14 @@ type HoverPriceLabel = {
  * @param chart 图表实例
  * @param chartBars K 线数据
  * @param withMacd 下方是否还要留 MACD 区域
+ * @param withFundFlow 下方是否还要留资金趋势区域（分时四 pane）
  */
-function addVolumePane(chart: IChartApi, chartBars: ChartBar[], withMacd: boolean): void {
+function addVolumePane(
+  chart: IChartApi,
+  chartBars: ChartBar[],
+  withMacd: boolean,
+  withFundFlow = false
+): void {
   const volumeSeries = chart.addSeries(HistogramSeries, {
     priceFormat: { type: "volume" },
     priceScaleId: "volume",
@@ -75,7 +84,11 @@ function addVolumePane(chart: IChartApi, chartBars: ChartBar[], withMacd: boolea
     priceLineVisible: false,
   });
   volumeSeries.priceScale().applyOptions({
-    scaleMargins: withMacd ? { top: 0.58, bottom: 0.24 } : { top: 0.78, bottom: 0 },
+    scaleMargins: withFundFlow
+      ? { top: 0.52, bottom: 0.38 }
+      : withMacd
+        ? { top: 0.58, bottom: 0.24 }
+        : { top: 0.78, bottom: 0 },
     borderVisible: false,
   });
   volumeSeries.setData(
@@ -91,8 +104,9 @@ function addVolumePane(chart: IChartApi, chartBars: ChartBar[], withMacd: boolea
  * 在副图区域叠加 MACD（柱 + DIF + DEA）。
  * @param chart 图表实例
  * @param chartBars K 线数据
+ * @param withFundFlow 下方是否还要留资金趋势区域（分时四 pane）
  */
-function addMacdPane(chart: IChartApi, chartBars: ChartBar[]): void {
+function addMacdPane(chart: IChartApi, chartBars: ChartBar[], withFundFlow = false): void {
   const macdPoints = buildMacdSeries(chartBars);
   if (macdPoints.length === 0) {
     return;
@@ -104,7 +118,7 @@ function addMacdPane(chart: IChartApi, chartBars: ChartBar[]): void {
     priceLineVisible: false,
   });
   histSeries.priceScale().applyOptions({
-    scaleMargins: { top: 0.8, bottom: 0 },
+    scaleMargins: withFundFlow ? { top: 0.66, bottom: 0.22 } : { top: 0.8, bottom: 0 },
     borderVisible: false,
   });
   histSeries.setData(
@@ -134,6 +148,108 @@ function addMacdPane(chart: IChartApi, chartBars: ChartBar[]): void {
     crosshairMarkerVisible: false,
   });
   deaSeries.setData(macdPoints.map((point) => ({ time: point.time, value: point.dea })));
+}
+
+/**
+ * 在副图区域叠加分时「资金趋势」（柱 + 趋势线 + 信号竖条/标记）。
+ * @param chart 图表实例
+ * @param stockBars 个股分钟线（可含预热）
+ * @param indexBars 指数分钟线（可含预热；可空）
+ * @param sessionDate 当天 YYYY-MM-DD（北京）；缺省则不绘制
+ */
+function addFundFlowPane(
+  chart: IChartApi,
+  stockBars: OhlcvBar[],
+  indexBars: OhlcvBar[] | undefined,
+  sessionDate: string | undefined
+): void {
+  if (!sessionDate) {
+    return;
+  }
+
+  const built = buildIntradayFundFlow({
+    stockBars,
+    indexBars: indexBars ?? [],
+    sessionDate,
+  });
+
+  const histByColor = new Map<string, Array<{ time: Time; value: number; color: string }>>();
+  for (const hist of built.hists) {
+    const group = histByColor.get(hist.color) ?? [];
+    group.push({ time: hist.time, value: hist.value, color: hist.color });
+    histByColor.set(hist.color, group);
+  }
+  for (const [color, points] of histByColor) {
+    const histSeries = chart.addSeries(HistogramSeries, {
+      priceScaleId: "fund",
+      lastValueVisible: false,
+      priceLineVisible: false,
+      color,
+    });
+    histSeries.priceScale().applyOptions({
+      scaleMargins: { top: 0.82, bottom: 0 },
+      borderVisible: false,
+    });
+    histSeries.setData(points);
+  }
+
+  const trendLine = built.lines.find((line) => line.label === "趋势线") ?? built.lines[0];
+  const trendSeries = chart.addSeries(LineSeries, {
+    color: trendLine?.color ?? "#F8FAFC",
+    lineWidth: 1,
+    priceScaleId: "fund",
+    lastValueVisible: false,
+    priceLineVisible: false,
+    crosshairMarkerVisible: false,
+  });
+  trendSeries.priceScale().applyOptions({
+    scaleMargins: { top: 0.82, bottom: 0 },
+    borderVisible: false,
+  });
+  if (trendLine && trendLine.points.length > 0) {
+    trendSeries.setData(trendLine.points);
+  }
+
+  const stickColors = [...new Set(built.sticks.map((stick) => stick.color))];
+  for (const color of stickColors) {
+    const sticks = built.sticks.filter((stick) => stick.color === color);
+    if (sticks.length === 0) continue;
+    const stickSeries = chart.addSeries(BarSeries, {
+      upColor: color,
+      downColor: color,
+      thinBars: true,
+      openVisible: false,
+      lastValueVisible: false,
+      priceLineVisible: false,
+      priceScaleId: "fund",
+    });
+    stickSeries.setData(
+      sticks.map((stick) => ({
+        time: stick.time,
+        open: stick.low,
+        high: stick.high,
+        low: stick.low,
+        close: stick.high,
+      }))
+    );
+  }
+
+  if (built.markers.length > 0) {
+    createSeriesMarkers(
+      trendSeries,
+      [...built.markers]
+        .sort((a, b) => Number(a.time) - Number(b.time))
+        .map((marker) => ({
+          time: marker.time,
+          position: "atPriceMiddle" as const,
+          shape: "circle" as const,
+          color: marker.color,
+          text: marker.text,
+          price: marker.price,
+          size: 0.5,
+        }))
+    );
+  }
 }
 
 /**
@@ -177,6 +293,7 @@ export function StockChart({
   overlayCalcBars,
   preClose,
   sessionDate,
+  indexBars,
 }: StockChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const auctionBandRef = useRef<HTMLDivElement>(null);
@@ -186,17 +303,23 @@ export function StockChart({
   const showVolume =
     period === "intraday" || period === "day" || period === "week" || period === "month";
   const showMacd = period === "intraday" || period === "day";
-  const chartHeight = showMacd
+  /** 分时 + MACD 时常驻资金趋势第四 pane */
+  const withFundFlow = period === "intraday" && showMacd;
+  const chartHeight = withFundFlow
     ? compact
-      ? 300
-      : 400
-    : showVolume
+      ? 360
+      : 480
+    : showMacd
       ? compact
-        ? 240
-        : 320
-      : compact
-        ? 192
-        : 256;
+        ? 300
+        : 400
+      : showVolume
+        ? compact
+          ? 240
+          : 320
+        : compact
+          ? 192
+          : 256;
 
   useEffect(() => {
     const container = containerRef.current;
@@ -219,11 +342,13 @@ export function StockChart({
       },
       rightPriceScale: {
         borderColor: "#ffffff",
-        scaleMargins: showMacd
-          ? { top: 0.06, bottom: 0.46 }
-          : showVolume
-            ? { top: 0.08, bottom: 0.28 }
-            : { top: 0.1, bottom: 0.1 },
+        scaleMargins: withFundFlow
+          ? { top: 0.04, bottom: 0.52 }
+          : showMacd
+            ? { top: 0.06, bottom: 0.46 }
+            : showVolume
+              ? { top: 0.08, bottom: 0.28 }
+              : { top: 0.1, bottom: 0.1 },
       },
       crosshair: {
         // 价格改由主图线旁浮层展示，不再贴右侧坐标轴
@@ -359,10 +484,15 @@ export function StockChart({
       }
 
       if (showVolume) {
-        addVolumePane(chart, chartBars, showMacd);
+        addVolumePane(chart, chartBars, showMacd, withFundFlow);
       }
       if (showMacd) {
-        addMacdPane(chart, chartBars);
+        addMacdPane(chart, chartBars, withFundFlow);
+      }
+      if (withFundFlow) {
+        const stockForFund =
+          overlayCalcBars && overlayCalcBars.length > 0 ? overlayCalcBars : bars;
+        addFundFlowPane(chart, stockForFund, indexBars, sessionDate);
       }
 
       chart.timeScale().setVisibleRange({
@@ -488,6 +618,7 @@ export function StockChart({
     bars,
     chartBars,
     chartHeight,
+    indexBars,
     mainOverlayId,
     overlayCalcBars,
     period,
@@ -495,19 +626,24 @@ export function StockChart({
     sessionDate,
     showMacd,
     showVolume,
+    withFundFlow,
   ]);
 
-  const heightClass = showMacd
+  const heightClass = withFundFlow
     ? compact
-      ? "h-[300px]"
-      : "h-[400px]"
-    : showVolume
+      ? "h-[360px]"
+      : "h-[480px]"
+    : showMacd
       ? compact
-        ? "h-60"
-        : "h-80"
-      : compact
-        ? "h-48"
-        : "h-64";
+        ? "h-[300px]"
+        : "h-[400px]"
+      : showVolume
+        ? compact
+          ? "h-60"
+          : "h-80"
+        : compact
+          ? "h-48"
+          : "h-64";
 
   if (chartBars.length === 0) {
     return (
