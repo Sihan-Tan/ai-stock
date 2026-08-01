@@ -214,7 +214,12 @@ function toSequentialCalcChartBars(bars: OhlcvBar[]): ChartBar[] {
 /**
  * 通达信「分时抄底」：EMA30/强弱色带、支撑阻力、交叉信号。
  * 不产出「现价」线（沿用分时面积线）。
- * @param ctx 构建上下文（需 calcBars + sessionDate）
+ *
+ * 非空产出依赖 {@link MainOverlayBuildContext.calcBars} 与
+ * {@link MainOverlayBuildContext.sessionDate}（及可选 preClose）；仅传 chartBars 时返回空。
+ * 调用方应通过 {@link buildMainOverlay} 传入完整上下文，勿单独依赖族上的 buildLines。
+ *
+ * @param ctx 构建上下文
  */
 export function buildIntradayDipOverlay(
   ctx: MainOverlayBuildContext
@@ -330,6 +335,14 @@ function buildEmptyOverlay(): MainOverlayBuildResult {
   return { lines: [], sticks: [], markers: [] };
 }
 
+/**
+ * intraday_dip 的 buildLines 兼容签名；无 calcBars/sessionDate 时 lines 恒为空。
+ * @param chartBars 当天会话轴（不足以单独计算分时抄底）
+ */
+function buildIntradayDipOverlayLines(chartBars: ChartBar[]): MainOverlayLine[] {
+  return buildIntradayDipOverlay({ chartBars }).lines;
+}
+
 /** 全部主图族。 */
 export const MAIN_OVERLAYS: readonly MainOverlayDef[] = [
   {
@@ -355,7 +368,7 @@ export const MAIN_OVERLAYS: readonly MainOverlayDef[] = [
     id: "intraday_dip",
     label: "分时抄底",
     periods: ["intraday"],
-    buildLines: (chartBars) => buildIntradayDipOverlay({ chartBars }).lines,
+    buildLines: buildIntradayDipOverlayLines,
     build: buildIntradayDipOverlay,
   },
 ] as const;

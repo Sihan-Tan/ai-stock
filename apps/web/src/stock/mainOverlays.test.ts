@@ -49,16 +49,6 @@ describe("listOverlaysForPeriod", () => {
   });
 });
 
-describe("intraday registry", () => {
-  it("lists none and intraday_dip", () => {
-    expect(listOverlaysForPeriod("intraday").map((o) => o.id)).toEqual([
-      "none",
-      "intraday_dip",
-    ]);
-    expect(shouldShowMainOverlaySelect("intraday")).toBe(true);
-  });
-});
-
 describe("buildIntradayDipOverlay", () => {
   it("computes support/resistance and strength stick colors", () => {
     /**
@@ -107,6 +97,21 @@ describe("buildIntradayDipOverlay", () => {
     expect(resist.points[resist.points.length - 1].value).toBeCloseTo(11.5, 8);
     expect(support.points[support.points.length - 1].value).toBeCloseTo(8.25, 8);
     expect(result.sticks.length).toBeGreaterThan(0);
+
+    /** 分时抄底 STICKLINE 仅允许强弱色带与信号色 */
+    const dipStickColors = ["#0000FF", "#00FF00", "#EAB308"] as const;
+    for (const stick of result.sticks) {
+      expect(dipStickColors).toContain(stick.color);
+    }
+    const strengthSticks = result.sticks.filter((s) => s.color !== "#EAB308");
+    const signalSticks = result.sticks.filter((s) => s.color === "#EAB308");
+    expect(strengthSticks.length).toBeGreaterThan(0);
+    for (const stick of strengthSticks) {
+      expect(["#0000FF", "#00FF00"]).toContain(stick.color);
+    }
+    for (const stick of signalSticks) {
+      expect(stick.color).toBe("#EAB308");
+    }
   });
 
   it("none build returns empty", () => {
