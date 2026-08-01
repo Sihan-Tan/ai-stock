@@ -307,7 +307,7 @@ export function StockChart({
           if (line.points.length === 0) continue;
           const maSeries = chart.addSeries(LineSeries, {
             color: line.color,
-            lineWidth: 1,
+            lineWidth: line.lineWidth ?? 1,
             priceLineVisible: false,
             lastValueVisible: false,
             crosshairMarkerVisible: false,

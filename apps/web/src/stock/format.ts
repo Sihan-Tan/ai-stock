@@ -404,6 +404,64 @@ export function buildSmaSeries(
   return points;
 }
 
+/**
+ * 指数移动平均（通达信 EMA：α = 2/(N+1)）。
+ *
+ * @param bars 已按时间排序的 K 线
+ * @param window 平滑周期 N
+ */
+export function buildEmaSeries(
+  bars: ChartBar[],
+  window: number
+): Array<{ time: Time; value: number }> {
+  if (window <= 0 || bars.length === 0) {
+    return [];
+  }
+
+  const alpha = 2 / (window + 1);
+  const points: Array<{ time: Time; value: number }> = [];
+  let ema = bars[0].close;
+  points.push({ time: bars[0].time, value: ema });
+
+  for (let i = 1; i < bars.length; i += 1) {
+    ema = alpha * bars[i].close + (1 - alpha) * ema;
+    points.push({ time: bars[i].time, value: ema });
+  }
+
+  return points;
+}
+
+/**
+ * 收盘价滚动标准差（通达信 STD：总体标准差，除以 N）。
+ *
+ * @param bars 已按时间排序的 K 线
+ * @param window 窗口 N
+ */
+export function buildStdSeries(
+  bars: ChartBar[],
+  window: number
+): Array<{ time: Time; value: number }> {
+  if (window <= 0 || bars.length < window) {
+    return [];
+  }
+
+  const points: Array<{ time: Time; value: number }> = [];
+  for (let i = window - 1; i < bars.length; i += 1) {
+    let sum = 0;
+    for (let j = i - window + 1; j <= i; j += 1) {
+      sum += bars[j].close;
+    }
+    const mean = sum / window;
+    let sq = 0;
+    for (let j = i - window + 1; j <= i; j += 1) {
+      const d = bars[j].close - mean;
+      sq += d * d;
+    }
+    points.push({ time: bars[i].time, value: Math.sqrt(sq / window) });
+  }
+  return points;
+}
+
 /** MACD 线颜色（DIF / DEA）。 */
 export const MACD_LINE_COLORS = {
   dif: "#fbbf24",

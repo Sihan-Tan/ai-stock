@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildEmaSeries,
   buildMacdSeries,
   buildSmaSeries,
+  buildStdSeries,
   formatAshareSessionLabel,
   formatDailyCrosshairTime,
   formatIntradayCrosshairTime,
@@ -166,6 +168,40 @@ describe("buildSmaSeries", () => {
       { time: "2026-01-03", value: 2 },
       { time: "2026-01-04", value: 3 },
     ]);
+  });
+});
+
+describe("buildEmaSeries", () => {
+  it("uses alpha 2/(N+1) like Tongdaxin EMA", () => {
+    const bars = [
+      { time: "2026-01-01", open: 1, high: 1, low: 1, close: 10, value: 10 },
+      { time: "2026-01-02", open: 1, high: 1, low: 1, close: 12, value: 12 },
+      { time: "2026-01-03", open: 1, high: 1, low: 1, close: 14, value: 14 },
+    ];
+    const alpha = 2 / (3 + 1);
+    const points = buildEmaSeries(bars as never, 3);
+    expect(points).toHaveLength(3);
+    expect(points[0].value).toBe(10);
+    expect(points[1].value).toBeCloseTo(alpha * 12 + (1 - alpha) * 10, 10);
+  });
+});
+
+describe("buildStdSeries", () => {
+  it("uses population std over the window", () => {
+    const bars = [
+      { time: "2026-01-01", open: 1, high: 1, low: 1, close: 2, value: 2 },
+      { time: "2026-01-02", open: 1, high: 1, low: 1, close: 4, value: 4 },
+      { time: "2026-01-03", open: 1, high: 1, low: 1, close: 4, value: 4 },
+      { time: "2026-01-04", open: 1, high: 1, low: 1, close: 4, value: 4 },
+    ];
+    // window=3 on last bar: closes 4,4,4 → std 0
+    const points = buildStdSeries(bars as never, 3);
+    expect(points).toHaveLength(2);
+    expect(points[1].value).toBe(0);
+    // first window closes 2,4,4 → mean 10/3, var = ((2-m)^2+(4-m)^2+(4-m)^2)/3
+    const m = 10 / 3;
+    const expected = Math.sqrt(((2 - m) ** 2 + (4 - m) ** 2 + (4 - m) ** 2) / 3);
+    expect(points[0].value).toBeCloseTo(expected, 10);
   });
 });
 
