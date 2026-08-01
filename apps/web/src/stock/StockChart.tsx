@@ -1,10 +1,12 @@
 import {
   AreaSeries,
+  BarSeries,
   CandlestickSeries,
   ColorType,
   HistogramSeries,
   LineSeries,
   createChart,
+  createSeriesMarkers,
   type IChartApi,
   type ISeriesApi,
   type Time,
@@ -24,15 +26,24 @@ import {
   MACD_LINE_COLORS,
   toChartBars,
 } from "./format";
-import { getMainOverlay } from "./mainOverlays";
+import { buildMainOverlay, getMainOverlay } from "./mainOverlays";
 import type { ChartPeriod, OhlcvBar } from "./types";
+
+/** 分时色带/信号竖条按颜色拆成最多 3 组 BarSeries。 */
+const INTRADAY_STICK_COLORS = ["#0000FF", "#00FF00", "#EAB308"] as const;
 
 export type StockChartProps = {
   period: ChartPeriod;
   bars: OhlcvBar[];
   compact?: boolean;
-  /** 主图指标族；分时可忽略。默认 sma */
+  /** 主图指标族 id；日线默认 sma，分时默认由调用方传入（如 none / intraday_dip） */
   mainOverlayId?: string;
+  /** 分时叠加计算用的原始分钟线（可含预热日）；仅 period=intraday 时使用 */
+  overlayCalcBars?: OhlcvBar[];
+  /** 昨收价；分时抄底等指标的基准价 */
+  preClose?: number | null;
+  /** 当天会话日期 YYYY-MM-DD（北京）；用于从 calcBars 截取当日 */
+  sessionDate?: string;
 };
 
 const INTRADAY_TIME_BASE = 1_000_000;
@@ -156,6 +167,9 @@ export function StockChart({
   bars,
   compact = false,
   mainOverlayId = "sma",
+  overlayCalcBars,
+  preClose,
+  sessionDate,
 }: StockChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const auctionBandRef = useRef<HTMLDivElement>(null);
@@ -268,6 +282,70 @@ export function StockChart({
             return value == null ? point : { time: point.time, value };
           })
         );
+      }
+
+      const built = buildMainOverlay(getMainOverlay(mainOverlayId), {
+        chartBars,
+        calcBars: overlayCalcBars,
+        preClose,
+        sessionDate,
+      });
+      const hasOverlay =
+        built.sticks.length > 0 ||
+        built.markers.length > 0 ||
+        built.lines.some((line) => line.points.length > 0);
+
+      if (hasOverlay) {
+        for (const color of INTRADAY_STICK_COLORS) {
+          const sticks = built.sticks.filter((stick) => stick.color === color);
+          if (sticks.length === 0) continue;
+          const stickSeries = chart.addSeries(BarSeries, {
+            upColor: color,
+            downColor: color,
+            thinBars: true,
+            openVisible: false,
+            lastValueVisible: false,
+            priceLineVisible: false,
+          });
+          stickSeries.setData(
+            sticks.map((stick) => ({
+              time: stick.time,
+              open: stick.low,
+              high: stick.high,
+              low: stick.low,
+              close: stick.high,
+            }))
+          );
+        }
+
+        for (const line of built.lines) {
+          if (line.points.length === 0) continue;
+          const overlaySeries = chart.addSeries(LineSeries, {
+            color: line.color,
+            lineWidth: line.lineWidth ?? 1,
+            priceLineVisible: false,
+            lastValueVisible: false,
+            crosshairMarkerVisible: false,
+          });
+          overlaySeries.setData(line.points);
+        }
+
+        if (built.markers.length > 0) {
+          createSeriesMarkers(
+            series,
+            [...built.markers]
+              .sort((a, b) => Number(a.time) - Number(b.time))
+              .map((marker) => ({
+                time: marker.time,
+                position: "atPriceMiddle" as const,
+                shape: "circle" as const,
+                color: marker.color,
+                text: marker.text,
+                price: marker.price,
+                size: 0.5,
+              }))
+          );
+        }
       }
 
       if (showVolume) {
@@ -396,7 +474,18 @@ export function StockChart({
       chart.remove();
       setHoverLabel(null);
     };
-  }, [bars, chartBars, chartHeight, mainOverlayId, period, showMacd, showVolume]);
+  }, [
+    bars,
+    chartBars,
+    chartHeight,
+    mainOverlayId,
+    overlayCalcBars,
+    period,
+    preClose,
+    sessionDate,
+    showMacd,
+    showVolume,
+  ]);
 
   const heightClass = showMacd
     ? compact
