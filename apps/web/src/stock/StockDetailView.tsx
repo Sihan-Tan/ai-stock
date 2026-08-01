@@ -11,7 +11,20 @@ import {
 } from "@heroui/react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { api, beijingToday, formatBeijingTime } from "../api";
-import { summarizeIntradayBars, buildMacdSeries, MACD_LINE_COLORS, toChartBars } from "./format";
+import {
+  summarizeIntradayBars,
+  buildMacdSeries,
+  getBeijingHMS,
+  MACD_LINE_COLORS,
+  toChartBars,
+} from "./format";
+import {
+  chartBarsToPseudoOhlcv,
+  clampIntradayPollIntervalSec,
+  mapMinuteBarsToSlots,
+  toAshareSessionSlot,
+  upsertSlotPrice,
+} from "./intradaySlots";
 import { calcPctChg, detectLimitTag } from "./limitStatus";
 import {
   buildMainOverlay,
@@ -20,7 +33,7 @@ import {
   shouldShowMainOverlaySelect,
 } from "./mainOverlays";
 import { resolveIndexSymbol } from "./indexSymbol";
-import { sessionDateFromBars, shiftTradingDaysBack } from "./overlayMath";
+import { beijingDateFromTs, sessionDateFromBars, shiftTradingDaysBack } from "./overlayMath";
 import { StockChart } from "./StockChart";
 import type { ChartPeriod, OhlcvBar, PositionContext } from "./types";
 import { chgToneClass } from "../ui/chgTone";
@@ -120,6 +133,11 @@ export function StockDetailView({
   const normalizedSymbol = symbol.trim().toUpperCase();
   const [period, setPeriod] = useState<ChartPeriod>("intraday");
   const [mainOverlayId, setMainOverlayId] = useState("none");
+  /** 分时槽宽兼报价轮询间隔（秒） */
+  const [slotSec, setSlotSec] = useState(10);
+  /** 报价补点：现价与对应槽序号 */
+  const [livePrice, setLivePrice] = useState<number | null>(null);
+  const [liveSlotAt, setLiveSlotAt] = useState<number | null>(null);
   /** 分时约 5 日个股分钟预热：抄底叠加与资金趋势共用 */
   const [warmupBars, setWarmupBars] = useState<OhlcvBar[]>([]);
   /** 分时指数分钟（含预热），供资金趋势大盘侧 */
@@ -135,6 +153,24 @@ export function StockDetailView({
   const [bars, setBars] = useState<LoadState<OhlcvBar[]>>(loadingState());
   const [watched, setWatched] = useState(false);
   const [watchBusy, setWatchBusy] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void api<{ intraday_poll_interval_sec?: number }>("/api/settings").then((s) => {
+      if (!cancelled) {
+        setSlotSec(clampIntradayPollIntervalSec(s.intraday_poll_interval_sec));
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  /** 槽宽变化时清空盘中补点，避免旧槽序号错位。 */
+  useEffect(() => {
+    setLivePrice(null);
+    setLiveSlotAt(null);
+  }, [slotSec]);
 
   const intradaySummary = useMemo(() => {
     if (period !== "intraday" || !bars.data?.length) return null;
@@ -180,12 +216,41 @@ export function StockDetailView({
     intradaySessionDate,
   ]);
 
+  /** 分钟线映射 + 报价补点后的分时槽序列。 */
+  const intradayChartBars = useMemo(() => {
+    if (period !== "intraday") return [];
+    let base = mapMinuteBarsToSlots(bars.data ?? [], slotSec);
+    if (livePrice != null && liveSlotAt != null) {
+      base = upsertSlotPrice(base, liveSlotAt, livePrice);
+    }
+    return base;
+  }, [bars.data, slotSec, livePrice, liveSlotAt, period]);
+
+  /** 资金趋势：预热非当日分钟 + 当日槽伪 OHLCV。 */
+  const fundStockBars = useMemo(() => {
+    if (period !== "intraday" || !intradaySessionDate) {
+      return warmupBars.length > 0 ? warmupBars : bars.data ?? [];
+    }
+    const warmupBefore = (warmupBars.length > 0 ? warmupBars : []).filter(
+      (bar) => bar.ts && beijingDateFromTs(bar.ts) !== intradaySessionDate
+    );
+    const slotOhlcv = chartBarsToPseudoOhlcv(intradayChartBars, intradaySessionDate, slotSec);
+    return [...warmupBefore, ...slotOhlcv];
+  }, [period, intradaySessionDate, warmupBars, bars.data, intradayChartBars, slotSec]);
+
   const dailyMacdLatest = useMemo(() => {
-    if ((period !== "day" && period !== "intraday") || !bars.data?.length) return null;
+    if (period !== "day" && period !== "intraday") return null;
+    if (period === "intraday") {
+      if (!intradayChartBars.length) return null;
+      const points = buildMacdSeries(intradayChartBars);
+      if (points.length === 0) return null;
+      return points[points.length - 1];
+    }
+    if (!bars.data?.length) return null;
     const points = buildMacdSeries(toChartBars(bars.data, period));
     if (points.length === 0) return null;
     return points[points.length - 1];
-  }, [bars.data, period]);
+  }, [bars.data, period, intradayChartBars]);
 
   useEffect(() => {
     const opts = listOverlaysForPeriod(period);
@@ -319,22 +384,50 @@ export function StockDetailView({
     let cancelled = false;
 
     /**
-     * 分时静默刷新报价与分钟线，避免整页 loading 闪烁。
+     * 按槽宽轮询报价：更新展示，并写入当前会话槽补点。
      */
-    const quietRefresh = async () => {
+    const tickQuote = async () => {
       try {
-        const [quoteData, barsData] = await Promise.all([
-          api<Record<string, Quote>>(
-            `/api/market/intraday/quote?symbols=${encodeURIComponent(normalizedSymbol)}`
-          ),
-          loadBars(normalizedSymbol, "intraday"),
-        ]);
+        const quoteData = await api<Record<string, Quote>>(
+          `/api/market/intraday/quote?symbols=${encodeURIComponent(normalizedSymbol)}`
+        );
         if (cancelled) return;
-        setQuote({
-          data: quoteData[normalizedSymbol] ?? Object.values(quoteData)[0] ?? {},
-          loading: false,
-          error: null,
-        });
+        const q = quoteData[normalizedSymbol] ?? Object.values(quoteData)[0] ?? {};
+        setQuote({ data: q, loading: false, error: null });
+        const last = q.last;
+        if (last == null || !Number.isFinite(Number(last))) return;
+        const { hour, minute, second } = getBeijingHMS(new Date());
+        const slot = toAshareSessionSlot(hour, minute, second, slotSec);
+        if (slot == null) return;
+        setLivePrice(Number(last));
+        setLiveSlotAt(slot);
+      } catch {
+        // 轮询失败时保留旧数据
+      }
+    };
+
+    void tickQuote();
+    const timer = window.setInterval(() => {
+      void tickQuote();
+    }, slotSec * 1000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [normalizedSymbol, period, slotSec]);
+
+  useEffect(() => {
+    if (period !== "intraday") return;
+    let cancelled = false;
+    const minuteMs = Math.min(60_000, Math.max(30_000, slotSec * 1000));
+
+    /**
+     * 分钟线静默补刷（勿整页 loading），重铺槽底图。
+     */
+    const tickMinutes = async () => {
+      try {
+        const barsData = await loadBars(normalizedSymbol, "intraday");
+        if (cancelled) return;
         setBars({ data: barsData, loading: false, error: null });
       } catch {
         // 轮询失败时保留旧数据
@@ -342,13 +435,13 @@ export function StockDetailView({
     };
 
     const timer = window.setInterval(() => {
-      void quietRefresh();
-    }, 15_000);
+      void tickMinutes();
+    }, minuteMs);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [normalizedSymbol, period]);
+  }, [normalizedSymbol, period, slotSec]);
 
   useEffect(() => {
     let cancelled = false;
@@ -630,6 +723,8 @@ export function StockDetailView({
               bars={bars.data ?? []}
               compact={compact}
               mainOverlayId={mainOverlayId}
+              slotSec={period === "intraday" ? slotSec : undefined}
+              intradayChartBars={period === "intraday" ? intradayChartBars : undefined}
               overlayCalcBars={
                 period === "intraday"
                   ? warmupBars.length > 0
@@ -637,6 +732,7 @@ export function StockDetailView({
                     : bars.data ?? []
                   : undefined
               }
+              fundStockBars={period === "intraday" ? fundStockBars : undefined}
               indexBars={period === "intraday" ? indexBars : undefined}
               preClose={quote.data?.pre_close}
               sessionDate={period === "intraday" ? intradaySessionDate : undefined}

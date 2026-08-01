@@ -1,6 +1,10 @@
 import type { UTCTimestamp } from "lightweight-charts";
 import type { ChartBar } from "./format";
-import { getBeijingHourMinute, toAshareSessionIndex } from "./format";
+import {
+  getBeijingHourMinute,
+  sessionMinuteIndexToHourMinute,
+  toAshareSessionIndex,
+} from "./format";
 import type { OhlcvBar } from "./types";
 
 /** 用于图表的伪时间基数，避免与真实 unix 混淆。 */
@@ -152,4 +156,34 @@ export function upsertSlotPrice(
     value: price,
   });
   return next.sort((a, b) => Number(a.time) - Number(b.time));
+}
+
+/**
+ * 将槽序列 ChartBar 转为伪 OHLCV（供资金趋势等按 ts 预热拼接）。
+ * @param bars 槽轴 ChartBar
+ * @param sessionDate 会话日 YYYY-MM-DD（北京）
+ * @param slotSec 槽宽（秒）
+ */
+export function chartBarsToPseudoOhlcv(
+  bars: ChartBar[],
+  sessionDate: string,
+  slotSec: number
+): OhlcvBar[] {
+  const width = Math.max(1, Math.floor(slotSec));
+  return bars.map((bar) => {
+    const slotIndex = Number(bar.time) - INTRADAY_TIME_BASE;
+    const sessionSecond = slotIndex * width;
+    const minuteIndex = Math.floor(sessionSecond / 60);
+    const second = sessionSecond - minuteIndex * 60;
+    const hm = sessionMinuteIndexToHourMinute(minuteIndex);
+    const ts = `${sessionDate}T${String(hm.hour).padStart(2, "0")}:${String(hm.minute).padStart(2, "0")}:${String(second).padStart(2, "0")}+08:00`;
+    return {
+      ts,
+      open: bar.open,
+      high: bar.high,
+      low: bar.low,
+      close: bar.close,
+      volume: Number(bar.volume ?? 0),
+    };
+  });
 }
