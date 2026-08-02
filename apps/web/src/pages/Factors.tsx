@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { FactorCatalog } from "../factors/FactorCatalog";
 import { FactorCharts } from "../factors/FactorCharts";
+import { parseFactorGuide } from "../factors/parseFactorGuide";
 import type { FactorMeta, FactorSeriesResponse } from "../factors/types";
 import { SymbolSearchField } from "../stock/SymbolSearchField";
 import { DateRangePresetSelect } from "../ui/DateRangePresetSelect";
@@ -872,7 +873,14 @@ function TaFactorExplainDialog({
           </Button>
         </div>
         <div className="space-y-3 px-5 py-4 text-sm text-[var(--desk-text)]">
-          <p className="leading-relaxed">{desc}</p>
+          {parseFactorGuide(desc).map((section, idx) => (
+            <div key={`${section.title}-${idx}`} className="space-y-1">
+              {section.title ? (
+                <h3 className="text-xs font-medium text-[var(--desk-mist)]">{section.title}</h3>
+              ) : null}
+              <p className="leading-relaxed whitespace-pre-wrap">{section.body}</p>
+            </div>
+          ))}
           {factor.talib ? (
             <p className="text-xs text-[var(--desk-mist)]">TA-Lib：{factor.talib}</p>
           ) : null}
