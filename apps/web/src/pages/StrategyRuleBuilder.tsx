@@ -504,17 +504,17 @@ function unquote(raw: string): string {
 }
 
 /**
- * 规则构建器因子下拉文案：因子名（中文说明）。
+ * 规则构建器因子下拉文案：因子名（短中文 label）。
  * @param name 因子名
  * @param label 短标签
- * @param description 中文说明（优先）
+ * @param _description 详述（仅供调用方兼容；不用于选项主文案）
  */
 export function formatFactorOptionLabel(
   name: string,
   label: string,
-  description?: string
+  _description?: string
 ): string {
-  const tip = (description || label || "").trim();
+  const tip = (label || "").trim();
   if (!tip || tip === name) return name;
   return `${name}（${tip}）`;
 }

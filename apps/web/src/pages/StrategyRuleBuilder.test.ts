@@ -12,10 +12,14 @@ describe("formatFactorOptionLabel", () => {
     expect(formatFactorOptionLabel("RSI_14", "RSI")).toBe("RSI_14（RSI）");
   });
 
-  it("prefers description over label", () => {
-    expect(formatFactorOptionLabel("RSI_14", "RSI", "相对强弱指数 RSI")).toBe(
-      "RSI_14（相对强弱指数 RSI）"
-    );
+  it("uses label only and ignores long description", () => {
+    expect(
+      formatFactorOptionLabel(
+        "RSI_14",
+        "相对强弱指数 RSI",
+        "【含义】很长\n【怎么用】x\n【注意点】y"
+      )
+    ).toBe("RSI_14（相对强弱指数 RSI）");
   });
 
   it("keeps nested tip for ml factor", () => {
