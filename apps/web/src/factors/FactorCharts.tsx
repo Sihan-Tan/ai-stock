@@ -31,7 +31,7 @@ const OVERLAY_COLORS = [
 ];
 
 const PANEL_HEIGHT = 120;
-const MAIN_HEIGHT = 320;
+const MAIN_HEIGHT = 420;
 /** 时间轴预留高度 */
 const TIME_AXIS_HEIGHT = 28;
 /** 右侧价格轴统一最小宽度（多 pane 仍会再取各轴 max） */

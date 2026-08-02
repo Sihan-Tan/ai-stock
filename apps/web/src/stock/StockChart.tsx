@@ -347,19 +347,19 @@ export function StockChart({
   const withFundFlow = period === "intraday" && showMacd;
   const chartHeight = withFundFlow
     ? compact
-      ? 360
-      : 480
+      ? 460
+      : 580
     : showMacd
       ? compact
-        ? 300
-        : 400
+        ? 400
+        : 500
       : showVolume
         ? compact
-          ? 240
-          : 320
+          ? 340
+          : 420
         : compact
-          ? 192
-          : 256;
+          ? 292
+          : 356;
 
   useEffect(() => {
     const container = containerRef.current;
@@ -696,19 +696,19 @@ export function StockChart({
 
   const heightClass = withFundFlow
     ? compact
-      ? "h-[360px]"
-      : "h-[480px]"
+      ? "h-[460px]"
+      : "h-[580px]"
     : showMacd
       ? compact
-        ? "h-[300px]"
-        : "h-[400px]"
+        ? "h-[400px]"
+        : "h-[500px]"
       : showVolume
         ? compact
-          ? "h-60"
-          : "h-80"
+          ? "h-[340px]"
+          : "h-[420px]"
         : compact
-          ? "h-48"
-          : "h-64";
+          ? "h-[292px]"
+          : "h-[356px]";
 
   if (chartBars.length === 0) {
     return (
