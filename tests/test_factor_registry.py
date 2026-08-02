@@ -36,8 +36,16 @@ def test_registry_has_required_fields_and_plots():
     assert by_name["STOCH"]["label"]
     assert by_name["CDLDOJI"]["category"] == "pattern"
     assert by_name["SMA"]["talib"] == "SMA"
-    assert "相对强弱" in by_name["RSI_14"]["description"]
-    assert "简单移动平均" in by_name["SMA_20"]["description"]
+    assert "相对强弱" in by_name["RSI_14"]["label"]
+    assert "【含义】" in by_name["RSI_14"]["description"]
+    assert "【怎么用】" in by_name["RSI_14"]["description"]
+    assert "【含义】" not in by_name["RSI_14"]["label"]
+    assert "简单移动平均" in by_name["SMA_20"]["label"]
+    assert "【含义】" in by_name["SMA_20"]["description"]
+    assert "本条目默认周期" in by_name["SMA_20"]["description"]
+    assert "本条目默认周期" in by_name["RSI_14"]["description"]
+    assert "【含义】" in by_name["CLOSE"]["description"]
+    assert "【含义】" in by_name["CDLDOJI"]["description"]
     assert by_name["CLOSE"]["outputs"] == ["close"]
     assert by_name["CLOSE"]["category"] == "price"
     assert by_name["VOLUME"]["outputs"] == ["volume"]
