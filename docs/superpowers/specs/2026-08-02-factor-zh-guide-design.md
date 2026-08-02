@@ -1,6 +1,6 @@
 # 因子中文说明补全（三段式）
 
-> 状态：待实现  
+> 状态：已实现  
 > 日期：2026-08-02
 
 ## 目标
@@ -34,7 +34,8 @@
 
 | 单元 | 职责 |
 |------|------|
-| `packages/factor/desk_factor/zh_desc.py` | 保留短名；新增 `TALIB_ZH_GUIDE` + `zh_guide_for_talib()` |
+| `packages/factor/desk_factor/zh_desc.py` | 保留短名 |
+| `packages/factor/desk_factor/zh_guide.py` | `TALIB_ZH_GUIDE` + `zh_guide_for_talib()` |
 | `packages/factor/desk_factor/registry.py` | `label`←短名；`description`←详述（无则回退短名） |
 | `apps/web` 说明弹层 | 按【含义】【怎么用】【注意点】分节或保留换行展示 |
 | 规则构建器下拉 | **只用 `label`/name**，勿把长 `description` 塞进选项主文案；搜索仍可匹配 description |
