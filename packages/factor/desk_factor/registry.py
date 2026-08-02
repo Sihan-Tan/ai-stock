@@ -132,19 +132,31 @@ def _f(
     description: str | None = None,
 ) -> FactorMeta:
     from desk_factor.zh_desc import zh_desc_for_talib
+    from desk_factor.zh_guide import zh_guide_for_talib
 
-    desc = (description or "").strip() or zh_desc_for_talib(talib or name)
+    params = params or {}
+    lookup = (talib or name).strip()
+    short = zh_desc_for_talib(lookup)
+    guide = (description or "").strip() or zh_guide_for_talib(lookup)
+    tp = params.get("timeperiod")
+    if (
+        tp is not None
+        and name.strip().upper() != lookup.upper()
+        and "【含义】" in guide
+        and "本条目默认周期" not in guide
+    ):
+        guide = f"{guide}\n（本条目默认周期 {int(tp)}）"
     return {
         "name": name,
-        "label": label or desc or name,
+        "label": (label or short or name),
         "category": category,
-        "params": params or {},
+        "params": params,
         "outputs": outputs or [name.lower()],
         "plot": plot,
         "default_enabled": default_enabled,
         "enabled": True,
         "talib": talib,
-        "description": desc,
+        "description": guide,
     }
 
 
