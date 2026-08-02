@@ -24,9 +24,11 @@ def _cdl(shape: str, bias: str, note: str | None = None) -> str:
     @param bias 多空倾向与用法
     @param note 额外注意；默认通用提示
     """
+    shape_s = shape.rstrip("。．.！!")
+    bias_s = bias.rstrip("。．.；;！!")
     return _three(
-        f"K线形态识别：{shape}。命中时输出多为 ±100，未命中为 0。",
-        f"{bias}；可与趋势方向、关键位或成交量确认合用。",
+        f"K线形态识别：{shape_s}。命中时输出多为 ±100，未命中为 0。",
+        f"{bias_s}；可与趋势方向、关键位或成交量确认合用。",
         note
         or "形态信号有滞后且易假突破，需结合周期与前后文，不宜单独作为交易依据。",
     )
