@@ -66,3 +66,14 @@ def test_extra_registered_but_disabled_by_default():
     assert any(f["name"] == "SMA_10" for f in extras)
     assert any(f["name"] == "WILLR_14" for f in extras)
     assert any(f["name"] == "CDLENGULFING" for f in extras)
+
+
+def test_golden_pit_registered():
+    by_name = {f["name"]: f for f in FACTOR_REGISTRY}
+    f = by_name["GOLDEN_PIT"]
+    assert f["label"] == "黄金坑套件"
+    assert f["plot"] == "panel"
+    assert f["talib"] == ""
+    assert f["outputs"] == ["gp_line", "gp_pit", "gp_blowoff"]
+    assert "无未来" in f["description"] or "TROUGHBARS" in f["description"]
+

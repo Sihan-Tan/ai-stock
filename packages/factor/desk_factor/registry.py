@@ -305,6 +305,28 @@ def _build_price_factors() -> list[FactorMeta]:
     return rows
 
 
+def _build_custom_factors() -> list[FactorMeta]:
+    """非 TA-Lib 自定义因子。"""
+    guide = (
+        "【含义】黄金坑套件：强弱曲线 + 无未来近似「黄金坑」与「井喷」买卖类信号。\n"
+        "【怎么用】副图看 gp_line；gp_pit / gp_blowoff 非 0 为事件。日 K 详情常驻同套序列。\n"
+        "【注意点】黄金坑波谷为因果近似，与通达信 TROUGHBARS/ZIG 不完全一致；已剔除未来函数。"
+    )
+    return [
+        _f(
+            "GOLDEN_PIT",
+            talib="",
+            label="黄金坑套件",
+            category="custom",
+            params={"llv": 34, "ma": 5, "pit_age": 4, "pit_filter": 3},
+            outputs=["gp_line", "gp_pit", "gp_blowoff"],
+            plot="panel",
+            default_enabled=False,
+            description=guide,
+        )
+    ]
+
+
 def _merge_registry() -> list[FactorMeta]:
     by_name: dict[str, FactorMeta] = {}
     for row in _build_canonical():
@@ -320,6 +342,8 @@ def _merge_registry() -> list[FactorMeta]:
         merged["default_enabled"] = bool(row["default_enabled"] or existing["default_enabled"])
         by_name[row["name"]] = merged  # type: ignore[assignment]
     for row in _build_price_factors():
+        by_name[row["name"]] = row
+    for row in _build_custom_factors():
         by_name[row["name"]] = row
     # MACD/STOCH/OBV 正名也要 default_enabled
     for name in ("MACD", "STOCH", "OBV"):

@@ -50,6 +50,8 @@ def warmup_calendar_days(names: list[str]) -> int:
         meta = get_factor(raw)
         if meta is None:
             continue
+        if str(meta.get("name") or "").upper() == "GOLDEN_PIT":
+            max_period = max(max_period, 80)
         for period in _period_values(dict(meta.get("params") or {})):
             max_period = max(max_period, period)
         # MACD 等固定慢线未进 timeperiod 时至少按 35 估
@@ -205,12 +207,15 @@ class FactorService:
         series: dict[str, Any] = {}
         engine = last_engine()
         bars = _bars_from_ohlcv(ohlcv)
+        custom_names = [
+            n for n in ta_names if str(n).strip().upper() == "GOLDEN_PIT"
+        ]
         price_names = [
             n
             for n in ta_names
             if str(n).strip().upper() in {"CLOSE", "OPEN", "HIGH", "LOW", "VOLUME"}
         ]
-        ta_only = [n for n in ta_names if n not in price_names]
+        ta_only = [n for n in ta_names if n not in price_names and n not in custom_names]
 
         if price_names:
             df_px = ohlcv.copy()
@@ -232,6 +237,27 @@ class FactorService:
                         d = str(r["date"])[:10]
                         val = r[col] if col in df_px.columns else None
                         points.append({"date": d, "v": None if val is None or pd.isna(val) else float(val)})
+                    outputs[col] = points
+                series[meta["name"]] = {"outputs": outputs}
+
+        if custom_names:
+            from desk_factor.golden_pit import compute_golden_pit
+
+            gp_df = compute_golden_pit(ohlcv).reset_index(drop=True)
+            ohlcv_i = ohlcv.reset_index(drop=True)
+            for raw in custom_names:
+                meta = get_factor(raw)
+                if meta is None:
+                    raise ValueError(f"unknown factor: {raw}")
+                outputs: dict[str, list[dict[str, Any]]] = {}
+                for col in meta["outputs"]:
+                    points = []
+                    for i, r in ohlcv_i.iterrows():
+                        d = str(r["date"])[:10]
+                        val = gp_df.at[i, col]
+                        points.append(
+                            {"date": d, "v": None if val is None or pd.isna(val) else float(val)}
+                        )
                     outputs[col] = points
                 series[meta["name"]] = {"outputs": outputs}
 
