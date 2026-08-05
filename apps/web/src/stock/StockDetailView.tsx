@@ -32,6 +32,11 @@ import {
   listOverlaysForPeriod,
   shouldShowMainOverlaySelect,
 } from "./mainOverlays";
+import {
+  pickGoldenPitOutputs,
+  shouldLoadGoldenPit,
+  type GoldenPitOutputs,
+} from "./goldenPitSeries";
 import { resolveIndexSymbol } from "./indexSymbol";
 import { beijingDateFromTs, sessionDateFromBars, shiftTradingDaysBack } from "./overlayMath";
 import { StockChart } from "./StockChart";
@@ -151,6 +156,7 @@ export function StockDetailView({
   const [capitalFlow, setCapitalFlow] = useState<LoadState<CapitalFlow>>(loadingState());
   const [technicals, setTechnicals] = useState<LoadState<Technicals>>(loadingState());
   const [bars, setBars] = useState<LoadState<OhlcvBar[]>>(loadingState());
+  const [goldenPit, setGoldenPit] = useState<GoldenPitOutputs | null>(null);
   const [watched, setWatched] = useState(false);
   const [watchBusy, setWatchBusy] = useState(false);
 
@@ -305,11 +311,27 @@ export function StockDetailView({
     const load = async () => {
       setBars(loadingState());
 
-      const [barsResult] = await Promise.allSettled([loadBars(normalizedSymbol, period)]);
+      if (!shouldLoadGoldenPit(period)) {
+        setGoldenPit(null);
+        const [barsResult] = await Promise.allSettled([loadBars(normalizedSymbol, period)]);
+        if (cancelled) return;
+        setBars(resultState(barsResult));
+        return;
+      }
+
+      const [barsResult, goldenPitResult] = await Promise.allSettled([
+        loadBars(normalizedSymbol, period),
+        loadGoldenPitSeries(normalizedSymbol),
+      ]);
 
       if (cancelled) return;
 
       setBars(resultState(barsResult));
+      if (goldenPitResult.status === "fulfilled") {
+        setGoldenPit(pickGoldenPitOutputs(goldenPitResult.value));
+      } else {
+        setGoldenPit(null);
+      }
     };
 
     void load();
@@ -736,6 +758,7 @@ export function StockDetailView({
               indexBars={period === "intraday" ? indexBars : undefined}
               preClose={quote.data?.pre_close}
               sessionDate={period === "intraday" ? intradaySessionDate : undefined}
+              goldenPit={period === "day" ? goldenPit : null}
             />
           )}
         </CardContent>
@@ -853,6 +876,19 @@ export function StockDetailView({
         </SectionCard>
       </div>
     </div>
+  );
+}
+
+/**
+ * 拉取日 K 黄金坑套件因子序列（约一年）。
+ * @param symbol 股票代码
+ */
+async function loadGoldenPitSeries(symbol: string): Promise<unknown> {
+  const end = beijingToday();
+  const [y, m, d] = end.split("-");
+  const start = `${Number(y) - 1}-${m}-${d}`;
+  return api(
+    `/api/factors/series?symbol=${encodeURIComponent(symbol)}&names=GOLDEN_PIT&start=${start}&end=${end}`
   );
 }
 
