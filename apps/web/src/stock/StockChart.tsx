@@ -36,6 +36,7 @@ import {
   getMainOverlay,
   INTRADAY_DIP_SHOW_STRENGTH_BANDS,
 } from "./mainOverlays";
+import type { GoldenPitOutputs } from "./goldenPitSeries";
 import type { ChartPeriod, OhlcvBar } from "./types";
 
 /** 分时色带/信号竖条按颜色拆组；强弱色带受 {@link INTRADAY_DIP_SHOW_STRENGTH_BANDS} 控制。 */
@@ -64,6 +65,8 @@ export type StockChartProps = {
   sessionDate?: string;
   /** 指数分钟线（含预热）；分时资金趋势副图用 */
   indexBars?: OhlcvBar[];
+  /** 日 K 黄金坑套件序列；非日线或失败时不传 */
+  goldenPit?: GoldenPitOutputs | null;
 };
 
 /**
@@ -93,12 +96,14 @@ type HoverPriceLabel = {
  * @param chartBars K 线数据
  * @param withMacd 下方是否还要留 MACD 区域
  * @param withFundFlow 下方是否还要留资金趋势区域（分时四 pane）
+ * @param withGoldenPit 下方是否还要留黄金坑套件区域（日 K 三副图）
  */
 function addVolumePane(
   chart: IChartApi,
   chartBars: ChartBar[],
   withMacd: boolean,
-  withFundFlow = false
+  withFundFlow = false,
+  withGoldenPit = false
 ): void {
   const volumeSeries = chart.addSeries(HistogramSeries, {
     priceFormat: { type: "volume" },
@@ -109,9 +114,11 @@ function addVolumePane(
   volumeSeries.priceScale().applyOptions({
     scaleMargins: withFundFlow
       ? { top: 0.52, bottom: 0.38 }
-      : withMacd
-        ? { top: 0.58, bottom: 0.24 }
-        : { top: 0.78, bottom: 0 },
+      : withGoldenPit
+        ? { top: 0.46, bottom: 0.4 }
+        : withMacd
+          ? { top: 0.58, bottom: 0.24 }
+          : { top: 0.78, bottom: 0 },
     borderVisible: false,
   });
   volumeSeries.setData(
@@ -128,8 +135,14 @@ function addVolumePane(
  * @param chart 图表实例
  * @param chartBars K 线数据
  * @param withFundFlow 下方是否还要留资金趋势区域（分时四 pane）
+ * @param withGoldenPit 下方是否还要留黄金坑套件区域（日 K 三副图）
  */
-function addMacdPane(chart: IChartApi, chartBars: ChartBar[], withFundFlow = false): void {
+function addMacdPane(
+  chart: IChartApi,
+  chartBars: ChartBar[],
+  withFundFlow = false,
+  withGoldenPit = false
+): void {
   const macdPoints = buildMacdSeries(chartBars);
   if (macdPoints.length === 0) {
     return;
@@ -141,7 +154,11 @@ function addMacdPane(chart: IChartApi, chartBars: ChartBar[], withFundFlow = fal
     priceLineVisible: false,
   });
   histSeries.priceScale().applyOptions({
-    scaleMargins: withFundFlow ? { top: 0.66, bottom: 0.22 } : { top: 0.8, bottom: 0 },
+    scaleMargins: withFundFlow
+      ? { top: 0.66, bottom: 0.22 }
+      : withGoldenPit
+        ? { top: 0.64, bottom: 0.22 }
+        : { top: 0.8, bottom: 0 },
     borderVisible: false,
   });
   histSeries.setData(
@@ -171,6 +188,98 @@ function addMacdPane(chart: IChartApi, chartBars: ChartBar[], withFundFlow = fal
     crosshairMarkerVisible: false,
   });
   deaSeries.setData(macdPoints.map((point) => ({ time: point.time, value: point.dea })));
+}
+
+/**
+ * 将因子点按 business day 对齐到 chartBars，并过滤无效值。
+ * @param chartBars 日 K 图数据
+ * @param points API 序列点
+ * @param nonZeroOnly 是否仅保留非 0（事件柱）
+ */
+function alignGoldenPitPoints(
+  chartBars: ChartBar[],
+  points: { date: string; v: number | null }[],
+  nonZeroOnly = false
+): Array<{ time: Time; value: number }> {
+  const barTimes = new Set(chartBars.map((bar) => String(bar.time)));
+  const out: Array<{ time: Time; value: number }> = [];
+  for (const point of points) {
+    const day = String(point.date ?? "").slice(0, 10);
+    if (!barTimes.has(day)) continue;
+    if (point.v == null || !Number.isFinite(point.v)) continue;
+    if (nonZeroOnly && point.v === 0) continue;
+    out.push({ time: day as Time, value: point.v });
+  }
+  return out;
+}
+
+/**
+ * 日 K 副图：黄金坑套件（gp_line + 非零 gp_pit / gp_blowoff）。
+ * @param chart 图表实例
+ * @param chartBars 日 K 数据（时间对齐基准）
+ * @param goldenPit 套件序列
+ */
+function addGoldenPitPane(
+  chart: IChartApi,
+  chartBars: ChartBar[],
+  goldenPit: GoldenPitOutputs
+): void {
+  const scaleMargins = { top: 0.82, bottom: 0 };
+
+  const linePoints = alignGoldenPitPoints(chartBars, goldenPit.gp_line);
+  if (linePoints.length > 0) {
+    const lineSeries = chart.addSeries(LineSeries, {
+      color: "#fbbf24",
+      lineWidth: 1,
+      priceScaleId: "golden_pit",
+      lastValueVisible: false,
+      priceLineVisible: false,
+      crosshairMarkerVisible: false,
+    });
+    lineSeries.priceScale().applyOptions({
+      scaleMargins,
+      borderVisible: false,
+    });
+    lineSeries.setData(linePoints);
+  }
+
+  const pitPoints = alignGoldenPitPoints(chartBars, goldenPit.gp_pit, true);
+  if (pitPoints.length > 0) {
+    const pitSeries = chart.addSeries(HistogramSeries, {
+      priceScaleId: "golden_pit",
+      lastValueVisible: false,
+      priceLineVisible: false,
+    });
+    pitSeries.priceScale().applyOptions({
+      scaleMargins,
+      borderVisible: false,
+    });
+    pitSeries.setData(
+      pitPoints.map((point) => ({
+        ...point,
+        color: "rgba(239, 68, 68, 0.7)",
+      }))
+    );
+  }
+
+  const blowoffPoints = alignGoldenPitPoints(chartBars, goldenPit.gp_blowoff, true);
+  if (blowoffPoints.length > 0) {
+    const blowoffSeries = chart.addSeries(HistogramSeries, {
+      priceScaleId: "golden_pit",
+      lastValueVisible: false,
+      priceLineVisible: false,
+    });
+    blowoffSeries.priceScale().applyOptions({
+      scaleMargins,
+      borderVisible: false,
+    });
+    blowoffSeries.setData(
+      blowoffPoints.map((point) => ({
+        ...point,
+        color: "rgba(34, 197, 94, 0.7)",
+      }))
+    );
+  }
 }
 
 /**
@@ -323,6 +432,7 @@ export function StockChart({
   preClose,
   sessionDate,
   indexBars,
+  goldenPit = null,
 }: StockChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const auctionBandRef = useRef<HTMLDivElement>(null);
@@ -345,21 +455,29 @@ export function StockChart({
   const showMacd = period === "intraday" || period === "day";
   /** 分时 + MACD 时常驻资金趋势第四 pane */
   const withFundFlow = period === "intraday" && showMacd;
-  const chartHeight = withFundFlow
-    ? compact
-      ? 460
-      : 580
-    : showMacd
+  /** 日 K 且套件序列任一非空时启用黄金坑副图 */
+  const withGoldenPit =
+    period === "day" &&
+    !!goldenPit &&
+    ((goldenPit.gp_line?.length ?? 0) > 0 ||
+      (goldenPit.gp_pit?.length ?? 0) > 0 ||
+      (goldenPit.gp_blowoff?.length ?? 0) > 0);
+  const chartHeight =
+    (withFundFlow
       ? compact
-        ? 400
-        : 500
-      : showVolume
+        ? 460
+        : 580
+      : showMacd
         ? compact
-          ? 340
-          : 420
-        : compact
-          ? 292
-          : 356;
+          ? 400
+          : 500
+        : showVolume
+          ? compact
+            ? 340
+            : 420
+          : compact
+            ? 292
+            : 356) + (withGoldenPit ? 100 : 0);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -384,11 +502,13 @@ export function StockChart({
         borderColor: "#ffffff",
         scaleMargins: withFundFlow
           ? { top: 0.04, bottom: 0.52 }
-          : showMacd
-            ? { top: 0.06, bottom: 0.46 }
-            : showVolume
-              ? { top: 0.08, bottom: 0.28 }
-              : { top: 0.1, bottom: 0.1 },
+          : withGoldenPit
+            ? { top: 0.04, bottom: 0.58 }
+            : showMacd
+              ? { top: 0.06, bottom: 0.46 }
+              : showVolume
+                ? { top: 0.08, bottom: 0.28 }
+                : { top: 0.1, bottom: 0.1 },
       },
       crosshair: {
         // 价格改由主图线旁浮层展示，不再贴右侧坐标轴
@@ -596,10 +716,13 @@ export function StockChart({
       }
 
       if (showVolume) {
-        addVolumePane(chart, chartBars, showMacd);
+        addVolumePane(chart, chartBars, showMacd, false, withGoldenPit);
       }
       if (showMacd) {
-        addMacdPane(chart, chartBars);
+        addMacdPane(chart, chartBars, false, withGoldenPit);
+      }
+      if (withGoldenPit && goldenPit) {
+        addGoldenPitPane(chart, chartBars, goldenPit);
       }
 
       chart.timeScale().fitContent();
@@ -681,6 +804,7 @@ export function StockChart({
     chartHeight,
     continuousStartSlot,
     fundStockBars,
+    goldenPit,
     indexBars,
     mainOverlayId,
     overlayCalcBars,
@@ -692,23 +816,28 @@ export function StockChart({
     showMacd,
     showVolume,
     withFundFlow,
+    withGoldenPit,
   ]);
 
   const heightClass = withFundFlow
     ? compact
       ? "h-[460px]"
       : "h-[580px]"
-    : showMacd
+    : withGoldenPit
       ? compact
-        ? "h-[400px]"
-        : "h-[500px]"
-      : showVolume
+        ? "h-[500px]"
+        : "h-[600px]"
+      : showMacd
         ? compact
-          ? "h-[340px]"
-          : "h-[420px]"
-        : compact
-          ? "h-[292px]"
-          : "h-[356px]";
+          ? "h-[400px]"
+          : "h-[500px]"
+        : showVolume
+          ? compact
+            ? "h-[340px]"
+            : "h-[420px]"
+          : compact
+            ? "h-[292px]"
+            : "h-[356px]";
 
   if (chartBars.length === 0) {
     return (
