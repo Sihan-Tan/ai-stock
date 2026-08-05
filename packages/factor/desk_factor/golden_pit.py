@@ -113,10 +113,6 @@ def compute_golden_pit(ohlcv: pd.DataFrame) -> pd.DataFrame:
     # 黄金坑：距最近已确认枢轴低点的 bar 数 < 4，再 FILTER
     piv = _causal_pivot_low(low)
     age = _bars_since_event(piv)
-    raw_pit = np.array(
-        [(np.isfinite(a) and a < _PIT_MAX_AGE and a >= 0) for a in age],
-        dtype=bool,
-    )
     # 排除「刚确认当根 age==0」的噪声：要求 0 < age < 4（落在波谷后数根内）
     raw_pit = np.array(
         [bool(np.isfinite(a) and 0 < a < _PIT_MAX_AGE) for a in age],
