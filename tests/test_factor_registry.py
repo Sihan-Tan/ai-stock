@@ -75,5 +75,5 @@ def test_golden_pit_registered():
     assert f["plot"] == "panel"
     assert f["talib"] == ""
     assert f["outputs"] == ["gp_line", "gp_pit", "gp_blowoff"]
-    assert "无未来" in f["description"] or "TROUGHBARS" in f["description"]
+    assert "谷底" in f["description"] or "15%" in f["description"]
 

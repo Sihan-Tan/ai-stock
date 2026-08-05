@@ -213,8 +213,17 @@ function alignGoldenPitPoints(
   return out;
 }
 
+/** 黄金坑套件副图配色（图例与序列共用）。 */
+export const GOLDEN_PIT_COLORS = {
+  line: "#fbbf24",
+  pit: "#ef4444",
+  pitBar: "rgba(239, 68, 68, 0.7)",
+  blowoff: "#22c55e",
+  blowoffBar: "rgba(34, 197, 94, 0.7)",
+} as const;
+
 /**
- * 日 K 副图：黄金坑套件（gp_line + 非零 gp_pit / gp_blowoff）。
+ * 日 K 副图：黄金坑套件（gp_line + 非零 gp_pit / gp_blowoff + 文案标记）。
  * @param chart 图表实例
  * @param chartBars 日 K 数据（时间对齐基准）
  * @param goldenPit 套件序列
@@ -225,11 +234,13 @@ function addGoldenPitPane(
   goldenPit: GoldenPitOutputs
 ): void {
   const scaleMargins = { top: 0.82, bottom: 0 };
+  /** 挂载「黄金坑 / 井喷」文字标记的宿主序列 */
+  let markerHost: ISeriesApi<"Line"> | ISeriesApi<"Histogram"> | null = null;
 
   const linePoints = alignGoldenPitPoints(chartBars, goldenPit.gp_line);
   if (linePoints.length > 0) {
     const lineSeries = chart.addSeries(LineSeries, {
-      color: "#fbbf24",
+      color: GOLDEN_PIT_COLORS.line,
       lineWidth: 1,
       priceScaleId: "golden_pit",
       lastValueVisible: false,
@@ -241,6 +252,7 @@ function addGoldenPitPane(
       borderVisible: false,
     });
     lineSeries.setData(linePoints);
+    markerHost = lineSeries;
   }
 
   const pitPoints = alignGoldenPitPoints(chartBars, goldenPit.gp_pit, true);
@@ -257,9 +269,10 @@ function addGoldenPitPane(
     pitSeries.setData(
       pitPoints.map((point) => ({
         ...point,
-        color: "rgba(239, 68, 68, 0.7)",
+        color: GOLDEN_PIT_COLORS.pitBar,
       }))
     );
+    markerHost ??= pitSeries;
   }
 
   const blowoffPoints = alignGoldenPitPoints(chartBars, goldenPit.gp_blowoff, true);
@@ -276,9 +289,37 @@ function addGoldenPitPane(
     blowoffSeries.setData(
       blowoffPoints.map((point) => ({
         ...point,
-        color: "rgba(34, 197, 94, 0.7)",
+        color: GOLDEN_PIT_COLORS.blowoffBar,
       }))
     );
+    markerHost ??= blowoffSeries;
+  }
+
+  if (!markerHost) {
+    return;
+  }
+
+  const markers = [
+    ...pitPoints.map((point) => ({
+      time: point.time,
+      position: "aboveBar" as const,
+      shape: "arrowUp" as const,
+      color: GOLDEN_PIT_COLORS.pit,
+      text: "黄金坑",
+      size: 1 as const,
+    })),
+    ...blowoffPoints.map((point) => ({
+      time: point.time,
+      position: "belowBar" as const,
+      shape: "arrowDown" as const,
+      color: GOLDEN_PIT_COLORS.blowoff,
+      text: "井喷",
+      size: 1 as const,
+    })),
+  ].sort((a, b) => String(a.time).localeCompare(String(b.time)));
+
+  if (markers.length > 0) {
+    createSeriesMarkers(markerHost, markers);
   }
 }
 

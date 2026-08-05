@@ -28,6 +28,34 @@ def _ohlcv(n: int, *, seed: int = 0) -> pd.DataFrame:
     )
 
 
+def _deep_v_frame() -> pd.DataFrame:
+    """构造：冲高 → 深跌超 15% → 再反弹超 15%。"""
+    n = 60
+    close = np.full(n, 20.0)
+    for i in range(0, 8):
+        close[i] = 20.0 + i * 0.3  # 冲高
+    peak = close[7]
+    for i in range(8, 31):
+        close[i] = peak - (i - 7) * 0.35
+    trough_i = int(np.argmin(close[:35]))
+    trough_px = close[trough_i]
+    for i in range(trough_i + 1, 55):
+        close[i] = trough_px + (i - trough_i) * 0.2
+    high = close + 0.05
+    low = close - 0.05
+    low[trough_i] = trough_px - 0.4
+    return pd.DataFrame(
+        {
+            "date": [d.strftime("%Y-%m-%d") for d in pd.bdate_range("2020-01-01", periods=n)],
+            "open": close,
+            "high": high,
+            "low": low,
+            "close": close,
+            "volume": np.full(n, 1e6),
+        }
+    ), trough_i
+
+
 def test_compute_golden_pit_columns_and_length():
     df = _ohlcv(120)
     out = compute_golden_pit(df)
@@ -39,7 +67,6 @@ def test_blowoff_triggers_on_limit_up_style_bar():
     """井喷：涨幅≥9.9% 且光头阳 + 缩量，且近 20 根内首次。"""
     n = 40
     df = _ohlcv(n, seed=1)
-    # 构造第 30 根：开=低、收=高、相对昨收 +10%，量小于 MA5 且小于昨量
     i = 30
     df.loc[i - 1, "close"] = 10.0
     df.loc[i, "open"] = 10.0
@@ -53,18 +80,40 @@ def test_blowoff_triggers_on_limit_up_style_bar():
     assert float(out.loc[i, "gp_blowoff"]) != 0.0
 
 
-def test_pit_is_causal_prefix_stable():
-    """截断未来 bar 后，已有前缀的 gp_pit 不变。"""
-    df = _ohlcv(80, seed=2)
-    full = compute_golden_pit(df)
-    prefix = compute_golden_pit(df.iloc[:60].reset_index(drop=True))
-    a = full.iloc[:60]["gp_pit"].fillna(0).to_numpy()
-    b = prefix["gp_pit"].fillna(0).to_numpy()
-    assert np.allclose(a, b)
-
-
 def test_gp_line_finite_after_warmup():
     df = _ohlcv(80)
     out = compute_golden_pit(df)
-    # 34+5 预热后应有有限值
     assert np.isfinite(out["gp_line"].iloc[50])
+
+
+def test_shallow_noise_does_not_mark_pit():
+    """小幅震荡（远小于转折百分比）不应标黄金坑。"""
+    n = 80
+    close = np.full(n, 10.0)
+    for i in range(n):
+        close[i] = 10.0 + (0.08 if i % 2 == 0 else -0.08)
+    df = pd.DataFrame(
+        {
+            "date": [d.strftime("%Y-%m-%d") for d in pd.bdate_range("2020-01-01", periods=n)],
+            "open": close,
+            "high": close + 0.05,
+            "low": close - 0.05,
+            "close": close,
+            "volume": np.full(n, 1e6),
+        }
+    )
+    out = compute_golden_pit(df)
+    assert int((out["gp_pit"] != 0).sum()) == 0
+
+
+def test_deep_v_marks_on_trough_bar():
+    """确认后信号回标到谷底 K，而非确认日。"""
+    df, trough_i = _deep_v_frame()
+    out = compute_golden_pit(df)
+    pit_idx = [i for i, v in enumerate(out["gp_pit"].to_numpy()) if v != 0]
+    assert pit_idx, "应至少有一个黄金坑标记"
+    # FILTER 后首个标记应落在谷底（回标）
+    assert pit_idx[0] == trough_i
+    # 不应只出现在远离谷底的确认日：谷底 low 应不高于邻域
+    assert float(df.loc[trough_i, "low"]) <= float(df.loc[trough_i - 1, "low"])
+    assert float(df.loc[trough_i, "low"]) <= float(df.loc[trough_i + 1, "low"])

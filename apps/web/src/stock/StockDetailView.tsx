@@ -39,7 +39,7 @@ import {
 } from "./goldenPitSeries";
 import { resolveIndexSymbol } from "./indexSymbol";
 import { beijingDateFromTs, sessionDateFromBars, shiftTradingDaysBack } from "./overlayMath";
-import { StockChart } from "./StockChart";
+import { GOLDEN_PIT_COLORS, StockChart } from "./StockChart";
 import type { ChartPeriod, OhlcvBar, PositionContext } from "./types";
 import { chgToneClass } from "../ui/chgTone";
 
@@ -730,6 +730,40 @@ export function StockDetailView({
                     style={{ color: dailyMacdLatest.hist >= 0 ? "#ef4444" : "#22c55e" }}
                   >
                     MACD {formatNumber(dailyMacdLatest.hist)}
+                  </span>
+                </>
+              )}
+              {period === "day" && goldenPit && (
+                <>
+                  <span
+                    className="inline-flex items-center gap-1 whitespace-nowrap"
+                    style={{ color: GOLDEN_PIT_COLORS.line }}
+                  >
+                    <span
+                      className="inline-block h-0.5 w-3 rounded"
+                      style={{ backgroundColor: GOLDEN_PIT_COLORS.line }}
+                    />
+                    套件曲线
+                  </span>
+                  <span
+                    className="inline-flex items-center gap-1 whitespace-nowrap"
+                    style={{ color: GOLDEN_PIT_COLORS.pit }}
+                  >
+                    <span
+                      className="inline-block h-2 w-2 rounded-sm"
+                      style={{ backgroundColor: GOLDEN_PIT_COLORS.pit }}
+                    />
+                    黄金坑
+                  </span>
+                  <span
+                    className="inline-flex items-center gap-1 whitespace-nowrap"
+                    style={{ color: GOLDEN_PIT_COLORS.blowoff }}
+                  >
+                    <span
+                      className="inline-block h-2 w-2 rounded-sm"
+                      style={{ backgroundColor: GOLDEN_PIT_COLORS.blowoff }}
+                    />
+                    井喷
                   </span>
                 </>
               )}

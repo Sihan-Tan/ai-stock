@@ -308,9 +308,10 @@ def _build_price_factors() -> list[FactorMeta]:
 def _build_custom_factors() -> list[FactorMeta]:
     """非 TA-Lib 自定义因子。"""
     guide = (
-        "【含义】黄金坑套件：强弱曲线 + 无未来近似「黄金坑」与「井喷」买卖类信号。\n"
-        "【怎么用】副图看 gp_line；gp_pit / gp_blowoff 非 0 为事件。日 K 详情常驻同套序列。\n"
-        "【注意点】黄金坑波谷为因果近似，与通达信 TROUGHBARS/ZIG 不完全一致；已剔除未来函数。"
+        "【含义】黄金坑套件：强弱曲线 + 百分比波谷「黄金坑」与「井喷」信号。\n"
+        "【怎么用】副图看 gp_line；「黄金坑」标在谷底 K，「井喷」标在事件日。\n"
+        "【注意点】波谷需约 15% 反弹才确认，再把标记回标到谷底（展示对齐通达信；"
+        "当日实时尚未确认时不会提前标坑）。浅震荡不标。"
     )
     return [
         _f(
@@ -318,7 +319,7 @@ def _build_custom_factors() -> list[FactorMeta]:
             talib="",
             label="黄金坑套件",
             category="custom",
-            params={"llv": 34, "ma": 5, "pit_age": 4, "pit_filter": 3},
+            params={"llv": 34, "ma": 5, "zig_pct": 15, "pit_age": 4, "pit_filter": 5},
             outputs=["gp_line", "gp_pit", "gp_blowoff"],
             plot="panel",
             default_enabled=False,

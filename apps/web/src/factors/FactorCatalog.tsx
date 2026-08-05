@@ -13,6 +13,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   statistic: "统计",
   math: "数学",
   ml: "机器学习",
+  custom: "自定义",
   other: "其他",
 };
 
