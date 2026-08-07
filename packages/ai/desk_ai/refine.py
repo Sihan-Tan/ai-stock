@@ -11,6 +11,7 @@ from typing import Any, Callable, Literal
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
+from desk_ai.source_label import research_source_label
 from desk_common.contracts import ResearchPickItem, ResearchRefineReport
 from desk_common.settings import get_settings
 from desk_common.symbols import normalize_symbol
@@ -83,7 +84,8 @@ def format_research_feishu_body(
     @param picks: 精选结果
     @param errors: 可选错误摘要
     """
-    lines = [f"【投研精选·{source}】{asof}", f"共 {len(picks)} 只", ""]
+    label = research_source_label(source)
+    lines = [f"【投研精选·{label}】{asof}", f"共 {len(picks)} 只", ""]
     for p in picks:
         lines.append(
             f"#{p.rank} {p.symbol} {p.name or ''}".rstrip()
@@ -538,7 +540,7 @@ class ResearchRefineService:
             from desk_alert import FeishuWebhookChannel
             from desk_ai.research_table_image import render_research_table_png
 
-            title = f"投研精选·{source}"
+            title = f"投研精选·{research_source_label(source)}"
             dedupe = f"research:{source}:{asof}"
             ch = FeishuWebhookChannel(self.db)
             try:

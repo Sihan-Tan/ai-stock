@@ -9,6 +9,7 @@ from typing import Sequence
 
 from PIL import Image, ImageDraw, ImageFont
 
+from desk_ai.source_label import research_source_label
 from desk_common.contracts import ResearchPickItem
 
 _BG = "#0f1419"
@@ -184,7 +185,8 @@ def render_research_table_png(
     image = Image.new("RGB", (img_w, img_h), _BG)
     draw = ImageDraw.Draw(image)
 
-    title = f"投研精选·{source}  {asof}  共 {len(picks)} 只"
+    label = research_source_label(source)
+    title = f"投研精选·{label}  {asof}  共 {len(picks)} 只"
     draw.text((padding_x, padding_y), title, fill=_TEXT, font=title_font)
 
     y = padding_y + title_h

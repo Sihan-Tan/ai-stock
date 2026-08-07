@@ -16,6 +16,7 @@ from desk_ai.refine import (
 )
 from desk_ai.session import NanobotResearchSession
 from desk_ai.skills import SkillLoader
+from desk_ai.source_label import research_source_label
 
 __all__ = [
     "NanobotResearchSession",
@@ -27,4 +28,5 @@ __all__ = [
     "prefetch_refine_facts",
     "list_research_picks",
     "maybe_auto_refine",
+    "research_source_label",
 ]

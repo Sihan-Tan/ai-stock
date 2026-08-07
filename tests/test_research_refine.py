@@ -145,6 +145,7 @@ def test_parse_score_payload_list_and_feishu_body():
         ],
         errors=["x:skip"],
     )
+    assert "【投研精选·早盘】" in body
     assert "买入 1600.00–1650.00" in body
     assert "止损 1550.00" in body
     assert "理由：强势" in body
@@ -451,6 +452,7 @@ def test_maybe_feishu_prefers_image_falls_back_to_text(db: Session, monkeypatch:
         svc._maybe_feishu(asof, "morning", picks)
         render_mock.assert_called_once()
         ch.send_image.assert_called_once()
+        assert ch.send_image.call_args.args[0] == "投研精选·早盘"
         ch.send.assert_not_called()
 
         ch.reset_mock()
@@ -461,6 +463,6 @@ def test_maybe_feishu_prefers_image_falls_back_to_text(db: Session, monkeypatch:
         ch.send_image.assert_called_once()
         ch.send.assert_called_once()
         send_args = ch.send.call_args
-        assert send_args.args[0] == "投研精选·morning"
+        assert send_args.args[0] == "投研精选·早盘"
         assert send_args.kwargs.get("category") == "research"
         assert send_args.kwargs.get("dedupe_key") == f"research:morning:{asof}"
