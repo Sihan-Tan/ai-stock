@@ -121,7 +121,7 @@ def test_send_test_category_bypasses(alert_db, monkeypatch: pytest.MonkeyPatch):
 
 
 def test_send_payload_includes_local_timestamp(alert_db):
-    """飞书正文第二行应为本地时间 YYYY-MM-DD HH:MM:SS。"""
+    """飞书首行应为「标题 + 本地时间」，次行为正文。"""
     import re
 
     ch = FeishuWebhookChannel(alert_db)
@@ -130,6 +130,5 @@ def test_send_payload_includes_local_timestamp(alert_db):
     (_url, payload), _kwargs = ch._post_webhook.call_args
     text = payload["content"]["text"]
     lines = text.split("\n")
-    assert lines[0] == "标题"
-    assert re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", lines[1])
-    assert lines[2] == "正文"
+    assert re.fullmatch(r"标题  \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", lines[0])
+    assert lines[1] == "正文"
