@@ -36,6 +36,14 @@ def _disable_positions_advice(monkeypatch):
         "desk_positions_advice.advise_advice",
         lambda *a, **k: {"status": "disabled", "source": "live", "items": []},
     )
+    # 避免本机开启自动精选/飞书时单测卡住外网 LLM 或 Webhook
+    monkeypatch.setenv("RESEARCH_REFINE_AUTO", "0")
+    monkeypatch.setenv("FEISHU_ALERT_ENABLED", "0")
+    get_settings.cache_clear()
+    monkeypatch.setattr(
+        "desk_morning_brief.maybe_auto_refine",
+        lambda *a, **k: None,
+    )
 
 
 def test_resolve_asof_falls_back_on_rest_day(db: Session):
