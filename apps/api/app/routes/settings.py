@@ -29,6 +29,8 @@ class SettingsPatch(BaseModel):
     embedding_model: str | None = None
     feishu_webhook_url: str | None = None
     feishu_sign_secret: str | None = None
+    feishu_app_id: str | None = None
+    feishu_app_secret: str | None = None
     feishu_alert_enabled: bool | None = None
     feishu_alert_categories: str | None = None
     qmt_userdata_path: str | None = None

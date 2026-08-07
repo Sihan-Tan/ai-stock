@@ -31,6 +31,9 @@ type AppSettings = {
   feishu_webhook_url: string;
   feishu_sign_secret: string;
   feishu_sign_secret_set?: boolean;
+  feishu_app_id: string;
+  feishu_app_secret: string;
+  feishu_app_secret_set?: boolean;
   feishu_alert_enabled?: boolean;
   feishu_alert_categories?: string;
   qmt_userdata_path: string;
@@ -81,6 +84,8 @@ const EMPTY: AppSettings = {
   embedding_model: "",
   feishu_webhook_url: "",
   feishu_sign_secret: "",
+  feishu_app_id: "",
+  feishu_app_secret: "",
   feishu_alert_enabled: true,
   feishu_alert_categories: "morning,closing,paper,research",
   qmt_userdata_path: "",
@@ -265,6 +270,7 @@ export default function Settings({ setLog }: PageLogProps) {
         embedding_base_url: form.embedding_base_url || "",
         embedding_model: form.embedding_model || "",
         feishu_webhook_url: form.feishu_webhook_url,
+        feishu_app_id: form.feishu_app_id || "",
         feishu_alert_enabled: Boolean(form.feishu_alert_enabled),
         feishu_alert_categories: form.feishu_alert_categories || "",
         qmt_userdata_path: form.qmt_userdata_path,
@@ -317,6 +323,9 @@ export default function Settings({ setLog }: PageLogProps) {
       }
       if (form.feishu_sign_secret && !form.feishu_sign_secret.includes("*")) {
         body.feishu_sign_secret = form.feishu_sign_secret;
+      }
+      if (form.feishu_app_secret && !form.feishu_app_secret.includes("*")) {
+        body.feishu_app_secret = form.feishu_app_secret;
       }
       const saved = await api<AppSettings>("/api/settings", {
         method: "PUT",
@@ -1000,6 +1009,28 @@ export default function Settings({ setLog }: PageLogProps) {
                         form.feishu_sign_secret.includes("*") ? "" : form.feishu_sign_secret
                       }
                       onChange={(e) => patch("feishu_sign_secret", e.target.value)}
+                    />
+                  </Field>
+                  <Field label="App ID">
+                    <input
+                      className={inputClass}
+                      value={form.feishu_app_id}
+                      onChange={(e) => patch("feishu_app_id", e.target.value)}
+                      placeholder="cli_xxxxxxxx"
+                    />
+                  </Field>
+                  <Field
+                    label={`App Secret${form.feishu_app_secret_set ? "（已配置，留空不改）" : ""}`}
+                  >
+                    <input
+                      className={inputClass}
+                      type="password"
+                      autoComplete="off"
+                      placeholder={form.feishu_app_secret_set ? "••••••••" : "可选"}
+                      value={
+                        form.feishu_app_secret.includes("*") ? "" : form.feishu_app_secret
+                      }
+                      onChange={(e) => patch("feishu_app_secret", e.target.value)}
                     />
                   </Field>
                 </div>
