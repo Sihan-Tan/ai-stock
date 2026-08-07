@@ -330,6 +330,49 @@ def test_run_non_trade_day_falls_back_to_previous(db: Session):
     assert len(report.stocks) >= 1
 
 
+def test_run_upsert_no_duplicate_rows(db: Session):
+    """同日重跑不堆重复 (asof, strategy_id, code)，并清理本策略孤儿。"""
+    asof = _seed_trade_day(db)
+    db.add(SecurityMeta(symbol="600519.SH", name="茅台", is_delisted=False, status="listed"))
+    db.commit()
+    _seed_bars(db, "600519.SH", trend=1.01)
+    _seed_factor_yaml(db, "close_always_buy", ALWAYS_BUY_YAML, roles=["closing"])
+    db.add(
+        ClosingPick(
+            asof=asof,
+            strategy_id="close_always_buy",
+            pick_type="stock",
+            code="000002.SZ",
+            name="孤儿",
+            score=1.0,
+            meta_json="{}",
+        )
+    )
+    db.add(
+        ClosingPick(
+            asof=asof,
+            strategy_id="other_strategy",
+            pick_type="stock",
+            code="000003.SZ",
+            name="他策",
+            score=1.0,
+            meta_json="{}",
+        )
+    )
+    db.commit()
+
+    svc = ClosingPickService(db)
+    svc.run(asof=asof)
+    svc.run(asof=asof)
+    picks = db.scalars(select(ClosingPick).where(ClosingPick.asof == asof)).all()
+    keys = [(p.strategy_id, p.code) for p in picks]
+    assert len(keys) == len(set(keys))
+    assert ("close_always_buy", "600519.SH") in keys
+    assert ("close_always_buy", "000002.SZ") not in keys
+    # use_all_closing 时清理该 asof 全部策略孤儿
+    assert ("other_strategy", "000003.SZ") not in keys
+
+
 def test_bind_closing_picks_dedupes_symbols(db: Session):
     """按 score 降序写入自选，同 symbol 去重。"""
     from desk_closing_pick.bind import bind_closing_picks

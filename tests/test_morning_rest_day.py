@@ -94,6 +94,66 @@ def test_post_auction_uses_previous_trade_day_snapshots(db: Session):
     assert report.stocks[0].get("price") == 105.0
     assert all(float(s["auction_pct"]) > 0 for s in report.stocks)
 
+    from desk_ai.refine import MORNING_STOCK_STRATEGY_ID
+    from desk_db.models import MorningStrongPick
+    from desk_morning_brief import MORNING_BOARD_STRATEGY_ID
+
+    picks = db.scalars(
+        select(MorningStrongPick).where(MorningStrongPick.asof == fri)
+    ).all()
+    assert any(p.pick_type == "stock" and p.strategy_id == MORNING_STOCK_STRATEGY_ID for p in picks)
+    assert any(p.pick_type == "board" and p.strategy_id == MORNING_BOARD_STRATEGY_ID for p in picks)
+
+
+def test_post_auction_upsert_no_duplicate_rows(db: Session):
+    """同日重跑竞价选拔不产生重复候选行，并清理孤儿。"""
+    from desk_ai.refine import MORNING_STOCK_STRATEGY_ID
+    from desk_db.models import MorningStrongPick
+
+    asof = date.today()
+    while asof.weekday() >= 5:
+        asof -= timedelta(days=1)
+    db.add(TradeCalendar(cal_date=asof, is_open=True))
+    db.add(
+        AuctionSnapshot(
+            asof=asof,
+            symbol="600519.SH",
+            name="茅台",
+            auction_pct=0.05,
+            auction_amount=1e8,
+            auction_price=105.0,
+            board_code="白酒",
+            board_name="白酒",
+        )
+    )
+    db.add(
+        MorningStrongPick(
+            asof=asof,
+            pick_type="stock",
+            code="999999.SH",
+            name="孤儿",
+            score=1.0,
+            strategy_id=MORNING_STOCK_STRATEGY_ID,
+            meta_json="{}",
+        )
+    )
+    db.commit()
+
+    svc = MorningBriefService(db)
+    svc.run_post_auction(asof)
+    svc.run_post_auction(asof)
+    picks = db.scalars(
+        select(MorningStrongPick).where(MorningStrongPick.asof == asof)
+    ).all()
+    codes = [(p.pick_type, p.code) for p in picks]
+    assert len(codes) == len(set(codes))
+    assert ("stock", "600519.SH") in codes
+    assert ("stock", "999999.SH") not in codes
+    stock = next(p for p in picks if p.pick_type == "stock")
+    assert stock.strategy_id == MORNING_STOCK_STRATEGY_ID
+    assert stock.score > 0
+
+
 
 def test_post_auction_appends_positions_advice(db: Session, monkeypatch):
     """竞价强势正文附带持仓建议段。"""

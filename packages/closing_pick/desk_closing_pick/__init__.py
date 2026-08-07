@@ -117,12 +117,7 @@ class ClosingPickService:
         skipped_bars = 0
         skipped_strategy = 0
         evaluated = 0
-
-        q = select(ClosingPick).where(ClosingPick.asof == asof)
-        if not use_all_closing:
-            q = q.where(ClosingPick.strategy_id.in_(ids))
-        for old in self.db.scalars(q).all():
-            self.db.delete(old)
+        keep: set[tuple[str, str]] = set()
 
         for sid in ids:
             for symbol, name in universe:
@@ -151,18 +146,24 @@ class ClosingPickService:
                     "price": ev.get("last_close"),
                     "signals": ev.get("signals"),
                 }
-                self.db.add(
-                    ClosingPick(
-                        asof=asof,
-                        strategy_id=sid,
-                        pick_type="stock",
-                        code=symbol,
-                        name=name,
-                        score=score,
-                        meta_json=json.dumps(meta, ensure_ascii=False),
-                    )
+                keep.add((sid, symbol))
+                self._upsert_pick(
+                    asof=asof,
+                    strategy_id=sid,
+                    code=symbol,
+                    name=name,
+                    score=score,
+                    meta=meta,
                 )
                 stocks.append(meta)
+
+        # 删除本 run 策略范围内未再命中的旧行
+        q = select(ClosingPick).where(ClosingPick.asof == asof)
+        if not use_all_closing:
+            q = q.where(ClosingPick.strategy_id.in_(ids))
+        for old in self.db.scalars(q).all():
+            if (old.strategy_id, old.code) not in keep:
+                self.db.delete(old)
 
         stocks.sort(key=lambda x: x.get("pct_chg") or 0, reverse=True)
         bits = [f"{s['symbol']}({s.get('strategy_id')})" for s in stocks[:6]]
@@ -240,6 +241,47 @@ class ClosingPickService:
         return ClosingPickReport(
             asof=asof, strategy_ids=ids, stocks=stocks, content=content
         )
+
+    def _upsert_pick(
+        self,
+        *,
+        asof: date,
+        strategy_id: str,
+        code: str,
+        name: str,
+        score: float,
+        meta: dict[str, Any],
+    ) -> ClosingPick:
+        """
+        按 (asof, strategy_id, code) upsert 尾盘候选。
+
+        @param asof: 业务日
+        @param strategy_id: 命中策略
+        @param code: 证券代码
+        @param name: 证券名
+        @param score: 分数
+        @param meta: 写入 meta_json 的字典
+        @returns: 落库行
+        """
+        row = self.db.scalar(
+            select(ClosingPick).where(
+                ClosingPick.asof == asof,
+                ClosingPick.strategy_id == strategy_id,
+                ClosingPick.code == code,
+            )
+        )
+        if row is None:
+            row = ClosingPick(
+                asof=asof,
+                strategy_id=strategy_id,
+                pick_type="stock",
+                code=code,
+            )
+            self.db.add(row)
+        row.name = name
+        row.score = score
+        row.meta_json = json.dumps(meta, ensure_ascii=False)
+        return row
 
     def _clear_briefs(self, asof: date) -> None:
         """删除同日 closing 阶段 brief，避免重跑堆积。"""

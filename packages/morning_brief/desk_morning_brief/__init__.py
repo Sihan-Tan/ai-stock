@@ -10,7 +10,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from desk_ai.refine import maybe_auto_refine
+from desk_ai.refine import MORNING_STOCK_STRATEGY_ID, maybe_auto_refine
 from desk_alert import FeishuWebhookChannel
 from desk_calendar import CalendarService
 from desk_common.contracts import MorningBrief, StrongPickReport
@@ -19,6 +19,9 @@ from desk_lhb import LhbService
 from desk_sentiment import SentimentService
 
 logger = logging.getLogger(__name__)
+
+# 早盘板块候选策略标签（与个股 auction_strong 区分）
+MORNING_BOARD_STRATEGY_ID = "board"
 
 
 class MorningBriefService:
@@ -125,32 +128,38 @@ class MorningBriefService:
         boards.sort(key=lambda x: x["score"], reverse=True)
         boards = boards[:5]
 
-        # 清理并写入 picks
-        old = self.db.scalars(select(MorningStrongPick).where(MorningStrongPick.asof == asof)).all()
-        for o in old:
-            self.db.delete(o)
+        # 按 (asof, pick_type, code) upsert，再删本 asof 孤儿
+        keep: set[tuple[str, str]] = set()
         for b in boards:
-            self.db.add(
-                MorningStrongPick(
-                    asof=asof,
-                    pick_type="board",
-                    code=b["board"],
-                    name=b["board"],
-                    score=b["score"],
-                    meta_json=json.dumps(b, ensure_ascii=False),
-                )
+            code = str(b["board"])
+            keep.add(("board", code))
+            self._upsert_strong_pick(
+                asof=asof,
+                pick_type="board",
+                code=code,
+                name=code,
+                score=float(b["score"]),
+                meta=b,
+                strategy_id=MORNING_BOARD_STRATEGY_ID,
             )
         for s in stocks:
-            self.db.add(
-                MorningStrongPick(
-                    asof=asof,
-                    pick_type="stock",
-                    code=s["symbol"],
-                    name=s["name"],
-                    score=s["score"],
-                    meta_json=json.dumps(s, ensure_ascii=False),
-                )
+            code = str(s["symbol"])
+            keep.add(("stock", code))
+            self._upsert_strong_pick(
+                asof=asof,
+                pick_type="stock",
+                code=code,
+                name=str(s.get("name") or ""),
+                score=float(s["score"]),
+                meta=s,
+                strategy_id=MORNING_STOCK_STRATEGY_ID,
             )
+        orphans = self.db.scalars(
+            select(MorningStrongPick).where(MorningStrongPick.asof == asof)
+        ).all()
+        for o in orphans:
+            if (o.pick_type, o.code) not in keep:
+                self.db.delete(o)
         stock_bits = [f"{s['symbol']}({s['auction_pct']:.1%})" for s in stocks[:4]]
         content = (
             f"【竞价强势】{asof}\n"
@@ -219,6 +228,45 @@ class MorningBriefService:
         if stocks:
             maybe_auto_refine(self.db, "morning", asof)
         return StrongPickReport(asof=asof, boards=boards, stocks=stocks)
+
+    def _upsert_strong_pick(
+        self,
+        *,
+        asof: date,
+        pick_type: str,
+        code: str,
+        name: str,
+        score: float,
+        meta: dict[str, Any],
+        strategy_id: str,
+    ) -> MorningStrongPick:
+        """
+        按 (asof, pick_type, code) upsert 早盘候选。
+
+        @param asof: 业务日
+        @param pick_type: board|stock
+        @param code: 板块名或证券代码
+        @param name: 展示名
+        @param score: 分数
+        @param meta: 写入 meta_json 的字典
+        @param strategy_id: 策略标签
+        @returns: 落库行
+        """
+        row = self.db.scalar(
+            select(MorningStrongPick).where(
+                MorningStrongPick.asof == asof,
+                MorningStrongPick.pick_type == pick_type,
+                MorningStrongPick.code == code,
+            )
+        )
+        if row is None:
+            row = MorningStrongPick(asof=asof, pick_type=pick_type, code=code)
+            self.db.add(row)
+        row.name = name
+        row.score = score
+        row.meta_json = json.dumps(meta, ensure_ascii=False)
+        row.strategy_id = strategy_id
+        return row
 
     def _store(self, asof: date, stage: str, content: str, extras: dict[str, Any]) -> MorningBrief:
         cleaned = {k: v for k, v in extras.items() if v is not None}
