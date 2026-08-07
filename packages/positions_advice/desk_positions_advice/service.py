@@ -10,10 +10,47 @@ from sqlalchemy.orm import Session
 
 from desk_common.settings import get_settings
 from desk_positions_advice.llm import generate_advice_llm
+from desk_positions_advice.names import resolve_symbol_names
 from desk_positions_advice.positions import enrich_positions, load_positions, truncate_positions
 from desk_positions_advice.rules import rule_candidates
 
 logger = logging.getLogger(__name__)
+
+
+def _enrich_item_names(db: Session, items: list[Any]) -> list[dict[str, Any]]:
+    """
+    为建议条目补全 ``name``（已有非空名称则保留）。
+
+    @param db: 数据库 Session
+    @param items: LLM / 规则产出的 items
+    @returns: 补全名称后的 items 列表
+    """
+    out: list[dict[str, Any]] = []
+    need: list[str] = []
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        row = dict(it)
+        out.append(row)
+        if not str(row.get("name") or "").strip():
+            sym = str(row.get("symbol") or "").strip()
+            if sym:
+                need.append(sym)
+    if not need:
+        return out
+    try:
+        names = resolve_symbol_names(db, need)
+    except Exception:  # noqa: BLE001
+        logger.exception("resolve_symbol_names failed; continue without names")
+        return out
+    for row in out:
+        if str(row.get("name") or "").strip():
+            continue
+        sym = str(row.get("symbol") or "").strip()
+        name = str(names.get(sym) or "").strip()
+        if name:
+            row["name"] = name
+    return out
 
 
 def advise_advice(
@@ -111,11 +148,12 @@ def advise_advice(
             "truncated": truncated,
         }
 
+    items = _enrich_item_names(db, list(llm_out.get("items") or []))
     return {
         "status": "ok",
         "source": source,
         "mode": mode,
-        "items": llm_out.get("items") or [],
+        "items": items,
         "market_note": llm_out.get("market_note"),
         "truncated": truncated,
         "rule_candidates": rule_cands or None,

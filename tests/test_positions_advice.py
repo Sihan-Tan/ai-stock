@@ -20,6 +20,7 @@ from desk_db.models import PaperAccount, PaperPosition
 from desk_positions_advice import advise_advice
 from desk_positions_advice.format import append_advice_section
 from desk_positions_advice.llm import generate_advice_llm, normalize_action, parse_advice_payload
+from desk_positions_advice.names import resolve_symbol_names
 from desk_positions_advice.positions import load_positions, truncate_positions
 
 
@@ -49,6 +50,25 @@ def test_append_advice_section_empty_positions():
     assert "持仓建议（live）" in out
     assert "当前无持仓，跳过建议" in out
     assert out.startswith(base)
+
+
+def test_append_advice_section_includes_name():
+    base = "【竞价强势】"
+    advice = {
+        "source": "live",
+        "items": [{"symbol": "600000.SH", "name": "浦发银行", "action": "持有", "reason": "稳"}],
+    }
+    out = append_advice_section(base, advice)
+    assert "600000.SH 浦发银行 持有｜稳" in out
+
+
+def test_append_advice_section_without_name():
+    advice = {
+        "source": "live",
+        "items": [{"symbol": "600000.SH", "action": "持有", "reason": "稳"}],
+    }
+    out = append_advice_section("X", advice)
+    assert "600000.SH 持有｜稳" in out
 
 
 def test_normalize_action_closing_invalid():
@@ -484,3 +504,52 @@ def test_advise_advice_enrich_failure_still_ok(db, monkeypatch):
     )
     out = advise_advice(db, session_kind="closing", asof=date(2026, 7, 27))
     assert out["status"] == "ok"
+
+
+def test_resolve_symbol_names_prefers_quote_then_meta(db: Session):
+    """quotes_snapshot 优先，缺失再走 SecurityMeta。"""
+    from desk_db.models import QuoteSnapshot, SecurityMeta
+
+    db.add(QuoteSnapshot(symbol="600000.SH", name="浦发银行", last=10.0))
+    db.add(SecurityMeta(symbol="600519.SH", name="贵州茅台", is_delisted=False, status="listed"))
+    db.add(SecurityMeta(symbol="600000.SH", name="浦发-meta", is_delisted=False, status="listed"))
+    db.commit()
+
+    names = resolve_symbol_names(db, ["600000.SH", "600519.SH", "000001.SZ"])
+    assert names["600000.SH"] == "浦发银行"
+    assert names["600519.SH"] == "贵州茅台"
+    assert "000001.SZ" not in names
+
+
+def test_advise_advice_enriches_item_name(db, monkeypatch):
+    """advise_advice 返回前为 items 补 name。"""
+    from desk_db.models import SecurityMeta
+
+    db.add(SecurityMeta(symbol="600000.SH", name="浦发银行", is_delisted=False, status="listed"))
+    db.commit()
+
+    monkeypatch.setattr(
+        "desk_positions_advice.service.get_settings",
+        lambda: _advice_settings(),
+    )
+    monkeypatch.setattr(
+        "desk_positions_advice.service.load_positions",
+        lambda db, source: {
+            "ok": True,
+            "source": source,
+            "positions": [_sample_position()],
+        },
+    )
+    monkeypatch.setattr(
+        "desk_positions_advice.service.generate_advice_llm",
+        lambda facts, session_kind, llm_call=None: {
+            "status": "ok",
+            "items": [{"symbol": "600000.SH", "action": "持有", "reason": "稳"}],
+            "market_note": None,
+        },
+    )
+    out = advise_advice(db, session_kind="closing", asof=date(2026, 7, 27))
+    assert out["status"] == "ok"
+    assert out["items"][0].get("name") == "浦发银行"
+    formatted = append_advice_section("【尾盘】", out)
+    assert "600000.SH 浦发银行 持有｜稳" in formatted
