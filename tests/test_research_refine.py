@@ -270,6 +270,50 @@ def test_refine_overwrite_same_asof_source(db: Session):
     assert len(rows) == 1
 
 
+def test_refine_upsert_no_duplicate_rows(db: Session):
+    """
+    同日同源同 symbol 重跑：仅一行且 score 更新；strategy_id=auction_strong。
+
+    @param db: 内存库 Session
+    """
+    from desk_ai.refine import ResearchRefineService, list_research_picks
+
+    asof = date(2026, 7, 24)
+    _seed_morning_stocks(db, asof)
+
+    def scorer_v1(symbol: str, name: str, context: dict):
+        if symbol != "600519.SH":
+            return None
+        return _price_plan(symbol, score=80, confidence=80, rationale="v1")
+
+    ResearchRefineService(db, scorer=scorer_v1).run("morning", asof, top_n=5, min_confidence=70)
+
+    def scorer_v2(symbol: str, name: str, context: dict):
+        if symbol != "600519.SH":
+            return None
+        return _price_plan(symbol, score=95, confidence=90, rationale="v2")
+
+    report = ResearchRefineService(db, scorer=scorer_v2).run(
+        "morning", asof, top_n=5, min_confidence=70
+    )
+    assert len(report.picks) == 1
+    assert report.picks[0].strategy_id == "auction_strong"
+    assert report.picks[0].score == 95
+
+    rows = db.scalars(
+        select(ResearchPick).where(ResearchPick.asof == asof, ResearchPick.source == "morning")
+    ).all()
+    assert len(rows) == 1
+    assert rows[0].score == 95.0
+    assert rows[0].strategy_id == "auction_strong"
+    assert rows[0].id is not None
+
+    listed = list_research_picks(db, asof, "morning")
+    assert len(listed) == 1
+    assert listed[0]["strategy_id"] == "auction_strong"
+    assert listed[0]["score"] == 95.0
+
+
 def test_missing_llm_key_does_not_clear_existing_picks(
     db: Session, monkeypatch: pytest.MonkeyPatch
 ):
@@ -405,6 +449,7 @@ def test_closing_candidates_dedupe_by_code(db: Session):
     assert len(seen) == 1
     assert seen[0].get("base_score") == 3.0
     assert len(report.picks) == 1
+    assert report.picks[0].strategy_id == "s2"
 
 
 def test_maybe_feishu_prefers_image_falls_back_to_text(db: Session, monkeypatch: pytest.MonkeyPatch):

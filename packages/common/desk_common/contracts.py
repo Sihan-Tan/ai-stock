@@ -150,6 +150,8 @@ class ResearchPickItem(BaseModel):
     confidence: float = 0.0
     rationale: str = ""
     rank: int = 0
+    """关联策略 id（早盘固定 auction_strong；尾盘来自候选）。"""
+    strategy_id: str = ""
     """买入区间下限（元）。"""
     buy_low: float = 0.0
     """买入区间上限（元）。"""

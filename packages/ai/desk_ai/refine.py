@@ -8,7 +8,7 @@ import re
 from datetime import date
 from typing import Any, Callable, Literal
 
-from sqlalchemy import delete, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from desk_ai.source_label import research_source_label
@@ -18,6 +18,9 @@ from desk_common.symbols import normalize_symbol
 from desk_db.models import ClosingPick, MorningStrongPick, ResearchPick
 
 logger = logging.getLogger(__name__)
+
+# 早盘个股精选固定策略标签（展示名「竞价强势」）
+MORNING_STOCK_STRATEGY_ID = "auction_strong"
 
 ScorerFn = Callable[[str, str, dict[str, Any]], dict[str, Any] | None]
 
@@ -290,6 +293,7 @@ def list_research_picks(db: Session, asof: date, source: str) -> list[dict[str, 
                 "confidence": r.confidence,
                 "rationale": r.rationale,
                 "rank": r.rank,
+                "strategy_id": r.strategy_id or "",
                 "buy_low": meta.get("buy_low"),
                 "buy_high": meta.get("buy_high"),
                 "target_low": meta.get("target_low"),
@@ -397,7 +401,14 @@ class ResearchRefineService:
                 if parsed is None:
                     errors.append(f"{symbol}:parse_failed")
                     continue
-                scored.append(self._pack_scored(parsed, name, raw))
+                scored.append(
+                    self._pack_scored(
+                        parsed,
+                        name,
+                        raw,
+                        strategy_id=str(cand.get("strategy_id") or ""),
+                    )
+                )
             return scored, errors
 
         from desk_ai.session import NanobotResearchSession
@@ -438,7 +449,14 @@ class ResearchRefineService:
                     if parsed is None:
                         local_err.append(f"{symbol}:parse_failed")
                         continue
-                    local_scored.append(self._pack_scored(parsed, name, raw))
+                    local_scored.append(
+                        self._pack_scored(
+                            parsed,
+                            name,
+                            raw,
+                            strategy_id=str(cand.get("strategy_id") or ""),
+                        )
+                    )
                 return local_scored, local_err
 
             local_scored = []
@@ -459,7 +477,14 @@ class ResearchRefineService:
                 if parsed is None:
                     local_err.append(f"{symbol}:batch_missing")
                     continue
-                local_scored.append(self._pack_scored(parsed, name, parsed))
+                local_scored.append(
+                    self._pack_scored(
+                        parsed,
+                        name,
+                        parsed,
+                        strategy_id=str(cand.get("strategy_id") or ""),
+                    )
+                )
             return local_scored, local_err
 
         if parallel <= 1 or len(batches) <= 1:
@@ -503,11 +528,25 @@ class ResearchRefineService:
         return parse_score_payload(str(raw), symbol)
 
     @staticmethod
-    def _pack_scored(parsed: dict[str, Any], name: str, raw: Any) -> dict[str, Any]:
-        """组装落库用 scored 条目。"""
+    def _pack_scored(
+        parsed: dict[str, Any],
+        name: str,
+        raw: Any,
+        *,
+        strategy_id: str = "",
+    ) -> dict[str, Any]:
+        """
+        组装落库用 scored 条目。
+
+        @param parsed: 已校验评分字段
+        @param name: 标的名称
+        @param raw: scorer 原始返回（写入 meta）
+        @param strategy_id: 候选带来的策略 id
+        """
         return {
             **parsed,
             "name": name,
+            "strategy_id": strategy_id,
             "meta": {
                 **(raw if isinstance(raw, dict) else {"raw": str(raw)}),
                 "buy_low": parsed["buy_low"],
@@ -595,6 +634,7 @@ class ResearchRefineService:
                         "symbol": symbol,
                         "name": r.name or "",
                         "base_score": float(r.score or 0.0),
+                        "strategy_id": MORNING_STOCK_STRATEGY_ID,
                         "meta_json": r.meta_json or "{}",
                     }
                 )
@@ -616,20 +656,76 @@ class ResearchRefineService:
                     "symbol": symbol,
                     "name": r.name or "",
                     "base_score": score,
+                    "strategy_id": str(r.strategy_id or ""),
                     "meta_json": r.meta_json or "{}",
                 }
         ordered = sorted(best.values(), key=lambda x: x["base_score"], reverse=True)
         return ordered[:limit]
 
-    def _clear(self, asof: date, source: str) -> None:
-        """删除同日同 source 旧精选。"""
-        self.db.execute(
-            delete(ResearchPick).where(
-                ResearchPick.asof == asof,
-                ResearchPick.source == source,
+    def _upsert_picks(
+        self, asof: date, source: str, top: list[dict[str, Any]]
+    ) -> list[ResearchPickItem]:
+        """
+        按 (asof, source, symbol) upsert；删除本次未入选的同日同源旧行。
+
+        @param asof: 业务日
+        @param source: morning|closing
+        @param top: 已排序的 TopN scored 条目
+        @returns: 落库后的 ResearchPickItem 列表
+        """
+        keep_symbols: set[str] = set()
+        picks: list[ResearchPickItem] = []
+        for i, item in enumerate(top, start=1):
+            symbol = item["symbol"]
+            keep_symbols.add(symbol)
+            row = self.db.scalar(
+                select(ResearchPick).where(
+                    ResearchPick.asof == asof,
+                    ResearchPick.source == source,
+                    ResearchPick.symbol == symbol,
+                )
             )
+            sid = str(item.get("strategy_id") or "").strip() or None
+            if row is None:
+                row = ResearchPick(asof=asof, source=source, symbol=symbol)
+                self.db.add(row)
+            row.name = item.get("name") or ""
+            row.score = float(item["score"])
+            row.confidence = float(item["confidence"])
+            row.rationale = str(item.get("rationale") or "")
+            row.rank = i
+            row.strategy_id = sid
+            row.meta_json = json.dumps(
+                item.get("meta") or {}, ensure_ascii=False, default=str
+            )
+            picks.append(
+                ResearchPickItem(
+                    symbol=symbol,
+                    name=row.name,
+                    score=row.score,
+                    confidence=row.confidence,
+                    rationale=row.rationale,
+                    rank=row.rank,
+                    strategy_id=sid or "",
+                    buy_low=float(item["buy_low"]),
+                    buy_high=float(item["buy_high"]),
+                    target_low=float(item["target_low"]),
+                    target_high=float(item["target_high"]),
+                    stop_loss=float(item["stop_loss"]),
+                )
+            )
+
+        q = select(ResearchPick).where(
+            ResearchPick.asof == asof,
+            ResearchPick.source == source,
         )
+        if keep_symbols:
+            q = q.where(ResearchPick.symbol.not_in(keep_symbols))
+        orphans = self.db.scalars(q).all()
+        for o in orphans:
+            self.db.delete(o)
         self.db.flush()
+        return picks
 
     def run(
         self,
@@ -704,37 +800,7 @@ class ResearchRefineService:
                 candidates_evaluated=len(candidates),
             )
 
-        self._clear(resolved, source)
-        picks: list[ResearchPickItem] = []
-        for i, item in enumerate(top, start=1):
-            row = ResearchPick(
-                asof=resolved,
-                source=source,
-                symbol=item["symbol"],
-                name=item.get("name") or "",
-                score=float(item["score"]),
-                confidence=float(item["confidence"]),
-                rationale=str(item.get("rationale") or ""),
-                rank=i,
-                meta_json=json.dumps(item.get("meta") or {}, ensure_ascii=False, default=str),
-            )
-            self.db.add(row)
-            picks.append(
-                ResearchPickItem(
-                    symbol=row.symbol,
-                    name=row.name,
-                    score=row.score,
-                    confidence=row.confidence,
-                    rationale=row.rationale,
-                    rank=row.rank,
-                    buy_low=float(item["buy_low"]),
-                    buy_high=float(item["buy_high"]),
-                    target_low=float(item["target_low"]),
-                    target_high=float(item["target_high"]),
-                    stop_loss=float(item["stop_loss"]),
-                )
-            )
-        self.db.flush()
+        picks = self._upsert_picks(resolved, source, top)
         self._maybe_feishu(resolved, source, picks, errors=errors)
         return ResearchRefineReport(
             asof=resolved,
