@@ -37,6 +37,8 @@ class Settings(BaseSettings):
 
     feishu_webhook_url: str = ""
     feishu_sign_secret: str = ""
+    feishu_app_id: str = ""
+    feishu_app_secret: str = ""
     """飞书告警总开关；False 时自动告警不发 Webhook。"""
     feishu_alert_enabled: bool = True
     """允许推送的类别（逗号分隔）；默认含 research，不含 risk。"""

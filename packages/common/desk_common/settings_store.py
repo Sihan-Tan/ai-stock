@@ -24,6 +24,8 @@ EDITABLE_ENV: dict[str, str] = {
     "embedding_model": "EMBEDDING_MODEL",
     "feishu_webhook_url": "FEISHU_WEBHOOK_URL",
     "feishu_sign_secret": "FEISHU_SIGN_SECRET",
+    "feishu_app_id": "FEISHU_APP_ID",
+    "feishu_app_secret": "FEISHU_APP_SECRET",
     "feishu_alert_enabled": "FEISHU_ALERT_ENABLED",
     "feishu_alert_categories": "FEISHU_ALERT_CATEGORIES",
     "qmt_userdata_path": "QMT_USERDATA_PATH",
@@ -59,7 +61,9 @@ EDITABLE_ENV: dict[str, str] = {
     "risk_whitelist": "RISK_WHITELIST",
 }
 
-SECRET_FIELDS = frozenset({"llm_api_key", "embedding_api_key", "feishu_sign_secret"})
+SECRET_FIELDS = frozenset(
+    {"llm_api_key", "embedding_api_key", "feishu_sign_secret", "feishu_app_secret"}
+)
 
 
 def _env_path() -> Path:
@@ -108,6 +112,9 @@ def public_settings() -> dict[str, Any]:
         "feishu_webhook_url": s.feishu_webhook_url,
         "feishu_sign_secret": _mask_secret(s.feishu_sign_secret),
         "feishu_sign_secret_set": bool(s.feishu_sign_secret),
+        "feishu_app_id": s.feishu_app_id,
+        "feishu_app_secret": _mask_secret(s.feishu_app_secret),
+        "feishu_app_secret_set": bool(s.feishu_app_secret),
         "feishu_alert_enabled": s.feishu_alert_enabled,
         "feishu_alert_categories": s.feishu_alert_categories,
         "qmt_userdata_path": s.qmt_userdata_path,
