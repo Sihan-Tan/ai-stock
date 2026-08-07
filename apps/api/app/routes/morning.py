@@ -142,6 +142,17 @@ def morning_latest(asof: date | None = None, db: Session = Depends(get_db)):
     return _latest_payload(db, asof)
 
 
+@router.get("/history")
+def morning_history(asof: date | None = None, db: Session = Depends(get_db)):
+    """
+    指定日历史结果（与 latest 同形，不做交易日回退）。
+
+    @param asof: 业务日，缺省今天
+    """
+    asof = asof or date.today()
+    return _latest_payload(db, asof)
+
+
 @router.post("/research-refine")
 def research_refine(body: ResearchRefineIn | None = None, db: Session = Depends(get_db)):
     """

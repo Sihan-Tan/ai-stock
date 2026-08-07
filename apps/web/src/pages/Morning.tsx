@@ -68,14 +68,20 @@ export default function Morning({ setLog }: PageLogProps) {
   const [briefTab, setBriefTab] = useState<"preopen" | "post_auction">("post_auction");
 
   /**
-   * 加载早盘结果；可指定回看日。
+   * 加载早盘结果；显式选日或已回看时走 history，避免非交易日回退。
    * @param nextAsof 显式业务日；缺省用当前 asof 状态
    */
   const load = async (nextAsof?: string) => {
     const q = nextAsof || asof;
-    const url = q
-      ? `/api/morning/latest?asof=${encodeURIComponent(q)}`
-      : "/api/morning/latest";
+    const useHistory = (nextAsof != null && nextAsof !== "") || asofPicked;
+    let url: string;
+    if (useHistory && q) {
+      url = `/api/morning/history?asof=${encodeURIComponent(q)}`;
+    } else if (q) {
+      url = `/api/morning/latest?asof=${encodeURIComponent(q)}`;
+    } else {
+      url = "/api/morning/latest";
+    }
     try {
       const latest = await api<MorningLatest>(url);
       setData(latest);
