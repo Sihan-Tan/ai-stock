@@ -90,6 +90,66 @@ class FeishuWebhookChannel:
             status = "logged_only"
         return self._persist(title, body, cat, dedupe_key, status)
 
+    def send_image(
+        self,
+        title: str,
+        image_bytes: bytes,
+        category: str = "signal",
+        dedupe_key: str = "",
+        *,
+        force: bool = False,
+    ) -> dict[str, Any]:
+        """
+        上传 PNG 并以 image 消息发送；开关/类别/去重与 send 一致。
+
+        @param title 告警标题
+        @param image_bytes PNG 字节
+        @param category 告警类别
+        @param dedupe_key 去重键；失败时不落库同 key，便于文本回退
+        @param force 强制发送（绕过开关）
+        @returns status: sent | deduped | disabled | no_credentials | failed:...
+        """
+        self.settings = get_settings()
+        body = f"[image] {title}"
+        if dedupe_key:
+            since = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=5)
+            hit = self.db.scalar(
+                select(AlertRow).where(
+                    AlertRow.dedupe_key == dedupe_key, AlertRow.created_at >= since
+                )
+            )
+            if hit:
+                return {"status": "deduped", "id": hit.id}
+
+        cat = (category or "signal").strip().lower() or "signal"
+        is_test = force or cat in TEST_ALERT_CATEGORIES
+        if not is_test:
+            if not self.settings.feishu_alert_enabled:
+                return self._persist(title, body, cat, dedupe_key, "disabled")
+            if not _category_allowed(cat, self.settings.feishu_alert_categories):
+                return self._persist(title, body, cat, dedupe_key, "disabled")
+
+        app_id = (self.settings.feishu_app_id or "").strip()
+        app_secret = (self.settings.feishu_app_secret or "").strip()
+        if not app_id or not app_secret:
+            return self._persist(title, body, cat, "", "no_credentials")
+
+        try:
+            token = _feishu_tenant_token(app_id, app_secret)
+            image_key = _feishu_upload_image(token, image_bytes)
+        except Exception as exc:  # noqa: BLE001
+            return self._persist(title, body, cat, "", f"failed:{exc}"[:128])
+
+        payload = {"msg_type": "image", "content": {"image_key": image_key}}
+        url = (self.settings.feishu_webhook_url or "").strip()
+        if url:
+            status = self._post_webhook(url, payload)
+        else:
+            status = "logged_only"
+        # 失败不占 dedupe，便于同 key 文本回退
+        persist_key = dedupe_key if status in ("sent", "logged_only") else ""
+        return self._persist(title, body, cat, persist_key, status)
+
     def _persist(
         self,
         title: str,
@@ -155,6 +215,73 @@ class FeishuWebhookChannel:
             }
             for r in rows
         ]
+
+
+def _feishu_tenant_token(app_id: str, app_secret: str) -> str:
+    """
+    获取飞书 tenant_access_token。
+
+    @param app_id 应用 App ID
+    @param app_secret 应用 App Secret
+    @returns tenant_access_token
+    """
+    r = httpx.post(
+        "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal",
+        json={"app_id": app_id, "app_secret": app_secret},
+        timeout=10.0,
+    )
+    if r.status_code >= 300:
+        raise RuntimeError(f"token_http_{r.status_code}")
+    data = r.json()
+    if not isinstance(data, dict):
+        raise RuntimeError("token:bad_json")
+    try:
+        code_i = int(data.get("code", -1))
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(f"token:bad_code:{data.get('code')}") from exc
+    if code_i != 0:
+        msg = data.get("msg") or data.get("message") or ""
+        raise RuntimeError(f"token:code_{code_i}:{msg}")
+    token = (data.get("tenant_access_token") or "").strip()
+    if not token:
+        raise RuntimeError("token:empty")
+    return token
+
+
+def _feishu_upload_image(token: str, image_bytes: bytes) -> str:
+    """
+    上传 PNG 到飞书，返回 image_key。
+
+    @param token tenant_access_token
+    @param image_bytes PNG 字节
+    @returns image_key
+    """
+    r = httpx.post(
+        "https://open.feishu.cn/open-apis/im/v1/images",
+        headers={"Authorization": f"Bearer {token}"},
+        data={"image_type": "message"},
+        files={"image": ("file.png", image_bytes, "image/png")},
+        timeout=30.0,
+    )
+    if r.status_code >= 300:
+        raise RuntimeError(f"upload_http_{r.status_code}")
+    data = r.json()
+    if not isinstance(data, dict):
+        raise RuntimeError("upload:bad_json")
+    try:
+        code_i = int(data.get("code", -1))
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(f"upload:bad_code:{data.get('code')}") from exc
+    if code_i != 0:
+        msg = data.get("msg") or data.get("message") or ""
+        raise RuntimeError(f"upload:code_{code_i}:{msg}")
+    image_key = ((data.get("data") or {}) if isinstance(data.get("data"), dict) else {}).get(
+        "image_key"
+    ) or ""
+    image_key = str(image_key).strip()
+    if not image_key:
+        raise RuntimeError("upload:empty_image_key")
+    return image_key
 
 
 def _interpret_feishu_response(text: str) -> str:
