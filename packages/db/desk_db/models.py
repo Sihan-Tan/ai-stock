@@ -471,6 +471,9 @@ class AuctionSnapshot(Base):
 
 class MorningStrongPick(Base):
     __tablename__ = "morning_strong_picks"
+    __table_args__ = (
+        UniqueConstraint("asof", "pick_type", "code", name="uq_morning_strong_asof_type_code"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     asof: Mapped[date] = mapped_column(Date, index=True)
@@ -479,6 +482,8 @@ class MorningStrongPick(Base):
     name: Mapped[str] = mapped_column(String(64), default="")
     score: Mapped[float] = mapped_column(Float, default=0.0)
     meta_json: Mapped[str] = mapped_column(Text, default="{}")
+    """关联策略（可空，历史行可能无）。"""
+    strategy_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 class ClosingBriefRow(Base):
@@ -498,6 +503,9 @@ class ClosingPick(Base):
     """尾盘选股命中明细（按策略分行）。"""
 
     __tablename__ = "closing_picks"
+    __table_args__ = (
+        UniqueConstraint("asof", "strategy_id", "code", name="uq_closing_picks_asof_strategy_code"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     asof: Mapped[date] = mapped_column(Date, index=True)
@@ -513,11 +521,16 @@ class ResearchPick(Base):
     """投研精选结果（早盘/尾盘共用）。"""
 
     __tablename__ = "research_picks"
+    __table_args__ = (
+        UniqueConstraint("asof", "source", "symbol", name="uq_research_picks_asof_source_symbol"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     asof: Mapped[date] = mapped_column(Date, index=True)
     source: Mapped[str] = mapped_column(String(16), index=True)  # morning|closing
     symbol: Mapped[str] = mapped_column(String(32), index=True)
+    """关联策略（可空，历史行可能无）。"""
+    strategy_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     name: Mapped[str] = mapped_column(String(64), default="")
     score: Mapped[float] = mapped_column(Float, default=0.0)
     confidence: Mapped[float] = mapped_column(Float, default=0.0)
