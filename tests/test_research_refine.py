@@ -404,3 +404,63 @@ def test_closing_candidates_dedupe_by_code(db: Session):
     assert len(seen) == 1
     assert seen[0].get("base_score") == 3.0
     assert len(report.picks) == 1
+
+
+def test_maybe_feishu_prefers_image_falls_back_to_text(db: Session, monkeypatch: pytest.MonkeyPatch):
+    """
+    飞书优先发表格图：sent 不发文本；no_credentials 回落 send。
+
+    @param db: 内存库 Session
+    @param monkeypatch: pytest monkeypatch
+    """
+    from unittest.mock import MagicMock, patch
+
+    from desk_common.contracts import ResearchPickItem
+    from desk_ai.refine import ResearchRefineService
+
+    asof = date(2026, 7, 24)
+    picks = [
+        ResearchPickItem(
+            symbol="600519.SH",
+            name="茅台",
+            score=90.0,
+            confidence=88.0,
+            rationale="强势",
+            rank=1,
+            buy_low=1600.0,
+            buy_high=1650.0,
+            target_low=1700.0,
+            target_high=1800.0,
+            stop_loss=1550.0,
+        )
+    ]
+    svc = ResearchRefineService(db)
+    png = b"\x89PNG\r\n\x1a\n"
+
+    with (
+        patch("desk_alert.FeishuWebhookChannel") as ch_cls,
+        patch(
+            "desk_ai.research_table_image.render_research_table_png",
+            return_value=png,
+        ) as render_mock,
+    ):
+        ch = MagicMock()
+        ch_cls.return_value = ch
+
+        ch.send_image.return_value = {"status": "sent", "id": 1}
+        svc._maybe_feishu(asof, "morning", picks)
+        render_mock.assert_called_once()
+        ch.send_image.assert_called_once()
+        ch.send.assert_not_called()
+
+        ch.reset_mock()
+        render_mock.reset_mock()
+        ch.send_image.return_value = {"status": "no_credentials", "id": 2}
+        svc._maybe_feishu(asof, "morning", picks)
+        render_mock.assert_called_once()
+        ch.send_image.assert_called_once()
+        ch.send.assert_called_once()
+        send_args = ch.send.call_args
+        assert send_args.args[0] == "投研精选·morning"
+        assert send_args.kwargs.get("category") == "research"
+        assert send_args.kwargs.get("dedupe_key") == f"research:morning:{asof}"

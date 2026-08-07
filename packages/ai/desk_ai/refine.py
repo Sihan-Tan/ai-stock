@@ -524,19 +524,36 @@ class ResearchRefineService:
         *,
         errors: list[str] | None = None,
     ) -> None:
-        """成功有结果时推送全量精选字段；失败不影响落库。"""
+        """
+        成功有结果时优先推表格图，失败/无凭证再回落文本；异常不影响落库。
+
+        @param asof: 业务日
+        @param source: morning|closing
+        @param picks: 精选结果
+        @param errors: 可选错误摘要
+        """
         if not picks:
             return
         try:
             from desk_alert import FeishuWebhookChannel
+            from desk_ai.research_table_image import render_research_table_png
+
+            title = f"投研精选·{source}"
+            dedupe = f"research:{source}:{asof}"
+            ch = FeishuWebhookChannel(self.db)
+            try:
+                png = render_research_table_png(asof, source, picks, errors=errors)
+                img_status = ch.send_image(
+                    title, png, category="research", dedupe_key=dedupe
+                )
+                st = str(img_status.get("status") or "")
+                if st == "sent" or st == "deduped" or st == "disabled":
+                    return
+            except Exception:  # noqa: BLE001
+                logger.exception("research refine image send failed; fallback text")
 
             body = format_research_feishu_body(asof, source, picks, errors=errors)
-            FeishuWebhookChannel(self.db).send(
-                f"投研精选·{source}",
-                body,
-                category="research",
-                dedupe_key=f"research:{source}:{asof}",
-            )
+            ch.send(title, body, category="research", dedupe_key=dedupe)
         except Exception:  # noqa: BLE001
             logger.exception("research refine feishu send failed")
 
