@@ -86,6 +86,7 @@ def _latest_payload(db: Session, asof: date) -> dict:
             "name": pick.name,
             "score": pick.score,
             **meta,
+            "strategy_id": pick.strategy_id or None,
         }
         if pick.pick_type == "board":
             boards.append(item)

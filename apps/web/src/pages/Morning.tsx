@@ -6,10 +6,12 @@ import type { PageLogProps } from "./types";
 import {
   EmptyPickNotice,
   EmptyRow,
+  asofDateInputClass,
   formatCompact,
   formatPct,
   formatPrice,
   formatScore,
+  formatStrategyLabel,
   PrimaryAction,
   ResearchPicksPanel,
   type ResearchPickRow,
@@ -35,6 +37,7 @@ type MorningLatest = {
     avg_pct?: number;
     count?: number;
     score?: number;
+    strategy_id?: string;
   }>;
   stocks: Array<{
     symbol?: string;
@@ -45,6 +48,7 @@ type MorningLatest = {
     price?: number;
     board?: string;
     score?: number;
+    strategy_id?: string;
   }>;
   research_picks?: ResearchPickRow[];
 };
@@ -55,17 +59,31 @@ type MorningLatest = {
  */
 export default function Morning({ setLog }: PageLogProps) {
   const [data, setData] = useState<MorningLatest | null>(null);
+  /** YYYY-MM-DD；空=尚未同步，默认业务日由后端解析 */
+  const [asof, setAsof] = useState("");
+  /** 用户是否主动改过日期（用于区分「尚未运行」与「该日暂无数据」） */
+  const [asofPicked, setAsofPicked] = useState(false);
   const [busy, setBusy] = useState(false);
   const [drawerSymbol, setDrawerSymbol] = useState<string | null>(null);
   const [briefTab, setBriefTab] = useState<"preopen" | "post_auction">("post_auction");
 
   /**
-   * 加载当日早盘结果。
+   * 加载早盘结果；可指定回看日。
+   * @param nextAsof 显式业务日；缺省用当前 asof 状态
    */
-  const load = () =>
-    api<MorningLatest>("/api/morning/latest")
-      .then(setData)
-      .catch((error) => setLog(String(error)));
+  const load = async (nextAsof?: string) => {
+    const q = nextAsof || asof;
+    const url = q
+      ? `/api/morning/latest?asof=${encodeURIComponent(q)}`
+      : "/api/morning/latest";
+    try {
+      const latest = await api<MorningLatest>(url);
+      setData(latest);
+      if (latest.asof) setAsof(latest.asof);
+    } catch (error) {
+      setLog(String(error));
+    }
+  };
 
   useEffect(() => {
     void load();
@@ -81,6 +99,7 @@ export default function Morning({ setLog }: PageLogProps) {
       await api("/api/morning/post-auction", { method: "POST" });
       const latest = await api<MorningLatest>("/api/morning/latest");
       setData(latest);
+      if (latest.asof) setAsof(latest.asof);
       const n = latest.stocks?.length ?? 0;
       setLog(
         n > 0
@@ -103,6 +122,7 @@ export default function Morning({ setLog }: PageLogProps) {
       await api("/api/morning/post-auction", { method: "POST" });
       const latest = await api<MorningLatest>("/api/morning/latest");
       setData(latest);
+      if (latest.asof) setAsof(latest.asof);
       setBriefTab("post_auction");
       const n = latest.stocks?.length ?? 0;
       setLog(
@@ -123,7 +143,7 @@ export default function Morning({ setLog }: PageLogProps) {
     try {
       const result = await api<{ count: number; added: string[] }>("/api/morning/bind", {
         method: "POST",
-        body: JSON.stringify({ asof: data?.asof || undefined, limit: 20 }),
+        body: JSON.stringify({ asof: asof || data?.asof || undefined, limit: 20 }),
       });
       setLog(`已写入自选 ${result.count} 只：${(result.added || []).slice(0, 8).join(", ")}`);
     } catch (error) {
@@ -139,13 +159,16 @@ export default function Morning({ setLog }: PageLogProps) {
   const runResearchRefine = async () => {
     setBusy(true);
     try {
+      const day = asof || data?.asof || undefined;
       const report = await api<{
         picks?: ResearchPickRow[];
         candidates_evaluated?: number;
         errors?: string[];
-      }>("/api/morning/research-refine", { method: "POST" });
-      const latest = await api<MorningLatest>("/api/morning/latest");
-      setData(latest);
+      }>("/api/morning/research-refine", {
+        method: "POST",
+        body: JSON.stringify({ asof: day }),
+      });
+      await load(day);
       const errs = report.errors ?? [];
       if (errs.includes("llm_api_key_missing")) {
         setLog("投研精选失败：未配置 LLM API Key，请到「设置 → LLM」填写后再试。");
@@ -162,7 +185,7 @@ export default function Morning({ setLog }: PageLogProps) {
         setLog(`投研精选失败：${hardErr}`);
         return;
       }
-      const n = report.picks?.length ?? latest.research_picks?.length ?? 0;
+      const n = report.picks?.length ?? 0;
       const errNote = errs.length ? `；跳过 ${errs.length} 条` : "";
       setLog(
         `投研精选完成：入选 ${n} 只（评估 ${report.candidates_evaluated ?? "—"} 只候选）${errNote}`
@@ -183,12 +206,14 @@ export default function Morning({ setLog }: PageLogProps) {
   const activeBrief = briefTab === "preopen" ? pre : post;
   const hasRun = Boolean(pre?.content || post?.content);
   const noStockPick = hasRun && stocks.length === 0;
+  const emptyDay =
+    asofPicked && !hasRun && stocks.length === 0 && researchPicks.length === 0;
 
   return (
     <div className="space-y-4">
       <SessionHero
         kind="morning"
-        asof={data?.asof}
+        asof={data?.asof || asof || undefined}
         busy={busy}
         hasRun={hasRun}
         metrics={[
@@ -209,6 +234,19 @@ export default function Morning({ setLog }: PageLogProps) {
             >
               进自选
             </SecondaryAction>
+            <input
+              type="date"
+              className={asofDateInputClass}
+              value={asof || ""}
+              disabled={busy}
+              onChange={(e) => {
+                const v = e.target.value;
+                setAsof(v);
+                setAsofPicked(true);
+                void load(v);
+              }}
+              aria-label="选择回看日期"
+            />
             <SecondaryAction
               isDisabled={busy || !stocks.length}
               onPress={() => void runResearchRefine()}
@@ -222,6 +260,13 @@ export default function Morning({ setLog }: PageLogProps) {
         }
       />
 
+      {emptyDay && (
+        <EmptyPickNotice
+          title="该日暂无数据"
+          tip="所选日期尚无早盘摘要或选拔结果。可换一天回看，或点「运行早盘」生成当日数据。"
+        />
+      )}
+
       {noStockPick && (
         <EmptyPickNotice
           title="本次未选出符合条件的个股"
@@ -229,7 +274,7 @@ export default function Morning({ setLog }: PageLogProps) {
         />
       )}
 
-      {!hasRun && (
+      {!hasRun && !emptyDay && (
         <EmptyPickNotice
           title="尚未运行早盘选股"
           tip="点击右上角「运行早盘」生成开盘前摘要与竞价强势名单；若运行后仍无个股，页面会再次提示。"
@@ -267,7 +312,11 @@ export default function Morning({ setLog }: PageLogProps) {
         <SessionBrief
           title={briefTab === "preopen" ? "开盘前" : "竞价后"}
           content={activeBrief?.content}
-          emptyHint="暂无摘要。点击「运行早盘」生成开盘前与竞价结果。"
+          emptyHint={
+            emptyDay
+              ? "该日暂无数据。"
+              : "暂无摘要。点击「运行早盘」生成开盘前与竞价结果。"
+          }
         />
       </SessionPanel>
 
@@ -302,9 +351,11 @@ export default function Morning({ setLog }: PageLogProps) {
                   <EmptyRow
                     colSpan={5}
                     message={
-                      hasRun
-                        ? "本次未选出符合条件的板块。"
-                        : "暂无板块。需先有竞价快照并完成选拔。"
+                      emptyDay
+                        ? "该日暂无数据。"
+                        : hasRun
+                          ? "本次未选出符合条件的板块。"
+                          : "暂无板块。需先有竞价快照并完成选拔。"
                     }
                   />
                 )}
@@ -336,6 +387,7 @@ export default function Morning({ setLog }: PageLogProps) {
                   <th className={thClass}>竞价涨幅</th>
                   <th className={thClass}>竞价额</th>
                   <th className={thClass}>板块</th>
+                  <th className={thClass}>策略</th>
                   <th className={thClass}>得分</th>
                 </tr>
               </thead>
@@ -362,17 +414,22 @@ export default function Morning({ setLog }: PageLogProps) {
                         {formatCompact(stock.auction_amount)}
                       </td>
                       <td className={tdClass}>{stock.board || "—"}</td>
+                      <td className={`${tdClass} text-xs`}>
+                        {formatStrategyLabel(stock.strategy_id || "auction_strong")}
+                      </td>
                       <td className={`${tdClass} font-mono`}>{formatScore(stock.score)}</td>
                     </tr>
                   );
                 })}
                 {!stocks.length && (
                   <EmptyRow
-                    colSpan={8}
+                    colSpan={9}
                     message={
-                      hasRun
-                        ? "本次未选出竞价上涨个股。"
-                        : "暂无个股。请点击「运行早盘」拉取竞价快照并选拔。"
+                      emptyDay
+                        ? "该日暂无数据。"
+                        : hasRun
+                          ? "本次未选出竞价上涨个股。"
+                          : "暂无个股。请点击「运行早盘」拉取竞价快照并选拔。"
                     }
                   />
                 )}
@@ -393,9 +450,11 @@ export default function Morning({ setLog }: PageLogProps) {
         busy={busy}
         onRun={() => void runResearchRefine()}
         emptyHint={
-          stocks.length
-            ? "暂无投研精选。点击「投研精选」对当前强势个股打分。"
-            : "暂无投研精选。请先完成早盘选拔后再运行。"
+          emptyDay
+            ? "该日暂无数据。"
+            : stocks.length
+              ? "暂无投研精选。点击「投研精选」对当前强势个股打分。"
+              : "暂无投研精选。请先完成早盘选拔后再运行。"
         }
         onRowClick={(symbol) => setDrawerSymbol(symbol)}
       />

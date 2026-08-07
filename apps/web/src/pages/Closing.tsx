@@ -6,9 +6,11 @@ import type { PageLogProps } from "./types";
 import {
   EmptyPickNotice,
   EmptyRow,
+  asofDateInputClass,
   formatPct,
   formatPrice,
   formatScore,
+  formatStrategyLabel,
   PrimaryAction,
   ResearchPicksPanel,
   type ResearchPickRow,
@@ -54,6 +56,10 @@ type ClosingStrategy = {
  */
 export default function Closing({ setLog }: PageLogProps) {
   const [data, setData] = useState<ClosingLatest | null>(null);
+  /** YYYY-MM-DD；空=尚未同步，默认业务日由后端解析 */
+  const [asof, setAsof] = useState("");
+  /** 用户是否主动改过日期（用于区分「尚未运行」与「该日暂无数据」） */
+  const [asofPicked, setAsofPicked] = useState(false);
   const [strategies, setStrategies] = useState<ClosingStrategy[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
@@ -61,12 +67,28 @@ export default function Closing({ setLog }: PageLogProps) {
   const strategiesInitialized = useRef(false);
 
   /**
-   * 加载当日尾盘结果。
+   * 加载尾盘结果；显式选日或已回看时走 history，避免非交易日回退。
+   * @param nextAsof 显式业务日；缺省用当前 asof 状态
    */
-  const loadLatest = () =>
-    api<ClosingLatest>("/api/closing/latest")
-      .then(setData)
-      .catch((error) => setLog(String(error)));
+  const loadLatest = async (nextAsof?: string) => {
+    const q = nextAsof || asof;
+    const useHistory = (nextAsof != null && nextAsof !== "") || asofPicked;
+    let url: string;
+    if (useHistory && q) {
+      url = `/api/closing/history?asof=${encodeURIComponent(q)}`;
+    } else if (q) {
+      url = `/api/closing/latest?asof=${encodeURIComponent(q)}`;
+    } else {
+      url = "/api/closing/latest";
+    }
+    try {
+      const latest = await api<ClosingLatest>(url);
+      setData(latest);
+      if (latest.asof) setAsof(latest.asof);
+    } catch (error) {
+      setLog(String(error));
+    }
+  };
 
   /**
    * 加载策略列表；首次默认勾选 closing 角色策略。
@@ -122,7 +144,7 @@ export default function Closing({ setLog }: PageLogProps) {
           body: JSON.stringify({ strategy_ids: selectedIds }),
         }
       );
-      await loadLatest();
+      await loadLatest(report.asof || undefined);
       const n = Array.isArray(report.stocks) ? report.stocks.length : 0;
       const asofNote = report.asof ? `（${report.asof}）` : "";
       setLog(
@@ -146,7 +168,7 @@ export default function Closing({ setLog }: PageLogProps) {
       const result = await api<{ count: number; added: string[] }>("/api/closing/bind", {
         method: "POST",
         body: JSON.stringify({
-          asof: data?.asof || undefined,
+          asof: asof || data?.asof || undefined,
           limit: 20,
           strategy_ids: selectedIds.length ? selectedIds : undefined,
         }),
@@ -165,12 +187,16 @@ export default function Closing({ setLog }: PageLogProps) {
   const runResearchRefine = async () => {
     setBusy(true);
     try {
+      const day = asof || data?.asof || undefined;
       const report = await api<{
         picks?: ResearchPickRow[];
         candidates_evaluated?: number;
         errors?: string[];
-      }>("/api/closing/research-refine", { method: "POST" });
-      await loadLatest();
+      }>("/api/closing/research-refine", {
+        method: "POST",
+        body: JSON.stringify({ asof: day }),
+      });
+      await loadLatest(day);
       const errs = report.errors ?? [];
       if (errs.includes("llm_api_key_missing")) {
         setLog("投研精选失败：未配置 LLM API Key，请到「设置 → LLM」填写后再试。");
@@ -213,12 +239,14 @@ export default function Closing({ setLog }: PageLogProps) {
   const hasRun = Boolean(brief?.content);
   const filteredEmpty = selectedIds.length > 0 && allStocks.length > 0 && displayStocks.length === 0;
   const noPickAfterRun = hasRun && allStocks.length === 0;
+  const emptyDay =
+    asofPicked && !hasRun && allStocks.length === 0 && researchPicks.length === 0;
 
   return (
     <div className="space-y-4">
       <SessionHero
         kind="closing"
-        asof={data?.asof}
+        asof={data?.asof || asof || undefined}
         busy={busy}
         hasRun={hasRun}
         metrics={[
@@ -237,6 +265,19 @@ export default function Closing({ setLog }: PageLogProps) {
             >
               进自选
             </SecondaryAction>
+            <input
+              type="date"
+              className={asofDateInputClass}
+              value={asof || ""}
+              disabled={busy}
+              onChange={(e) => {
+                const v = e.target.value;
+                setAsof(v);
+                setAsofPicked(true);
+                void loadLatest(v);
+              }}
+              aria-label="选择回看日期"
+            />
             <SecondaryAction
               isDisabled={busy || !allStocks.length}
               onPress={() => void runResearchRefine()}
@@ -253,7 +294,14 @@ export default function Closing({ setLog }: PageLogProps) {
         }
       />
 
-      {!hasRun && (
+      {emptyDay && (
+        <EmptyPickNotice
+          title="该日暂无数据"
+          tip="所选日期尚无尾盘摘要或命中结果。可换一天回看，或点「立即跑」生成当日数据。"
+        />
+      )}
+
+      {!hasRun && !emptyDay && (
         <EmptyPickNotice
           title="尚未运行尾盘选股"
           tip="先在策略页勾选「尾盘」，再点「立即跑」。若跑完仍无命中，页面会给出明确提示。"
@@ -264,7 +312,11 @@ export default function Closing({ setLog }: PageLogProps) {
         <SessionBrief
           title="尾盘"
           content={brief?.content}
-          emptyHint="暂无摘要。先在策略页标记「尾盘」，再点「立即跑」。"
+          emptyHint={
+            emptyDay
+              ? "该日暂无数据。"
+              : "暂无摘要。先在策略页标记「尾盘」，再点「立即跑」。"
+          }
         />
       </SessionPanel>
 
@@ -368,7 +420,9 @@ export default function Closing({ setLog }: PageLogProps) {
                   </td>
                   <td className={tdClass}>{stock.name || "—"}</td>
                   <td className={`${tdClass} font-mono`}>{formatPrice(price)}</td>
-                  <td className={`${tdClass} font-mono text-xs`}>{stock.strategy_id || "—"}</td>
+                  <td className={`${tdClass} text-xs`}>
+                    {formatStrategyLabel(stock.strategy_id)}
+                  </td>
                   <td className={`${tdClass} font-mono ${chgToneClass(stock.pct_chg)}`}>
                     {formatPct(stock.pct_chg)}
                   </td>
@@ -380,11 +434,13 @@ export default function Closing({ setLog }: PageLogProps) {
               <EmptyRow
                 colSpan={7}
                 message={
-                  filteredEmpty
-                    ? "当前勾选策略下无命中，请调整勾选。"
-                    : noPickAfterRun
-                      ? "本次未选出符合条件的股票。"
-                      : "暂无命中。标记尾盘策略后点击「立即跑」。"
+                  emptyDay
+                    ? "该日暂无数据。"
+                    : filteredEmpty
+                      ? "当前勾选策略下无命中，请调整勾选。"
+                      : noPickAfterRun
+                        ? "本次未选出符合条件的股票。"
+                        : "暂无命中。标记尾盘策略后点击「立即跑」。"
                 }
               />
             )}
@@ -403,9 +459,11 @@ export default function Closing({ setLog }: PageLogProps) {
         busy={busy}
         onRun={() => void runResearchRefine()}
         emptyHint={
-          allStocks.length
-            ? "暂无投研精选。点击「投研精选」对当前命中个股打分。"
-            : "暂无投研精选。请先完成尾盘选拔后再运行。"
+          emptyDay
+            ? "该日暂无数据。"
+            : allStocks.length
+              ? "暂无投研精选。点击「投研精选」对当前命中个股打分。"
+              : "暂无投研精选。请先完成尾盘选拔后再运行。"
         }
         onRowClick={(symbol) => setDrawerSymbol(symbol)}
       />

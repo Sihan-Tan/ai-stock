@@ -380,12 +380,30 @@ export type ResearchPickRow = {
   confidence?: number;
   rationale?: string;
   rank?: number;
+  /** 候选带来的策略 id（如 auction_strong / board / 尾盘策略 id） */
+  strategy_id?: string;
   buy_low?: number;
   buy_high?: number;
   target_low?: number;
   target_high?: number;
   stop_loss?: number;
 };
+
+/**
+ * 策略 id 展示文案：内置早盘标签中文化，其余原样。
+ * @param strategyId 原始策略 id
+ */
+export function formatStrategyLabel(strategyId?: string | null): string {
+  const id = (strategyId || "").trim();
+  if (!id) return "—";
+  if (id === "auction_strong") return "竞价强势";
+  if (id === "board") return "板块";
+  return id;
+}
+
+/** Hero 回看日期输入样式，与 SecondaryAction 高度协调 */
+export const asofDateInputClass =
+  "h-8 rounded-md border border-[var(--desk-line)] bg-[var(--desk-ink)] px-2.5 text-sm text-[var(--desk-text)] outline-none focus:border-[var(--desk-mist)] disabled:cursor-not-allowed disabled:opacity-50";
 
 type ResearchPicksPanelProps = {
   picks: ResearchPickRow[];
@@ -430,6 +448,7 @@ export function ResearchPicksPanel({
             <th className={thClass}>#</th>
             <th className={thClass}>代码</th>
             <th className={thClass}>名称</th>
+            <th className={thClass}>策略</th>
             <th className={thClass}>score</th>
             <th className={thClass}>confidence</th>
             <th className={thClass}>买入区间</th>
@@ -455,6 +474,7 @@ export function ResearchPicksPanel({
                   {symbol || "—"}
                 </td>
                 <td className={tdClass}>{pick.name || "—"}</td>
+                <td className={`${tdClass} text-xs`}>{formatStrategyLabel(pick.strategy_id)}</td>
                 <td className={`${tdClass} font-mono`}>{formatScore(pick.score)}</td>
                 <td className={`${tdClass} font-mono`}>{formatScore(pick.confidence)}</td>
                 <td className={`${tdClass} font-mono`}>
@@ -470,7 +490,7 @@ export function ResearchPicksPanel({
               </tr>
             );
           })}
-          {!picks.length && <EmptyRow colSpan={9} message={emptyHint} />}
+          {!picks.length && <EmptyRow colSpan={10} message={emptyHint} />}
         </tbody>
       </SessionTable>
     </SessionPanel>
